@@ -4,6 +4,7 @@ import { Link, NavLink, Navigate, Route, Routes, useParams } from 'react-router-
 import { CronogramaTab } from '@/components/proyectos/tabs/CronogramaTab.js';
 import { CurvaSTab } from '@/components/proyectos/tabs/CurvaSTab.js';
 import { PartidasTab } from '@/components/proyectos/tabs/PartidasTab.js';
+import { RecursosTab } from '@/components/proyectos/tabs/RecursosTab.js';
 import { ResumenTab } from '@/components/proyectos/tabs/ResumenTab.js';
 import { TabPlaceholder } from '@/components/proyectos/tabs/TabPlaceholder.js';
 import { api } from '@/lib/api.js';
@@ -14,6 +15,7 @@ const TABS = [
   { key: 'partidas', label: 'Partidas' },
   { key: 'cronograma', label: 'Cronograma' },
   { key: 'curva-s', label: 'Curva S' },
+  { key: 'recursos', label: 'Recursos' },
   { key: 'documentos', label: 'Documentos' },
   { key: 'valorizaciones', label: 'Valorizaciones' },
   { key: 'liquidacion', label: 'Liquidación' },
@@ -105,6 +107,7 @@ export function ProjectDetailPage() {
         <Route path="partidas" element={<PartidasTab proyectoId={p.id} />} />
         <Route path="cronograma" element={<CronogramaTab proyectoId={p.id} />} />
         <Route path="curva-s" element={<CurvaSTab proyectoId={p.id} />} />
+        <Route path="recursos" element={<RecursosTab proyectoId={p.id} />} />
         <Route path="documentos" element={<TabPlaceholder title="Documentos" desc="Conexión NAS Synology · 13 carpetas estándar" />} />
         <Route path="valorizaciones" element={<TabPlaceholder title="Valorizaciones" desc="Generador + PDF · histórico V01 V02..." />} />
         <Route path="liquidacion" element={<TabPlaceholder title="Liquidación" desc="Gastos · utilidad · reparto socios · formato Excel gerente" />} />

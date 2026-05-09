@@ -95,9 +95,14 @@ export const proyectos = pgTable(
     igvEnXml: boolean('igv_en_xml').default(true),
     pctGg: decimal('pct_gg', { precision: 5, scale: 4 }).default('0.10'),
     pctUtilidad: decimal('pct_utilidad', { precision: 5, scale: 4 }).default('0.10'),
+    pctIgv: decimal('pct_igv', { precision: 5, scale: 4 }).default('0.18'),
     montoSubtotal: decimal('monto_subtotal', { precision: 14, scale: 2 }).default('0'),
     montoIgv: decimal('monto_igv', { precision: 14, scale: 2 }).default('0'),
-    montoContractual: decimal('monto_contractual', { precision: 14, scale: 2 }).default('0'),
+    montoReferencial: decimal('monto_referencial', { precision: 14, scale: 2 }).default('0'), // expediente técnico
+    montoContractual: decimal('monto_contractual', { precision: 14, scale: 2 }).default('0'), // oferta ganadora
+    factorOferta: decimal('factor_oferta', { precision: 7, scale: 6 }), // monto_contractual / monto_referencial · ej 0.95
+    montoVigente: decimal('monto_vigente', { precision: 14, scale: 2 }).default('0'), // contractual ± modificaciones aprobadas
+    presupuestoMeta: decimal('presupuesto_meta', { precision: 14, scale: 2 }), // meta interna constructora · objetivo utility
 
     // Plazos
     fechaInicio: date('fecha_inicio'),
@@ -166,8 +171,12 @@ export const partidas = pgTable(
     nombre: text('nombre').notNull(),
     unidad: varchar('unidad', { length: 20 }),
     cantidad: decimal('cantidad', { precision: 14, scale: 4 }),
-    precioUnitario: decimal('precio_unitario', { precision: 14, scale: 4 }),
-    presupuesto: decimal('presupuesto', { precision: 14, scale: 2 }).default('0'),
+    precioUnitario: decimal('precio_unitario', { precision: 14, scale: 4 }), // legacy · referencia simple
+    precioUnitarioReferencial: decimal('pu_referencial', { precision: 14, scale: 4 }), // del expediente técnico
+    precioUnitarioContractual: decimal('pu_contractual', { precision: 14, scale: 4 }), // = pu_referencial × factor_oferta
+    costoMetaUnitario: decimal('costo_meta_unitario', { precision: 14, scale: 4 }), // objetivo interno
+    presupuesto: decimal('presupuesto', { precision: 14, scale: 2 }).default('0'), // referencial × cantidad
+    presupuestoContractual: decimal('presupuesto_contractual', { precision: 14, scale: 2 }).default('0'),
     duracionDias: integer('duracion_dias'),
     fechaInicio: date('fecha_inicio'),
     fechaFin: date('fecha_fin'),
@@ -469,6 +478,405 @@ export const auditLog = pgTable('audit_log', {
   createdAt: timestamp('created_at').notNull().defaultNow(),
 });
 
+// ════════════════════════════════════════════════════════════════
+// FASE 0 · FOUNDATION · Schema enterprise extensions
+// ════════════════════════════════════════════════════════════════
+
+// ─── Recursos · catálogo materiales/MO/equipos ────────────────
+export const recursoTipoEnum = pgEnum('recurso_tipo', ['material', 'mano_obra', 'equipo', 'herramienta', 'subcontrato']);
+
+export const recursos = pgTable(
+  'recursos',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    codigo: varchar('codigo', { length: 50 }).notNull(), // CEM-001, AC-1/2", etc
+    descripcion: text('descripcion').notNull(),
+    unidad: varchar('unidad', { length: 20 }).notNull(),
+    tipo: recursoTipoEnum('tipo').notNull(),
+    categoria: varchar('categoria', { length: 100 }), // 'cemento','acero','peon','mezcladora'
+    precioReferencial: decimal('precio_referencial', { precision: 14, scale: 4 }),
+    iuCodigo: varchar('iu_codigo', { length: 3 }), // → indices_unificados
+    iuClasificacionOrigen: varchar('iu_clasificacion_origen', { length: 20 }), // 'manual'|'auto_ml'|'reglas'
+    iuConfianza: decimal('iu_confianza', { precision: 3, scale: 2 }),
+    activo: boolean('activo').default(true),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+  },
+  (t) => ({
+    codigoIdx: index('recursos_codigo_idx').on(t.codigo),
+    iuIdx: index('recursos_iu_idx').on(t.iuCodigo),
+  }),
+);
+
+// ─── APUs · Análisis Costos Unitarios por partida ─────────────
+export const apus = pgTable(
+  'apus',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    partidaId: uuid('partida_id').notNull().references(() => partidas.id, { onDelete: 'cascade' }),
+    rendimiento: decimal('rendimiento', { precision: 14, scale: 4 }), // m/dia, m³/dia, etc
+    unidadRendimiento: varchar('unidad_rendimiento', { length: 20 }),
+    costoMaterial: decimal('costo_material', { precision: 14, scale: 4 }).default('0'),
+    costoManoObra: decimal('costo_mano_obra', { precision: 14, scale: 4 }).default('0'),
+    costoEquipo: decimal('costo_equipo', { precision: 14, scale: 4 }).default('0'),
+    costoHerramientas: decimal('costo_herramientas', { precision: 14, scale: 4 }).default('0'),
+    costoSubcontrato: decimal('costo_subcontrato', { precision: 14, scale: 4 }).default('0'),
+    costoTotal: decimal('costo_total', { precision: 14, scale: 4 }).default('0'),
+    notas: text('notas'),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+  },
+  (t) => ({
+    partidaUq: index('apus_partida_uq').on(t.partidaId),
+  }),
+);
+
+// ─── APU Insumos (desglose recursos por APU) ──────────────────
+export const apusInsumos = pgTable(
+  'apus_insumos',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    apuId: uuid('apu_id').notNull().references(() => apus.id, { onDelete: 'cascade' }),
+    recursoId: uuid('recurso_id').notNull().references(() => recursos.id),
+    cantidad: decimal('cantidad', { precision: 14, scale: 6 }).notNull(),
+    precioUnitario: decimal('precio_unitario', { precision: 14, scale: 4 }).notNull(),
+    parcial: decimal('parcial', { precision: 14, scale: 4 }).notNull(),
+    cuadrillaCantidad: decimal('cuadrilla_cantidad', { precision: 6, scale: 2 }), // si MO · 1.00 capataz, 0.50 peón
+    orden: integer('orden').default(0),
+  },
+  (t) => ({
+    apuIdx: index('apus_insumos_apu_idx').on(t.apuId),
+    recursoIdx: index('apus_insumos_recurso_idx').on(t.recursoId),
+  }),
+);
+
+// ─── Índices Unificados (catálogo INEI) ───────────────────────
+export const indicesUnificados = pgTable('indices_unificados', {
+  codigo: varchar('codigo', { length: 3 }).primaryKey(), // '21' cemento, '47' MO, etc
+  descripcion: text('descripcion').notNull(),
+  categoria: varchar('categoria', { length: 50 }), // 'Materiales · Cemento'
+  unidadMedida: varchar('unidad_medida', { length: 20 }),
+  vigente: boolean('vigente').default(true),
+  baseLegal: text('base_legal'),
+});
+
+// ─── Índices INEI mensuales por área ──────────────────────────
+export const indicesMensuales = pgTable(
+  'indices_mensuales',
+  {
+    iuCodigo: varchar('iu_codigo', { length: 3 }).notNull().references(() => indicesUnificados.codigo),
+    area: varchar('area', { length: 20 }).notNull(), // 'lima','norte','centro','sur','oriente'
+    anioMes: varchar('anio_mes', { length: 7 }).notNull(), // '2025-12'
+    valor: decimal('valor', { precision: 10, scale: 4 }).notNull(),
+    resolucionJefatural: varchar('resolucion_jefatural', { length: 80 }),
+    fechaPublicacion: date('fecha_publicacion'),
+    cargadoAt: timestamp('cargado_at').notNull().defaultNow(),
+    cargadoPor: varchar('cargado_por', { length: 50 }), // 'api_inei'|'manual'|'scraper'
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.iuCodigo, t.area, t.anioMes] }),
+  }),
+);
+
+// ─── Domain Events · Event Sourcing append-only ───────────────
+// IMPORTANT: NUNCA permitir UPDATE/DELETE · trigger lo bloquea
+export const domainEvents = pgTable(
+  'domain_events',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    sequenceNumber: integer('sequence_number').notNull(), // bigserial via raw SQL en migration custom
+    aggregateType: varchar('aggregate_type', { length: 100 }).notNull(), // 'Proyecto','Valorizacion','OC'
+    aggregateId: uuid('aggregate_id').notNull(),
+    aggregateVersion: integer('aggregate_version').notNull(),
+    eventType: varchar('event_type', { length: 100 }).notNull(), // 'ProyectoCreated','ValAprobada'
+    eventVersion: integer('event_version').default(1),
+    payload: jsonb('payload').notNull(),
+    metadata: jsonb('metadata').notNull(), // user_id, ip, request_id, correlation_id
+    occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull().defaultNow(),
+    recordedAt: timestamp('recorded_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    aggregateIdx: index('de_aggregate_idx').on(t.aggregateType, t.aggregateId, t.sequenceNumber),
+    eventTypeIdx: index('de_event_type_idx').on(t.eventType),
+    occurredAtIdx: index('de_occurred_at_idx').on(t.occurredAt),
+  }),
+);
+
+// ─── Audit log INMUTABLE con hash chain ───────────────────────
+export const auditLogImmutable = pgTable(
+  'audit_log_immutable',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id'),
+    userEmail: varchar('user_email', { length: 255 }).notNull(),
+    userRole: varchar('user_role', { length: 50 }).notNull(),
+    action: varchar('action', { length: 100 }).notNull(),
+    entityType: varchar('entity_type', { length: 100 }),
+    entityId: uuid('entity_id'),
+    payloadBefore: jsonb('payload_before'),
+    payloadAfter: jsonb('payload_after'),
+    payloadDiff: jsonb('payload_diff'),
+    ip: varchar('ip', { length: 45 }),
+    userAgent: text('user_agent'),
+    requestId: uuid('request_id'),
+    correlationId: uuid('correlation_id'),
+    occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull().defaultNow(),
+    previousHash: varchar('previous_hash', { length: 64 }),
+    currentHash: varchar('current_hash', { length: 64 }), // computed via trigger SQL custom
+  },
+  (t) => ({
+    userIdx: index('alog_user_idx').on(t.userId),
+    entityIdx: index('alog_entity_idx').on(t.entityType, t.entityId),
+    occurredIdx: index('alog_occurred_idx').on(t.occurredAt),
+  }),
+);
+
+// ─── Períodos contables (cierre mensual + bloqueo) ────────────
+export const periodoEstadoEnum = pgEnum('periodo_estado', ['abierto', 'en_cierre', 'cerrado', 'bloqueado', 'reabierto']);
+
+export const periodosContables = pgTable(
+  'periodos_contables',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    proyectoId: uuid('proyecto_id').references(() => proyectos.id, { onDelete: 'cascade' }), // null = empresa
+    anio: integer('anio').notNull(),
+    mes: integer('mes').notNull(),
+    fechaInicio: date('fecha_inicio').notNull(),
+    fechaFin: date('fecha_fin').notNull(),
+    estado: periodoEstadoEnum('estado').notNull().default('abierto'),
+    fechaCierre: timestamp('fecha_cierre'),
+    cerradoPor: uuid('cerrado_por').references(() => users.id),
+    reabiertoPor: uuid('reabierto_por').references(() => users.id),
+    motivoReapertura: text('motivo_reapertura'),
+    fechaReapertura: timestamp('fecha_reapertura'),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+  },
+  (t) => ({
+    periodoUq: index('periodos_uq').on(t.proyectoId, t.anio, t.mes),
+    estadoIdx: index('periodos_estado_idx').on(t.estado),
+  }),
+);
+
+// ─── Motor de parámetros (configuración con vigencia) ─────────
+export const parametrosCategorias = pgTable('parametros_categorias', {
+  id: varchar('id', { length: 50 }).primaryKey(), // 'tributario','capeco','indices','contractual','workflow','kpi'
+  descripcion: text('descripcion').notNull(),
+  orden: integer('orden').default(0),
+});
+
+export const parametroTipoDatoEnum = pgEnum('parametro_tipo_dato', ['decimal', 'integer', 'varchar', 'boolean', 'json', 'date']);
+export const parametroScopeEnum = pgEnum('parametro_scope', ['global', 'empresa', 'proyecto']);
+export const parametroEstadoEnum = pgEnum('parametro_estado', ['vigente', 'futuro', 'obsoleto', 'observado']);
+
+export const parametros = pgTable(
+  'parametros',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    categoriaId: varchar('categoria_id', { length: 50 }).notNull().references(() => parametrosCategorias.id),
+    codigo: varchar('codigo', { length: 100 }).notNull(),
+    descripcion: text('descripcion'),
+    tipoDato: parametroTipoDatoEnum('tipo_dato').notNull(),
+    scope: parametroScopeEnum('scope').notNull().default('global'),
+    empresaId: integer('empresa_id'), // referencia futura · empresa multi-tenant
+    proyectoId: uuid('proyecto_id').references(() => proyectos.id, { onDelete: 'cascade' }),
+    valorDecimal: decimal('valor_decimal', { precision: 18, scale: 6 }),
+    valorInteger: integer('valor_integer'),
+    valorVarchar: text('valor_varchar'),
+    valorBoolean: boolean('valor_boolean'),
+    valorJson: jsonb('valor_json'),
+    valorDate: date('valor_date'),
+    vigenciaDesde: date('vigencia_desde').notNull(),
+    vigenciaHasta: date('vigencia_hasta'),
+    rangoMin: decimal('rango_min', { precision: 18, scale: 6 }),
+    rangoMax: decimal('rango_max', { precision: 18, scale: 6 }),
+    valoresPermitidos: jsonb('valores_permitidos').$type<string[]>(),
+    regexValidacion: text('regex_validacion'),
+    baseLegal: text('base_legal'),
+    fuenteOficialUrl: text('fuente_oficial_url'),
+    observaciones: text('observaciones'),
+    version: integer('version').default(1),
+    parametroPadreId: uuid('parametro_padre_id'),
+    estado: parametroEstadoEnum('estado').notNull().default('vigente'),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+    updatedAt: timestamp('updated_at').notNull().defaultNow(),
+    createdBy: uuid('created_by').references(() => users.id),
+    updatedBy: uuid('updated_by').references(() => users.id),
+  },
+  (t) => ({
+    codigoIdx: index('param_codigo_idx').on(t.codigo, t.vigenciaDesde),
+    categoriaIdx: index('param_categoria_idx').on(t.categoriaId),
+    scopeIdx: index('param_scope_idx').on(t.scope, t.empresaId, t.proyectoId),
+    estadoIdx: index('param_estado_idx').on(t.estado),
+  }),
+);
+
+// ─── Documentos (DMS base) ────────────────────────────────────
+export const documentoEstadoEnum = pgEnum('documento_estado', [
+  'borrador',
+  'en_revision',
+  'aprobado',
+  'publicado',
+  'obsoleto',
+  'archivado',
+]);
+
+export const documentos = pgTable(
+  'documentos',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    proyectoId: uuid('proyecto_id').references(() => proyectos.id, { onDelete: 'cascade' }),
+    codigo: varchar('codigo', { length: 100 }).unique(),
+    tipo: varchar('tipo', { length: 50 }).notNull(), // contrato·plano·acta·valorizacion·rfi·spec
+    subtipo: varchar('subtipo', { length: 50 }),
+    titulo: text('titulo').notNull(),
+    descripcion: text('descripcion'),
+    clasificacion: varchar('clasificacion', { length: 30 }).default('interno'), // publico·interno·privado·confidencial
+    disciplina: varchar('disciplina', { length: 50 }),
+    fase: varchar('fase', { length: 50 }), // bases·perfeccionamiento·ejecucion·liquidacion
+    tags: jsonb('tags').$type<string[]>().default([]),
+    estado: documentoEstadoEnum('estado').notNull().default('borrador'),
+    versionActualId: uuid('version_actual_id'),
+    partidaId: uuid('partida_id').references(() => partidas.id, { onDelete: 'set null' }),
+    valorizacionId: uuid('valorizacion_id').references(() => valorizaciones.id, { onDelete: 'set null' }),
+    rutaNas: text('ruta_nas'), // path completo NAS
+    visibilityRoles: jsonb('visibility_roles').$type<string[]>().default([]),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+    updatedAt: timestamp('updated_at').notNull().defaultNow(),
+    deletedAt: timestamp('deleted_at'),
+    createdBy: uuid('created_by').references(() => users.id),
+  },
+  (t) => ({
+    proyectoIdx: index('docs_proyecto_idx').on(t.proyectoId),
+    tipoIdx: index('docs_tipo_idx').on(t.tipo),
+    estadoIdx: index('docs_estado_idx').on(t.estado),
+  }),
+);
+
+// ─── Fórmulas Polinómicas por subpresupuesto ──────────────────
+// Cada subpresupuesto (01·02·03·04·05) tiene SU propia FP
+export const formulasPolinomicas = pgTable(
+  'formulas_polinomicas',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    proyectoId: uuid('proyecto_id').notNull().references(() => proyectos.id, { onDelete: 'cascade' }),
+    subpresupuestoCodigo: varchar('subpresupuesto_codigo', { length: 5 }).notNull(), // '001'
+    subpresupuestoNombre: varchar('subpresupuesto_nombre', { length: 200 }).notNull(),
+    fechaBase: date('fecha_base').notNull(),
+    areaGeografica: varchar('area_geografica', { length: 50 }), // '150140 LIMA-LIMA-SANTIAGO DE SURCO'
+    formulaTexto: text('formula_texto').notNull(), // 'K = 0.125·MO + ...'
+    archivoPdfNas: text('archivo_pdf_nas'),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+  },
+  (t) => ({
+    proyectoSubpUq: index('fp_proyecto_subp_uq').on(t.proyectoId, t.subpresupuestoCodigo),
+  }),
+);
+
+export const formulasMonomios = pgTable(
+  'formulas_monomios',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    formulaId: uuid('formula_id').notNull().references(() => formulasPolinomicas.id, { onDelete: 'cascade' }),
+    numero: integer('numero').notNull(), // 1, 2, 3...
+    coeficiente: decimal('coeficiente', { precision: 5, scale: 4 }).notNull(),
+    simbolo: varchar('simbolo', { length: 5 }), // 'MO','C','AC','D','GU'
+    descripcion: text('descripcion'),
+  },
+  (t) => ({
+    formulaIdx: index('fm_formula_idx').on(t.formulaId),
+  }),
+);
+
+export const formulasMonomiosIus = pgTable(
+  'formulas_monomios_ius',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    monomioId: uuid('monomio_id').notNull().references(() => formulasMonomios.id, { onDelete: 'cascade' }),
+    iuCodigo: varchar('iu_codigo', { length: 3 }).notNull(),
+    pesoPorcentual: decimal('peso_porcentual', { precision: 7, scale: 3 }), // 100.000, 65.789, etc
+    descripcionIu: text('descripcion_iu'),
+  },
+  (t) => ({
+    monomioIdx: index('fmi_monomio_idx').on(t.monomioId),
+  }),
+);
+
+// ─── Cronograma adquisiciones (curva valorizada por mes) ─────
+export const cronogramaAdquisiciones = pgTable(
+  'cronograma_adquisiciones',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    proyectoId: uuid('proyecto_id').notNull().references(() => proyectos.id, { onDelete: 'cascade' }),
+    recursoId: uuid('recurso_id').references(() => recursos.id, { onDelete: 'set null' }),
+    mesIndex: integer('mes_index').notNull(), // 1, 2, 3, 4
+    mesEtiqueta: varchar('mes_etiqueta', { length: 20 }), // 'Oct-25'
+    fechaDesde: date('fecha_desde'),
+    fechaHasta: date('fecha_hasta'),
+    cantidad: decimal('cantidad', { precision: 14, scale: 4 }),
+    monto: decimal('monto', { precision: 14, scale: 2 }),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+  },
+  (t) => ({
+    proyectoMesIdx: index('cronog_adq_proy_mes_idx').on(t.proyectoId, t.mesIndex),
+    recursoIdx: index('cronog_adq_recurso_idx').on(t.recursoId),
+  }),
+);
+
+// ─── Imports S10 (registro histórico) ─────────────────────────
+export const importsS10 = pgTable(
+  'imports_s10',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    proyectoId: uuid('proyecto_id').references(() => proyectos.id, { onDelete: 'set null' }),
+    archivoNombre: varchar('archivo_nombre', { length: 255 }),
+    archivoHash: varchar('archivo_hash', { length: 64 }),
+    tipo: varchar('tipo', { length: 30 }).notNull(), // 'presupuesto','calendario','mpp','fp'
+    fechaImport: timestamp('fecha_import').notNull().defaultNow(),
+    userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
+    estado: varchar('estado', { length: 30 }).notNull().default('procesando'),
+    partidasImportadas: integer('partidas_importadas').default(0),
+    apusImportadas: integer('apus_importadas').default(0),
+    insumosImportados: integer('insumos_importados').default(0),
+    montoTotalCalculado: decimal('monto_total_calculado', { precision: 14, scale: 2 }),
+    montoReferenciaArchivo: decimal('monto_referencia_archivo', { precision: 14, scale: 2 }),
+    diferencia: decimal('diferencia', { precision: 14, scale: 2 }),
+    errorsLog: jsonb('errors_log').$type<string[]>().default([]),
+    warningsLog: jsonb('warnings_log').$type<string[]>().default([]),
+    duracionMs: integer('duracion_ms'),
+  },
+  (t) => ({
+    proyectoIdx: index('imports_proyecto_idx').on(t.proyectoId),
+    estadoIdx: index('imports_estado_idx').on(t.estado),
+  }),
+);
+
+// ─── Documento versiones ──────────────────────────────────────
+export const documentosVersiones = pgTable(
+  'documentos_versiones',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    documentoId: uuid('documento_id').notNull().references(() => documentos.id, { onDelete: 'cascade' }),
+    versionNumero: varchar('version_numero', { length: 20 }).notNull(), // '1.0','1.1','2.0'
+    versionOrden: integer('version_orden').notNull(), // 1,2,3
+    archivoNasPath: text('archivo_nas_path'),
+    archivoS3Url: text('archivo_s3_url'),
+    mimeType: varchar('mime_type', { length: 100 }),
+    sizeBytes: integer('size_bytes'),
+    hashSha256: varchar('hash_sha256', { length: 64 }),
+    hashMd5: varchar('hash_md5', { length: 32 }),
+    textoExtraido: text('texto_extraido'), // OCR
+    ocrCompletadoAt: timestamp('ocr_completado_at'),
+    cambioResumen: text('cambio_resumen'),
+    estado: documentoEstadoEnum('estado').notNull().default('borrador'),
+    fechaPublicacion: timestamp('fecha_publicacion'),
+    fechaObsolescencia: timestamp('fecha_obsolescencia'),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+    createdBy: uuid('created_by').references(() => users.id),
+  },
+  (t) => ({
+    docIdx: index('docs_ver_doc_idx').on(t.documentoId),
+    hashIdx: index('docs_ver_hash_idx').on(t.hashSha256),
+  }),
+);
+
 // ─── Type exports ─────────────────────────────────────────────
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
@@ -488,3 +896,25 @@ export type Garantia = typeof garantias.$inferSelect;
 export type Adelanto = typeof adelantos.$inferSelect;
 export type PenalidadCatalogo = typeof penalidadesCatalogo.$inferSelect;
 export type PenalidadAplicada = typeof penalidadesAplicadas.$inferSelect;
+
+// F0 Foundation types
+export type Recurso = typeof recursos.$inferSelect;
+export type NewRecurso = typeof recursos.$inferInsert;
+export type Apu = typeof apus.$inferSelect;
+export type NewApu = typeof apus.$inferInsert;
+export type ApuInsumo = typeof apusInsumos.$inferSelect;
+export type IndiceUnificado = typeof indicesUnificados.$inferSelect;
+export type IndiceMensual = typeof indicesMensuales.$inferSelect;
+export type DomainEvent = typeof domainEvents.$inferSelect;
+export type NewDomainEvent = typeof domainEvents.$inferInsert;
+export type AuditLogImmutable = typeof auditLogImmutable.$inferSelect;
+export type PeriodoContable = typeof periodosContables.$inferSelect;
+export type Parametro = typeof parametros.$inferSelect;
+export type NewParametro = typeof parametros.$inferInsert;
+export type Documento = typeof documentos.$inferSelect;
+export type DocumentoVersion = typeof documentosVersiones.$inferSelect;
+export type FormulaPolinomica = typeof formulasPolinomicas.$inferSelect;
+export type FormulaMonomio = typeof formulasMonomios.$inferSelect;
+export type FormulaMonomioIu = typeof formulasMonomiosIus.$inferSelect;
+export type CronogramaAdquisicion = typeof cronogramaAdquisiciones.$inferSelect;
+export type ImportS10 = typeof importsS10.$inferSelect;

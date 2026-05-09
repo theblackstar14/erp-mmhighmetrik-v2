@@ -60,6 +60,7 @@ export const api = {
     listPartidas: (id: string) => req<{ partidas: Partida[] }>(`/api/proyectos/${id}/partidas`),
     getAvances: (id: string) => req<AvancesResponse>(`/api/proyectos/${id}/avances`),
     getCurvaS: (id: string) => req<{ data: CurvaSData | null }>(`/api/proyectos/${id}/curva-s`),
+    getRecursos: (id: string) => req<RecursosResponse>(`/api/proyectos/${id}/recursos`),
   },
 
   // Avances
@@ -169,9 +170,33 @@ export type Proyecto = {
   status: string;
   modalidad: string;
   costoDirecto: string;
+  montoReferencial: string | null;
   montoContractual: string;
+  factorOferta: string | null;
+  montoVigente: string | null;
+  presupuestoMeta: string | null;
+  pctGg: string | null;
+  pctUtilidad: string | null;
+  pctIgv: string | null;
   fechaInicio: string | null;
   fechaFin: string | null;
+  fechaBuenaPro: string | null;
+  fechaConsentimiento: string | null;
+  fechaFirmaContrato: string | null;
+  fechaActaInicio: string | null;
+  diasPlazo: number | null;
+  numeroContrato: string | null;
+  numeroProcesoLicitacion: string | null;
+  cui: string | null;
+  etapa: string | null;
+  marcoLegal: string | null;
+  pctAdelantoDirecto: string | null;
+  pctAdelantoMateriales: string | null;
+  pctAdelantoAvance: string | null;
+  pctRetencion: string | null;
+  pctFielCumplimiento: string | null;
+  factorFPenalidad: string | null;
+  pctPenalidadTope: string | null;
   risk: string;
   ganttFile: string | null;
   createdAt: string;
@@ -229,6 +254,45 @@ export type CurvaSData = {
   };
 };
 
+export type Recurso = {
+  id: string;
+  codigo: string;
+  descripcion: string;
+  unidad: string;
+  tipo: 'material' | 'mano_obra' | 'equipo' | 'herramienta' | 'subcontrato';
+  categoria: string | null;
+  precioReferencial: string | null;
+  iuCodigo: string | null;
+  iuClasificacionOrigen: string | null;
+  iuConfianza: string | null;
+  activo: boolean;
+};
+
+export type CronogramaAdq = {
+  id: string;
+  proyectoId: string;
+  recursoId: string | null;
+  mesIndex: number;
+  mesEtiqueta: string;
+  fechaDesde: string;
+  fechaHasta: string;
+  cantidad: string;
+  monto: string;
+};
+
+export type RecursosResponse = {
+  recursos: Recurso[];
+  cronograma: CronogramaAdq[];
+  stats: {
+    total: number;
+    porTipo: Record<string, number>;
+    montosPorTipo: Record<string, number>;
+    montoPorMes: number[];
+    montoTotal: number;
+    iuClasificados: number;
+  } | null;
+};
+
 export type AvancesResponse = {
   partidas: { id: string; codigo: string; presupuesto: string }[];
   avances: Record<string, AvanceState>;
@@ -251,7 +315,11 @@ export type Partida = {
   unidad: string | null;
   cantidad: string | null;
   precioUnitario: string | null;
+  precioUnitarioReferencial: string | null;
+  precioUnitarioContractual: string | null;
+  costoMetaUnitario: string | null;
   presupuesto: string;
+  presupuestoContractual: string;
   duracionDias: number | null;
   fechaInicio: string | null;
   fechaFin: string | null;

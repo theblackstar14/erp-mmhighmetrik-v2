@@ -22,6 +22,7 @@ export function fmtCompact(n: number): string {
 
 export function fmtDate(s: string | Date | null | undefined): string {
   if (!s) return '—';
-  const d = typeof s === 'string' ? new Date(s) : s;
-  return d.toLocaleDateString('es-PE');
+  // Force UTC parse · evita off-by-1 (Postgres date sin TZ → JS Date asume UTC)
+  const d = typeof s === 'string' ? new Date(`${String(s).slice(0, 10)}T00:00:00Z`) : s;
+  return d.toLocaleDateString('es-PE', { timeZone: 'UTC' });
 }

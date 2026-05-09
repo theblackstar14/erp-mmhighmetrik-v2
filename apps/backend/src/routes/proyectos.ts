@@ -119,23 +119,62 @@ router.post('/:id/cronograma', upload.single('file'), async (req, res) => {
       return res.status(400).json({ error: 'Solo .mpp o .xml son soportados' });
     }
     const parsed = parseMSProjectXML(xml);
-    const partidasData = tasksToPartidas(parsed, req.params.id!);
+    const tasksMpp = tasksToPartidas(parsed, req.params.id!);
 
-    // Limpiar partidas previas + insertar nuevas (transaction)
+    // Estrategia NO destructiva · UPDATE partidas existentes por nombre
+    // (las partidas vienen del Excel S10 importado · NO sobrescribir códigos)
+    const existing = await db
+      .select()
+      .from(schema.partidas)
+      .where(eq(schema.partidas.proyectoId, req.params.id!));
+
+    const normalize = (s: string) =>
+      s
+        .normalize('NFD')
+        .replace(/[̀-ͯ]/g, '')
+        .toUpperCase()
+        .replace(/[^\w\s.]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    const byName = new Map<string, typeof existing[number][]>();
+    for (const p of existing) {
+      const k = normalize(p.nombre);
+      const arr = byName.get(k);
+      if (arr) arr.push(p);
+      else byName.set(k, [p]);
+    }
+
+    let matched = 0;
+    let notMatched = 0;
+
     await db.transaction(async (tx) => {
-      await tx.delete(schema.partidas).where(eq(schema.partidas.proyectoId, req.params.id!));
-      if (partidasData.length > 0) {
-        // Insert por chunks de 500 para evitar query gigante
-        for (let i = 0; i < partidasData.length; i += 500) {
-          const chunk = partidasData.slice(i, i + 500);
-          await tx.insert(schema.partidas).values(chunk);
+      // Update fechas + duración por nombre match
+      for (const t of tasksMpp) {
+        const k = normalize(t.nombre);
+        const candidatos = byName.get(k);
+        const partida = candidatos?.length === 1 ? candidatos[0] : null;
+        if (!partida) {
+          notMatched++;
+          continue;
         }
+        matched++;
+        await tx
+          .update(schema.partidas)
+          .set({
+            fechaInicio: t.fechaInicio,
+            fechaFin: t.fechaFin,
+            duracionDias: t.duracionDias,
+            isMilestone: t.isMilestone,
+            isCritical: t.isCritical,
+          })
+          .where(eq(schema.partidas.id, partida.id));
       }
-      // Actualiza proyecto con costoDirecto + fechas si vinieron
+
+      // Update proyecto fechas · NO costoDirecto (sigue referencial del expediente)
       await tx
         .update(schema.proyectos)
         .set({
-          costoDirecto: parsed.totalCost.toFixed(2),
           fechaInicio: parsed.startDate ? parsed.startDate.toISOString().slice(0, 10) : undefined,
           fechaFin: parsed.finishDate ? parsed.finishDate.toISOString().slice(0, 10) : undefined,
           ganttFile: req.file!.originalname,
@@ -148,7 +187,8 @@ router.post('/:id/cronograma', upload.single('file'), async (req, res) => {
       ok: true,
       stats: {
         totalTasks: parsed.totalTasks,
-        partidasInsertadas: partidasData.length,
+        partidasMatched: matched,
+        partidasNoMatched: notMatched,
         totalCost: parsed.totalCost,
         startDate: parsed.startDate,
         finishDate: parsed.finishDate,
@@ -168,6 +208,62 @@ router.get('/:id/partidas', async (req, res) => {
     .where(eq(schema.partidas.proyectoId, req.params.id!))
     .orderBy(asc(schema.partidas.orden));
   res.json({ partidas: list });
+});
+
+// GET /api/proyectos/:id/recursos · catálogo + cronograma adquisiciones
+router.get('/:id/recursos', async (req, res) => {
+  // Recursos del proyecto (todos · catálogo es global pero mostramos los del cronograma)
+  const cronog = await db
+    .select()
+    .from(schema.cronogramaAdquisiciones)
+    .where(eq(schema.cronogramaAdquisiciones.proyectoId, req.params.id!))
+    .orderBy(asc(schema.cronogramaAdquisiciones.mesIndex));
+
+  // Recursos únicos del cronograma
+  const recursoIds = [...new Set(cronog.map((c) => c.recursoId).filter(Boolean) as string[])];
+  if (recursoIds.length === 0) {
+    return res.json({ recursos: [], cronograma: [], stats: null });
+  }
+
+  const recursosList = await db.select().from(schema.recursos);
+  const recursosFiltered = recursosList.filter((r) => recursoIds.includes(r.id));
+
+  // Stats
+  const stats = {
+    total: recursosFiltered.length,
+    porTipo: {
+      mano_obra: recursosFiltered.filter((r) => r.tipo === 'mano_obra').length,
+      material: recursosFiltered.filter((r) => r.tipo === 'material').length,
+      equipo: recursosFiltered.filter((r) => r.tipo === 'equipo').length,
+      herramienta: recursosFiltered.filter((r) => r.tipo === 'herramienta').length,
+      subcontrato: recursosFiltered.filter((r) => r.tipo === 'subcontrato').length,
+    },
+    montosPorTipo: {
+      mano_obra: 0,
+      material: 0,
+      equipo: 0,
+      herramienta: 0,
+      subcontrato: 0,
+    },
+    montoPorMes: [0, 0, 0, 0],
+    montoTotal: 0,
+    iuClasificados: recursosFiltered.filter((r) => r.iuCodigo !== null).length,
+  };
+
+  const recursoTipoMap = new Map(recursosFiltered.map((r) => [r.id, r.tipo]));
+  for (const c of cronog) {
+    const tipo = recursoTipoMap.get(c.recursoId ?? '') ?? 'material';
+    const monto = Number(c.monto ?? 0);
+    stats.montosPorTipo[tipo as keyof typeof stats.montosPorTipo] += monto;
+    stats.montoPorMes[(c.mesIndex ?? 1) - 1] += monto;
+    stats.montoTotal += monto;
+  }
+
+  res.json({
+    recursos: recursosFiltered,
+    cronograma: cronog,
+    stats,
+  });
 });
 
 export default router;

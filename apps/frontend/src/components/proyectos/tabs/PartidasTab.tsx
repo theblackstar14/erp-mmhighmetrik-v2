@@ -22,6 +22,16 @@ export function PartidasTab({ proyectoId }: { proyectoId: string }) {
   const partidas = partidasQ.data?.partidas ?? [];
   const avances = avancesQ.data?.avances ?? {};
 
+  // Siempre vista contractual (lo que se cobra · MPP cronograma)
+  const getBudget = (p: Partida): number =>
+    Number(p.presupuestoContractual ?? p.presupuesto ?? 0);
+  const getPU = (p: Partida): number | null =>
+    p.precioUnitarioContractual
+      ? Number(p.precioUnitarioContractual)
+      : p.precioUnitario
+        ? Number(p.precioUnitario)
+        : null;
+
   // Inicializar nivel 1 expandidos
   useMemo(() => {
     if (partidas.length > 0 && expanded.size === 0) {
@@ -74,7 +84,10 @@ export function PartidasTab({ proyectoId }: { proyectoId: string }) {
   const collapseAll = () =>
     setExpanded(new Set(partidas.filter((p) => p.nivel === 1).map((p) => p.codigo)));
 
-  const totalCD = partidas.filter((p) => p.nivel === 1).reduce((s, p) => s + Number(p.presupuesto), 0);
+  const totalCD = partidas.filter((p) => p.nivel === 1).reduce((s, p) => s + getBudget(p), 0);
+  const totalReferencial = partidas
+    .filter((p) => p.nivel === 1)
+    .reduce((s, p) => s + Number(p.presupuesto ?? 0), 0);
   const totalReal = partidas
     .filter((p) => p.nivel === 1)
     .reduce((s, p) => s + (avances[p.codigo]?.realCost ?? 0), 0);
@@ -97,7 +110,12 @@ export function PartidasTab({ proyectoId }: { proyectoId: string }) {
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <Stat lbl="Total partidas" val={String(partidas.length)} />
         <Stat lbl="Capítulos" val={String(partidas.filter((p) => p.nivel === 1).length)} />
-        <Stat lbl="Presupuesto total" val={fmtPEN(totalCD)} accent />
+        <Stat
+          lbl="Presupuesto Contractual"
+          val={fmtPEN(totalCD)}
+          sub={`Referencial: ${fmtPEN(totalReferencial)}`}
+          accent
+        />
         <Stat lbl="Real ejecutado" val={fmtPEN(totalReal)} accent />
       </div>
 
@@ -160,7 +178,9 @@ export function PartidasTab({ proyectoId }: { proyectoId: string }) {
                 const a = avances[p.codigo];
                 const pct = a?.avancePct ?? 0;
                 const real = a?.realCost ?? 0;
-                const budget = Number(p.presupuesto);
+                const budget = getBudget(p);
+                const pu = getPU(p);
+                const cantidad = p.cantidad ? Number(p.cantidad) : null;
                 const saldo = budget - real;
                 const isLeaf = !has;
                 const isEditable = isLeaf && budget > 0;
@@ -214,6 +234,11 @@ export function PartidasTab({ proyectoId }: { proyectoId: string }) {
                             'font-mono text-[11px]',
                             p.nivel <= 2 ? 'font-bold' : 'font-medium text-ink-2',
                           )}
+                          title={
+                            cantidad && pu
+                              ? `${cantidad} ${p.unidad ?? ''} × ${fmtPEN(pu)} = ${fmtPEN(budget)}`
+                              : fmtPEN(budget)
+                          }
                         >
                           {fmtPEN(budget)}
                         </span>
@@ -291,13 +316,35 @@ export function PartidasTab({ proyectoId }: { proyectoId: string }) {
   );
 }
 
-function Stat({ lbl, val, accent }: { lbl: string; val: string; accent?: boolean }) {
+function Stat({
+  lbl,
+  val,
+  sub,
+  accent,
+}: {
+  lbl: string;
+  val: string;
+  sub?: string;
+  accent?: boolean;
+}) {
   return (
-    <div className="rounded-md border border-line bg-bg-elev p-3">
-      <div className="font-mono text-[9px] uppercase tracking-wider text-ink-4">{lbl}</div>
-      <div className={cn('mt-1 text-[14px] font-bold tracking-[-0.02em] truncate', accent && 'text-primary')}>
+    <div className="rounded-md border border-line bg-bg-elev p-3 min-w-0">
+      <div className="font-mono text-[9px] uppercase tracking-wider text-ink-4 truncate" title={lbl}>
+        {lbl}
+      </div>
+      <div
+        className={cn(
+          'mt-1 text-[14px] font-bold tracking-[-0.02em] truncate',
+          accent && 'text-primary',
+        )}
+      >
         {val}
       </div>
+      {sub && (
+        <div className="text-[10px] text-ink-3 mt-0.5 truncate" title={sub}>
+          {sub}
+        </div>
+      )}
     </div>
   );
 }

@@ -14,6 +14,13 @@
     "db:migrate": "pnpm --filter @erp/db migrate",
     "db:studio": "pnpm --filter @erp/db studio",
     "db:seed": "pnpm --filter @erp/db seed",
+    "db:verify-f0": "pnpm --filter @erp/db verify-f0",
+    "db:import-pg0005-presupuesto": "pnpm --filter @erp/db import-pg0005-presupuesto",
+    "db:verify-f1a": "pnpm --filter @erp/db verify-f1a",
+    "db:import-pg0005-cronograma": "pnpm --filter @erp/db import-pg0005-cronograma",
+    "db:verify-f1b": "pnpm --filter @erp/db verify-f1b",
+    "db:import-pg0005-calendario": "pnpm --filter @erp/db import-pg0005-calendario",
+    "db:verify-f1c": "pnpm --filter @erp/db verify-f1c",
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
     "docker:logs": "docker compose logs -f"

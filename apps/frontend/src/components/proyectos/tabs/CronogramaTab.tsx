@@ -152,10 +152,15 @@ export function CronogramaTab({ proyectoId }: { proyectoId: string }) {
               )}
             />
             <Stat
-              lbl="Costo total"
+              lbl="Costo Contractual"
               val={fmtPEN(
-                partidas.filter((p) => p.nivel === 1).reduce((s, p) => s + Number(p.presupuesto), 0),
+                partidas
+                  .filter((p) => p.nivel === 1)
+                  .reduce((s, p) => s + Number(p.presupuestoContractual ?? 0), 0),
               )}
+              sub={`Ref: ${fmtPEN(
+                partidas.filter((p) => p.nivel === 1).reduce((s, p) => s + Number(p.presupuesto), 0),
+              )}`}
             />
           </div>
 
@@ -168,11 +173,12 @@ export function CronogramaTab({ proyectoId }: { proyectoId: string }) {
   );
 }
 
-function Stat({ lbl, val }: { lbl: string; val: string }) {
+function Stat({ lbl, val, sub }: { lbl: string; val: string; sub?: string }) {
   return (
-    <div>
-      <div className="font-mono text-[9px] uppercase tracking-wider text-ink-4">{lbl}</div>
-      <div className="mt-1 text-[15px] font-bold tracking-[-0.02em]">{val}</div>
+    <div className="min-w-0">
+      <div className="font-mono text-[9px] uppercase tracking-wider text-ink-4 truncate">{lbl}</div>
+      <div className="mt-1 text-[15px] font-bold tracking-[-0.02em] truncate">{val}</div>
+      {sub && <div className="text-[10px] text-ink-3 mt-0.5 truncate">{sub}</div>}
     </div>
   );
 }

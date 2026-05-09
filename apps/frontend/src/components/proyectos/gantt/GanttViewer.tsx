@@ -56,26 +56,33 @@ export function GanttViewer({ partidas, height = 700 }: Props) {
     });
   }, [validPartidas, collapsed, search, showOnlyCritical]);
 
-  // Range de fechas
-  const dateRange = useMemo(() => {
-    if (validPartidas.length === 0) return null;
-    let min = new Date(validPartidas[0]!.fechaInicio!);
-    let max = new Date(validPartidas[0]!.fechaFin!);
+  // Range de fechas · REAL (sin padding) para KPIs y VISUAL (con padding) para Gantt
+  const { dateRange, dateRangeReal } = useMemo(() => {
+    if (validPartidas.length === 0) return { dateRange: null, dateRangeReal: null };
+    // parseDate UTC fuerza · evita off-by-1 TZ Lima -5
+    const parseDate = (s: string) => new Date(`${s.slice(0, 10)}T00:00:00Z`);
+    let min = parseDate(validPartidas[0]!.fechaInicio!);
+    let max = parseDate(validPartidas[0]!.fechaFin!);
     for (const p of validPartidas) {
-      const s = new Date(p.fechaInicio!);
-      const f = new Date(p.fechaFin!);
+      const s = parseDate(p.fechaInicio!);
+      const f = parseDate(p.fechaFin!);
       if (s < min) min = s;
       if (f > max) max = f;
     }
-    min.setDate(min.getDate() - 5);
-    max.setDate(max.getDate() + 5);
-    return { min, max };
+    const real = { min: new Date(min), max: new Date(max) };
+    // Padding visual ±5 días
+    min.setUTCDate(min.getUTCDate() - 5);
+    max.setUTCDate(max.getUTCDate() + 5);
+    return { dateRange: { min, max }, dateRangeReal: real };
   }, [validPartidas]);
 
   // KPIs
   const kpis = useMemo(() => {
-    const cap1 = validPartidas.filter((p) => p.nivel === 1);
+    // Incluir TODAS las partidas nivel 1 (incluso si no tienen fechas/dur)
+    // Para el viewer Gantt usamos validPartidas pero el cost total incluye todas
+    const cap1 = partidas.filter((p) => p.nivel === 1);
     const totalCost = cap1.reduce((s, p) => s + Number(p.presupuesto), 0);
+    const totalCostContractual = cap1.reduce((s, p) => s + Number(p.presupuestoContractual ?? 0), 0);
     const leaves = validPartidas.filter((p) => !hasChildren(p, validPartidas));
     const avgProgress =
       leaves.length > 0
@@ -83,11 +90,12 @@ export function GanttViewer({ partidas, height = 700 }: Props) {
         : 0;
     const criticas = validPartidas.filter((p) => p.isCritical && !p.isSummary).length;
     const hitos = validPartidas.filter((p) => p.isMilestone).length;
-    const totalDuration = dateRange
-      ? Math.ceil((dateRange.max.getTime() - dateRange.min.getTime()) / 86_400_000)
+    // Duración REAL · sin padding visual del Gantt
+    const totalDuration = dateRangeReal
+      ? Math.ceil((dateRangeReal.max.getTime() - dateRangeReal.min.getTime()) / 86_400_000)
       : 0;
-    return { totalDuration, totalCost, avgProgress, criticas, totalLeaves: leaves.length, hitos };
-  }, [validPartidas, dateRange]);
+    return { totalDuration, totalCost, totalCostContractual, avgProgress, criticas, totalLeaves: leaves.length, hitos };
+  }, [validPartidas, dateRangeReal]);
 
   // Virtualizer
   const rowVirtualizer = useVirtualizer({
@@ -201,8 +209,13 @@ export function GanttViewer({ partidas, height = 700 }: Props) {
     <div className="space-y-3">
       {/* KPIs · 5 cards */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5">
-        <Kpi lbl="Duración" val={`${kpis.totalDuration}d`} sub={`${dateRange.min.toLocaleDateString('es-PE', { day: '2-digit', month: 'short' })} → ${dateRange.max.toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: 'numeric' })}`} />
-        <Kpi lbl="Costo Total" val={fmtPEN(kpis.totalCost)} sub="Suma capítulos nivel 1" mono />
+        <Kpi lbl="Duración" val={`${kpis.totalDuration}d`} sub={dateRangeReal ? `${dateRangeReal.min.toLocaleDateString('es-PE', { day: '2-digit', month: 'short', timeZone: 'UTC' })} → ${dateRangeReal.max.toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' })}` : ''} />
+        <Kpi
+          lbl="Costo Contractual"
+          val={fmtPEN(kpis.totalCostContractual > 0 ? kpis.totalCostContractual : kpis.totalCost)}
+          sub={kpis.totalCostContractual > 0 ? `Ref: ${fmtPEN(kpis.totalCost)}` : 'Suma capítulos nivel 1'}
+          mono
+        />
         <Kpi lbl="Progreso" val={`${kpis.avgProgress.toFixed(1)}%`} sub={`${kpis.totalLeaves} hojas`} />
         <Kpi lbl="Críticas" val={`${kpis.criticas}`} sub={`de ${kpis.totalLeaves} hojas`} accent="text-destructive" />
         <Kpi lbl="Hitos" val={`${kpis.hitos}`} sub="◆ milestones" accent="text-warn" />
@@ -349,8 +362,8 @@ export function GanttViewer({ partidas, height = 700 }: Props) {
                 const isSel = selectedId === p.id;
                 const isHov = hover === p.codigo;
                 const indent = (p.nivel - 1) * 12;
-                const start = new Date(p.fechaInicio!);
-                const finish = new Date(p.fechaFin!);
+                const start = new Date(`${p.fechaInicio!.slice(0, 10)}T00:00:00Z`);
+                const finish = new Date(`${p.fechaFin!.slice(0, 10)}T00:00:00Z`);
                 const x = dayToX(start);
                 const w = Math.max(2, dayToX(finish) - x);
 
@@ -758,8 +771,8 @@ function DependencyOverlay({
     if (!p || !p.fechaInicio || !p.fechaFin) return;
     codigoToVRow.set(p.codigo, {
       yMid: vi.start + vi.size / 2,
-      xStart: dayToX(new Date(p.fechaInicio)),
-      xEnd: dayToX(new Date(p.fechaFin)),
+      xStart: dayToX(new Date(`${p.fechaInicio.slice(0, 10)}T00:00:00Z`)),
+      xEnd: dayToX(new Date(`${p.fechaFin.slice(0, 10)}T00:00:00Z`)),
     });
   });
 
@@ -846,5 +859,12 @@ function hasChildren(p: Partida, all: Partida[]): boolean {
 
 function fmtSpanish(d: string | null): string {
   if (!d) return '—';
-  return new Date(d).toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: 'numeric' });
+  // Force UTC parse · evita off-by-1 (Postgres date sin TZ → JS Date interpreta UTC)
+  const date = new Date(`${String(d).slice(0, 10)}T00:00:00Z`);
+  return date.toLocaleDateString('es-PE', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
 }

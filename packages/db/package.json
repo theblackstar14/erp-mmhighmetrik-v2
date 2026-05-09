@@ -11,18 +11,28 @@
     "push": "drizzle-kit push",
     "studio": "drizzle-kit studio",
     "seed": "tsx src/seed.ts",
+    "verify-f0": "tsx src/verify-f0.ts",
+    "import-pg0005-presupuesto": "tsx src/import-pg0005-presupuesto.ts",
+    "verify-f1a": "tsx src/verify-f1a.ts",
+    "import-pg0005-cronograma": "tsx src/import-pg0005-cronograma.ts",
+    "verify-f1b": "tsx src/verify-f1b.ts",
+    "import-pg0005-calendario": "tsx src/import-pg0005-calendario.ts",
+    "verify-f1c": "tsx src/verify-f1c.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@node-rs/argon2": "^2.0.2",
+    "decimal.js": "^10.6.0",
     "dotenv": "^16.4.7",
     "drizzle-orm": "^0.38.4",
-    "postgres": "^3.4.5"
+    "pdf-parse": "^2.4.5",
+    "postgres": "^3.4.5",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@types/node": "^22.10.5",
     "drizzle-kit": "^0.30.2",
     "tsx": "^4.19.2",
-    "typescript": "^5.7.3",
-    "@types/node": "^22.10.5"
+    "typescript": "^5.7.3"
   }
 }
