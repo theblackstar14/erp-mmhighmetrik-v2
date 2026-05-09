@@ -7,6 +7,7 @@ import { PartidasTab } from '@/components/proyectos/tabs/PartidasTab.js';
 import { RecursosTab } from '@/components/proyectos/tabs/RecursosTab.js';
 import { ResumenTab } from '@/components/proyectos/tabs/ResumenTab.js';
 import { TabPlaceholder } from '@/components/proyectos/tabs/TabPlaceholder.js';
+import { ValorizacionesTab } from '@/components/proyectos/tabs/ValorizacionesTab.js';
 import { api } from '@/lib/api.js';
 import { cn } from '@/lib/utils.js';
 
@@ -109,7 +110,7 @@ export function ProjectDetailPage() {
         <Route path="curva-s" element={<CurvaSTab proyectoId={p.id} />} />
         <Route path="recursos" element={<RecursosTab proyectoId={p.id} />} />
         <Route path="documentos" element={<TabPlaceholder title="Documentos" desc="Conexión NAS Synology · 13 carpetas estándar" />} />
-        <Route path="valorizaciones" element={<TabPlaceholder title="Valorizaciones" desc="Generador + PDF · histórico V01 V02..." />} />
+        <Route path="valorizaciones" element={<ValorizacionesTab proyectoId={p.id} />} />
         <Route path="liquidacion" element={<TabPlaceholder title="Liquidación" desc="Gastos · utilidad · reparto socios · formato Excel gerente" />} />
         <Route path="compras" element={<TabPlaceholder title="Compras" desc="OC/OS · proveedores · vinculadas a partidas" />} />
         <Route path="equipo" element={<TabPlaceholder title="Equipo" desc="Profesional + Personal de obra CAPECO" />} />

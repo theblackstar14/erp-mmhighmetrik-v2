@@ -1,6 +1,6 @@
 import { db, schema } from '@erp/db';
 import { proyectoCreateSchema } from '@erp/shared';
-import { and, asc, desc, eq, isNull } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull } from 'drizzle-orm';
 import { Router } from 'express';
 import multer from 'multer';
 import { parseMSProjectXML, tasksToPartidas } from '../lib/mppParser.js';
@@ -255,7 +255,8 @@ router.get('/:id/recursos', async (req, res) => {
     const tipo = recursoTipoMap.get(c.recursoId ?? '') ?? 'material';
     const monto = Number(c.monto ?? 0);
     stats.montosPorTipo[tipo as keyof typeof stats.montosPorTipo] += monto;
-    stats.montoPorMes[(c.mesIndex ?? 1) - 1] += monto;
+    const mIdx = (c.mesIndex ?? 1) - 1;
+    if (stats.montoPorMes[mIdx] !== undefined) stats.montoPorMes[mIdx] += monto;
     stats.montoTotal += monto;
   }
 
@@ -263,6 +264,66 @@ router.get('/:id/recursos', async (req, res) => {
     recursos: recursosFiltered,
     cronograma: cronog,
     stats,
+  });
+});
+
+// GET /api/proyectos/:id/valorizaciones · cabeceras + reajustes + partidas resumen
+router.get('/:id/valorizaciones', async (req, res) => {
+  const proyectoId = req.params.id!;
+
+  const cabeceras = await db
+    .select()
+    .from(schema.valorizaciones)
+    .where(eq(schema.valorizaciones.proyectoId, proyectoId))
+    .orderBy(asc(schema.valorizaciones.numero));
+
+  if (cabeceras.length === 0) {
+    return res.json({ valorizaciones: [], reajustes: [], stats: null });
+  }
+
+  const ids = cabeceras.map((v) => v.id);
+
+  // Reajustes por valorización × FP
+  const reajustesFiltered = await db
+    .select()
+    .from(schema.valorizacionesReajustes)
+    .where(inArray(schema.valorizacionesReajustes.valorizacionId, ids));
+
+  // Resumen partidas valorizadas
+  const valpartFiltered = await db
+    .select()
+    .from(schema.valorizacionesPartidas)
+    .where(inArray(schema.valorizacionesPartidas.valorizacionId, ids));
+
+  const porSubp: Record<string, { monto: number; reajuste: number }> = {};
+  for (const r of reajustesFiltered) {
+    const k = r.subpresupuestoCodigo;
+    if (!porSubp[k]) porSubp[k] = { monto: 0, reajuste: 0 };
+    porSubp[k].monto += Number(r.montoSubpresupuesto);
+    porSubp[k].reajuste += Number(r.montoReajuste);
+  }
+
+  // Stats
+  const sumCd = cabeceras.reduce((s, v) => s + Number(v.montoCd), 0);
+  const sumIgv = cabeceras.reduce((s, v) => s + Number(v.montoIgv), 0);
+  const sumReajuste = cabeceras.reduce((s, v) => s + Number(v.montoReajuste ?? 0), 0);
+  const sumTotal = cabeceras.reduce((s, v) => s + Number(v.montoTotal), 0);
+  const ultima = cabeceras[cabeceras.length - 1];
+
+  res.json({
+    valorizaciones: cabeceras,
+    reajustes: reajustesFiltered,
+    partidasResumen: valpartFiltered.length,
+    stats: {
+      cantidad: cabeceras.length,
+      sumCd,
+      sumIgv,
+      sumReajuste,
+      sumTotal,
+      pctAvanceUltima: ultima ? Number(ultima.pctAvance) : 0,
+      kPromedio: ultima ? Number(ultima.factorReajusteK ?? 1) : 1,
+      porSubpresupuesto: porSubp,
+    },
   });
 });
 

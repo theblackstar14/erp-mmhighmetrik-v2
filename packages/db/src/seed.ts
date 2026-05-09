@@ -623,39 +623,29 @@ console.log('✓ Parámetros contractuales · 7 parámetros Ley 32069');
 await db
   .insert(indicesUnificados)
   .values([
-    { codigo: '01', descripcion: 'Cemento Portland tipo I', categoria: 'Materiales · Cemento' },
-    { codigo: '02', descripcion: 'Acero corrugado para construcción', categoria: 'Materiales · Acero' },
-    { codigo: '03', descripcion: 'Acero estructural', categoria: 'Materiales · Acero' },
-    { codigo: '04', descripcion: 'Albañilería · ladrillo de arcilla', categoria: 'Materiales · Albañilería' },
-    { codigo: '05', descripcion: 'Aluminio', categoria: 'Materiales · Carpintería' },
-    { codigo: '07', descripcion: 'Aparatos sanitarios', categoria: 'Materiales · Sanitarios' },
-    { codigo: '13', descripcion: 'Ascensores', categoria: 'Equipos especiales' },
-    { codigo: '14', descripcion: 'Asfalto', categoria: 'Materiales · Pavimentos' },
-    { codigo: '15', descripcion: 'Block de concreto', categoria: 'Materiales · Albañilería' },
-    { codigo: '17', descripcion: 'Cable NYY', categoria: 'Materiales · Eléctricos' },
-    { codigo: '21', descripcion: 'Cemento Portland tipo I (alterno)', categoria: 'Materiales · Cemento' },
-    { codigo: '30', descripcion: 'Dólar más inflación EEUU', categoria: 'Importados' },
-    { codigo: '32', descripcion: 'Flete terrestre', categoria: 'Logística' },
-    { codigo: '38', descripcion: 'Hormigón', categoria: 'Materiales · Concreto' },
-    { codigo: '39', descripcion: 'Índice general construcción', categoria: 'General' },
-    { codigo: '43', descripcion: 'Madera nacional', categoria: 'Materiales · Madera' },
-    { codigo: '44', descripcion: 'Maquinaria nacional', categoria: 'Equipos' },
-    { codigo: '45', descripcion: 'Maquinaria importada', categoria: 'Equipos' },
-    { codigo: '47', descripcion: 'Mano de obra', categoria: 'Mano de obra · Construcción' },
-    { codigo: '48', descripcion: 'Maquinaria de obras (alquiler)', categoria: 'Equipos' },
-    { codigo: '49', descripcion: 'Madera importada', categoria: 'Materiales · Madera' },
-    { codigo: '51', descripcion: 'Perfiles aluminio', categoria: 'Materiales · Carpintería' },
-    { codigo: '54', descripcion: 'Pintura latex', categoria: 'Materiales · Acabados' },
-    { codigo: '56', descripcion: 'Plancha de acero LAC', categoria: 'Materiales · Acero' },
-    { codigo: '65', descripcion: 'Tubería PVC', categoria: 'Materiales · Sanitarios' },
-    { codigo: '72', descripcion: 'Vidrio incoloro nacional', categoria: 'Materiales · Carpintería' },
-    { codigo: '77', descripcion: 'Combustible Diesel', categoria: 'Combustibles' },
-    { codigo: '78', descripcion: 'Petróleo industrial 6', categoria: 'Combustibles' },
-    { codigo: '80', descripcion: 'Yeso', categoria: 'Materiales · Acabados' },
+    // Catálogo IUs · CAPECO/INEI oficial · descripciones reales
+    { codigo: '02', descripcion: 'ACERO DE CONSTRUCCION LISO', categoria: 'Materiales · Acero' },
+    { codigo: '03', descripcion: 'ACERO DE CONSTRUCCION CORRUGADO', categoria: 'Materiales · Acero' },
+    { codigo: '05', descripcion: 'AGREGADO GRUESO', categoria: 'Materiales · Agregados' },
+    { codigo: '07', descripcion: 'ALAMBRE Y CABLE TIPO TW Y THW', categoria: 'Materiales · Eléctricos' },
+    { codigo: '10', descripcion: 'APARATO SANITARIO CON GRIFERIA', categoria: 'Materiales · Sanitarios' },
+    { codigo: '12', descripcion: 'ARTEFACTO DE ALUMBRADO INTERIOR', categoria: 'Materiales · Eléctricos' },
+    { codigo: '17', descripcion: 'BLOQUE Y LADRILLO', categoria: 'Materiales · Albañilería' },
+    { codigo: '21', descripcion: 'CEMENTO PORTLAND TIPO I', categoria: 'Materiales · Cemento' },
+    { codigo: '24', descripcion: 'CERAMICA ESMALTADA Y SIN ESMALTAR', categoria: 'Materiales · Acabados' },
+    { codigo: '30', descripcion: 'DOLAR MAS INFLACION DEL MERCADO USA', categoria: 'Importados' },
+    { codigo: '32', descripcion: 'FLETE TERRESTRE', categoria: 'Logística' },
+    { codigo: '39', descripcion: 'INDICE GENERAL DE PRECIOS AL CONSUMIDOR', categoria: 'General' },
+    { codigo: '43', descripcion: 'MADERA NACIONAL PARA ENCOFRADO Y CARPINTERIA', categoria: 'Materiales · Madera' },
+    { codigo: '44', descripcion: 'MADERA TERCIADA PARA CARPINTERIA', categoria: 'Materiales · Madera' },
+    { codigo: '47', descripcion: 'MANO DE OBRA', categoria: 'Mano de obra · Construcción' },
+    { codigo: '48', descripcion: 'MAQUINARIA Y EQUIPO NACIONAL', categoria: 'Equipos' },
+    { codigo: '72', descripcion: 'TUBERIA DE PVC', categoria: 'Materiales · Sanitarios' },
+    { codigo: '79', descripcion: 'VIDRIO INCOLORO NACIONAL', categoria: 'Materiales · Carpintería' },
   ])
   .onConflictDoNothing();
 
-console.log('✓ Índices Unificados INEI · 29 códigos base');
+console.log('✓ Índices Unificados INEI · 18 códigos CAPECO/PG0005');
 
 // ═══════════════════════════════════════════════════════════
 // FIN

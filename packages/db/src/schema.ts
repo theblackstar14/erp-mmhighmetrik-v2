@@ -239,6 +239,54 @@ export const valorizaciones = pgTable(
   }),
 );
 
+// ─── Valorizaciones · detalle por partida ─────────────────────
+// Snapshot inmutable: metrado periodo, acumulado, monto contractual
+export const valorizacionesPartidas = pgTable(
+  'valorizaciones_partidas',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    valorizacionId: uuid('valorizacion_id').notNull().references(() => valorizaciones.id, { onDelete: 'cascade' }),
+    partidaId: uuid('partida_id').notNull().references(() => partidas.id, { onDelete: 'cascade' }),
+    subpresupuestoCodigo: varchar('subpresupuesto_codigo', { length: 10 }), // '001'..'005'
+    metradoContractual: decimal('metrado_contractual', { precision: 14, scale: 4 }).notNull(),
+    metradoAnterior: decimal('metrado_anterior', { precision: 14, scale: 4 }).notNull().default('0'),
+    metradoPeriodo: decimal('metrado_periodo', { precision: 14, scale: 4 }).notNull(),
+    metradoAcumulado: decimal('metrado_acumulado', { precision: 14, scale: 4 }).notNull(),
+    precioUnitario: decimal('precio_unitario', { precision: 14, scale: 2 }).notNull(), // contractual
+    montoPeriodo: decimal('monto_periodo', { precision: 14, scale: 2 }).notNull(),
+    montoAcumulado: decimal('monto_acumulado', { precision: 14, scale: 2 }).notNull(),
+    pctAvance: decimal('pct_avance', { precision: 5, scale: 2 }).notNull(),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+  },
+  (t) => ({
+    valIdx: index('valpart_val_idx').on(t.valorizacionId),
+    partIdx: index('valpart_partida_idx').on(t.partidaId),
+    subIdx: index('valpart_subp_idx').on(t.valorizacionId, t.subpresupuestoCodigo),
+  }),
+);
+
+// ─── Valorizaciones · reajuste K por subpresupuesto/FP ───────
+// 1 fila por FP (subp) por valorización · K = Σ coef × (Ir/Io)
+export const valorizacionesReajustes = pgTable(
+  'valorizaciones_reajustes',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    valorizacionId: uuid('valorizacion_id').notNull().references(() => valorizaciones.id, { onDelete: 'cascade' }),
+    formulaId: uuid('formula_id').notNull().references(() => formulasPolinomicas.id, { onDelete: 'cascade' }),
+    subpresupuestoCodigo: varchar('subpresupuesto_codigo', { length: 10 }).notNull(),
+    anioMesIndice: varchar('anio_mes_indice', { length: 7 }).notNull(), // mes Ir
+    kCalculado: decimal('k_calculado', { precision: 8, scale: 6 }).notNull(),
+    montoSubpresupuesto: decimal('monto_subpresupuesto', { precision: 14, scale: 2 }).notNull(), // suma valpart
+    montoReajuste: decimal('monto_reajuste', { precision: 14, scale: 2 }).notNull(), // (K-1) × monto
+    detalleK: jsonb('detalle_k').$type<Array<{ monomio: number; simbolo: string; coef: number; ir: number; io: number; relacion: number }>>().notNull(),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+  },
+  (t) => ({
+    valIdx: index('valrea_val_idx').on(t.valorizacionId),
+    fpIdx: index('valrea_fp_idx').on(t.formulaId),
+  }),
+);
+
 // ─── Trabajadores (personal de obra · CAPECO) ────────────────
 export const trabajadores = pgTable(
   'trabajadores',
@@ -887,6 +935,11 @@ export type NewPartida = typeof partidas.$inferInsert;
 export type Avance = typeof avances.$inferSelect;
 export type NewAvance = typeof avances.$inferInsert;
 export type Valorizacion = typeof valorizaciones.$inferSelect;
+export type NewValorizacion = typeof valorizaciones.$inferInsert;
+export type ValorizacionPartida = typeof valorizacionesPartidas.$inferSelect;
+export type NewValorizacionPartida = typeof valorizacionesPartidas.$inferInsert;
+export type ValorizacionReajuste = typeof valorizacionesReajustes.$inferSelect;
+export type NewValorizacionReajuste = typeof valorizacionesReajustes.$inferInsert;
 export type Trabajador = typeof trabajadores.$inferSelect;
 export type Asiento = typeof asientos.$inferSelect;
 export type AsientoLinea = typeof asientosLineas.$inferSelect;

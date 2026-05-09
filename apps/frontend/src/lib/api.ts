@@ -61,6 +61,7 @@ export const api = {
     getAvances: (id: string) => req<AvancesResponse>(`/api/proyectos/${id}/avances`),
     getCurvaS: (id: string) => req<{ data: CurvaSData | null }>(`/api/proyectos/${id}/curva-s`),
     getRecursos: (id: string) => req<RecursosResponse>(`/api/proyectos/${id}/recursos`),
+    getValorizaciones: (id: string) => req<ValorizacionesResponse>(`/api/proyectos/${id}/valorizaciones`),
   },
 
   // Avances
@@ -278,6 +279,60 @@ export type CronogramaAdq = {
   fechaHasta: string;
   cantidad: string;
   monto: string;
+};
+
+export type Valorizacion = {
+  id: string;
+  proyectoId: string;
+  numero: number;
+  fechaDesde: string;
+  fechaHasta: string;
+  fechaEmision: string;
+  montoCd: string;
+  montoIgv: string;
+  montoTotal: string;
+  pctAvance: string;
+  factorReajusteK: string | null;
+  montoReajuste: string | null;
+  status: 'borrador' | 'emitida' | 'aprobada' | 'cobrada' | 'rechazada';
+  observaciones: string | null;
+  createdAt: string;
+};
+
+export type ValorizacionReajuste = {
+  id: string;
+  valorizacionId: string;
+  formulaId: string;
+  subpresupuestoCodigo: string;
+  anioMesIndice: string;
+  kCalculado: string;
+  montoSubpresupuesto: string;
+  montoReajuste: string;
+  detalleK: Array<{
+    monomio: number;
+    simbolo: string;
+    coef: number;
+    ir: number;
+    io: number;
+    relacion: number;
+  }>;
+  createdAt: string;
+};
+
+export type ValorizacionesResponse = {
+  valorizaciones: Valorizacion[];
+  reajustes: ValorizacionReajuste[];
+  partidasResumen: number;
+  stats: {
+    cantidad: number;
+    sumCd: number;
+    sumIgv: number;
+    sumReajuste: number;
+    sumTotal: number;
+    pctAvanceUltima: number;
+    kPromedio: number;
+    porSubpresupuesto: Record<string, { monto: number; reajuste: number }>;
+  } | null;
 };
 
 export type RecursosResponse = {
