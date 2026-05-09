@@ -1,0 +1,360 @@
+<jxb:bindings version="3.0"
+               xmlns:jxb="https://jakarta.ee/xml/ns/jaxb"
+               xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+
+  <!-- note that the schemaLocation will need to be changed to be correct for your system -->
+  <jxb:bindings schemaLocation="file:mspdi_pj15-corrected.xsd" node="/xsd:schema">
+
+   <jxb:globalBindings>
+      <!-- globally map float types to BigDecimal for consistency -->
+      <jxb:javaType name="java.math.BigDecimal"
+                    xmlType="xsd:float"
+                    parseMethod="jakarta.xml.bind.DatatypeConverter.parseDecimal"
+                    printMethod="jakarta.xml.bind.DatatypeConverter.printDecimal"/>
+      <jxb:javaType name="java.time.LocalTime"
+                    xmlType="xsd:time"
+                    parseMethod="org.mpxj.mspdi.DatatypeConverter.parseTime"
+                    printMethod="org.mpxj.mspdi.DatatypeConverter.printTime"/>
+      <jxb:javaType name="java.time.LocalDateTime"
+                    xmlType="xsd:dateTime"
+                    parseMethod="org.mpxj.mspdi.DatatypeConverter.parseDateTime"
+                    printMethod="org.mpxj.mspdi.DatatypeConverter.printDateTime"/>
+      <!-- globally map duration types to String to allow custom print and parse to be used -->
+      <jxb:javaType name="java.lang.String"
+                    xmlType="xsd:duration"
+                    parseMethod="org.mpxj.mspdi.DatatypeConverter.parseString"
+                    printMethod="org.mpxj.mspdi.DatatypeConverter.printString"/>
+		<!-- globally map boolean types to String to allow custom print and parse to be used -->
+		<jxb:javaType name="boolean"
+                    xmlType="xsd:boolean"
+                    parseMethod="org.mpxj.mspdi.DatatypeConverter.parseBoolean"
+                    printMethod="org.mpxj.mspdi.DatatypeConverter.printBoolean"/>
+
+   </jxb:globalBindings>
+
+   <!-- Project.CurrencySymbolPosition -->
+   <jxb:bindings node="//xsd:complexType[@name='Project']//xsd:element[@name='CurrencySymbolPosition']">
+      <jxb:bindings node="./xsd:simpleType">
+         <jxb:javaType name="org.mpxj.CurrencySymbolPosition"
+                       parseMethod="org.mpxj.mspdi.DatatypeConverter.parseCurrencySymbolPosition"
+                       printMethod="org.mpxj.mspdi.DatatypeConverter.printCurrencySymbolPosition"/>
+      </jxb:bindings>
+   </jxb:bindings>
+
+   <!-- Project.DefaultFixedCostAccrual -->
+   <jxb:bindings node="//xsd:complexType[@name='Project']//xsd:element[@name='DefaultFixedCostAccrual']">
+      <jxb:bindings node="./xsd:simpleType">
+         <jxb:javaType name="org.mpxj.AccrueType"
+                       parseMethod="org.mpxj.mspdi.DatatypeConverter.parseAccrueType"
+                       printMethod="org.mpxj.mspdi.DatatypeConverter.printAccrueType"/>
+      </jxb:bindings>
+   </jxb:bindings>
+
+   <!-- Project.DefaultTaskType -->
+   <jxb:bindings node="//xsd:complexType[@name='Project']//xsd:element[@name='DefaultTaskType']">
+      <jxb:bindings node="./xsd:simpleType">
+         <jxb:javaType name="org.mpxj.TaskType"
+                       parseMethod="org.mpxj.mspdi.DatatypeConverter.parseTaskType"
+                       printMethod="org.mpxj.mspdi.DatatypeConverter.printTaskType"/>
+      </jxb:bindings>
+   </jxb:bindings>
+
+   <!-- Resource.ResourceType -->
+   <jxb:bindings node="//xsd:element[@name='Resource']//xsd:element[@name='Type']">
+      <jxb:bindings node="./xsd:simpleType">
+         <jxb:javaType name="org.mpxj.ResourceType"
+                       parseMethod="org.mpxj.mspdi.DatatypeConverter.parseResourceType"
+                       printMethod="org.mpxj.mspdi.DatatypeConverter.printResourceType"/>
+      </jxb:bindings>
+   </jxb:bindings>
+
+   <!-- Resource.WorkGroup -->
+   <jxb:bindings node="//xsd:element[@name='Resource']//xsd:element[@name='WorkGroup']">
+      <jxb:bindings node="./xsd:simpleType">
+         <jxb:javaType name="org.mpxj.WorkGroup"
+                       parseMethod="org.mpxj.mspdi.DatatypeConverter.parseWorkGroup"
+                       printMethod="org.mpxj.mspdi.DatatypeConverter.printWorkGroup"/>
+      </jxb:bindings>
+   </jxb:bindings>
+
+   <!-- Resource.AccrueAt -->
+   <jxb:bindings node="//xsd:element[@name='Resource']//xsd:element[@name='AccrueAt']">
+      <jxb:bindings node="./xsd:simpleType">
+         <jxb:javaType name="org.mpxj.AccrueType"
+                       parseMethod="org.mpxj.mspdi.DatatypeConverter.parseAccrueType"
+                       printMethod="org.mpxj.mspdi.DatatypeConverter.printAccrueType"/>
+      </jxb:bindings>
+   </jxb:bindings>
+
+   <!-- Resource.BookingType -->
+   <jxb:bindings node="//xsd:element[@name='Resource']//xsd:element[@name='BookingType']">
+      <jxb:bindings node="./xsd:simpleType">
+         <jxb:javaType name="org.mpxj.BookingType"
+                       parseMethod="org.mpxj.mspdi.DatatypeConverter.parseBookingType"
+                       printMethod="org.mpxj.mspdi.DatatypeConverter.printBookingType"/>
+      </jxb:bindings>
+   </jxb:bindings>
+
+   <!-- Task.FixedCostAccrual -->
+   <jxb:bindings node="//xsd:element[@name='Task']//xsd:element[@name='FixedCostAccrual']">
+      <jxb:bindings node="./xsd:simpleType">
+         <jxb:javaType name="org.mpxj.AccrueType"
+                       parseMethod="org.mpxj.mspdi.DatatypeConverter.parseAccrueType"
+                       printMethod="org.mpxj.mspdi.DatatypeConverter.printAccrueType"/>
+      </jxb:bindings>
+   </jxb:bindings>
+
+   <!-- Task.Type -->
+   <jxb:bindings node="//xsd:element[@name='Task']/xsd:complexType/xsd:sequence/xsd:element[@name='Type']">
+      <jxb:bindings node="./xsd:simpleType">
+         <jxb:javaType name="org.mpxj.TaskType"
+                       parseMethod="org.mpxj.mspdi.DatatypeConverter.parseTaskType"
+                       printMethod="org.mpxj.mspdi.DatatypeConverter.printTaskType"/>
+      </jxb:bindings>
+   </jxb:bindings>
+
+   <!-- Assignment.WorkContour -->
+   <jxb:bindings node="//xsd:element[@name='Assignment']//xsd:element[@name='WorkContour']">
+      <jxb:bindings node="./xsd:simpleType">
+         <jxb:javaType name="org.mpxj.WorkContour"
+                       parseMethod="org.mpxj.mspdi.DatatypeConverter.parseWorkContour"
+                       printMethod="org.mpxj.mspdi.DatatypeConverter.printWorkContour"/>
+      </jxb:bindings>
+   </jxb:bindings>
+
+   <!-- Task.UID -->
+   <jxb:bindings node="//xsd:element[@name='Task']/xsd:complexType/xsd:sequence/xsd:element[@name='UID']">
+      <jxb:bindings node=".">
+         <jxb:property>
+            <jxb:baseType>
+               <jxb:javaType name="java.lang.Integer"
+                             parseMethod="org.mpxj.mspdi.DatatypeConverter.parseTaskUID"
+                             printMethod="org.mpxj.mspdi.DatatypeConverter.printTaskUID"/>
+            </jxb:baseType>
+         </jxb:property>
+      </jxb:bindings>
+   </jxb:bindings>
+
+   <!-- Resource.UID -->
+   <jxb:bindings node="//xsd:element[@name='Resource']/xsd:complexType/xsd:sequence/xsd:element[@name='UID']">
+      <jxb:bindings node=".">
+         <jxb:property>
+            <jxb:baseType>
+               <jxb:javaType name="java.lang.Integer"
+                             parseMethod="org.mpxj.mspdi.DatatypeConverter.parseResourceUID"
+                             printMethod="org.mpxj.mspdi.DatatypeConverter.printResourceUID"/>
+            </jxb:baseType>
+         </jxb:property>
+      </jxb:bindings>
+   </jxb:bindings>
+
+   <!-- Task.GUID -->
+   <jxb:bindings node="//xsd:element[@name='Task']/xsd:complexType/xsd:sequence/xsd:element[@name='GUID']">
+      <jxb:bindings node=".">
+         <jxb:property>
+            <jxb:baseType>
+               <jxb:javaType name="java.util.UUID"
+                             parseMethod="org.mpxj.mspdi.DatatypeConverter.parseUUID"
+                             printMethod="org.mpxj.mspdi.DatatypeConverter.printUUID"/>
+            </jxb:baseType>
+         </jxb:property>
+      </jxb:bindings>
+   </jxb:bindings>
+
+   <!-- Resource.GUID -->
+   <jxb:bindings node="//xsd:element[@name='Resource']/xsd:complexType/xsd:sequence/xsd:element[@name='GUID']">
+      <jxb:bindings node=".">
+         <jxb:property>
+            <jxb:baseType>
+               <jxb:javaType name="java.util.UUID"
+                             parseMethod="org.mpxj.mspdi.DatatypeConverter.parseUUID"
+                             printMethod="org.mpxj.mspdi.DatatypeConverter.printUUID"/>
+            </jxb:baseType>
+         </jxb:property>
+      </jxb:bindings>
+   </jxb:bindings>
+
+   <!-- Assignment.GUID -->
+   <jxb:bindings node="//xsd:element[@name='Assignment']/xsd:complexType/xsd:sequence/xsd:element[@name='GUID']">
+      <jxb:bindings node=".">
+         <jxb:property>
+            <jxb:baseType>
+               <jxb:javaType name="java.util.UUID"
+                             parseMethod="org.mpxj.mspdi.DatatypeConverter.parseUUID"
+                             printMethod="org.mpxj.mspdi.DatatypeConverter.printUUID"/>
+            </jxb:baseType>
+         </jxb:property>
+      </jxb:bindings>
+   </jxb:bindings>
+
+   <!-- Project.GUID -->
+   <jxb:bindings node="//xsd:complexType[@name='Project']/xsd:sequence/xsd:element[@name='GUID']">
+      <jxb:bindings node=".">
+         <jxb:property>
+            <jxb:baseType>
+               <jxb:javaType name="java.util.UUID"
+                             parseMethod="org.mpxj.mspdi.DatatypeConverter.parseUUID"
+                             printMethod="org.mpxj.mspdi.DatatypeConverter.printUUID"/>
+            </jxb:baseType>
+         </jxb:property>
+      </jxb:bindings>
+   </jxb:bindings>
+
+   <!-- OutlineCode GUID -->
+   <jxb:bindings node="//xsd:element[@name='OutlineCode']//xsd:element[@name='Guid']">
+      <jxb:bindings node=".">
+         <jxb:property>
+            <jxb:baseType>
+               <jxb:javaType name="java.util.UUID"
+                             parseMethod="org.mpxj.mspdi.DatatypeConverter.parseUUID"
+                             printMethod="org.mpxj.mspdi.DatatypeConverter.printUUID"/>
+            </jxb:baseType>
+         </jxb:property>
+      </jxb:bindings>
+   </jxb:bindings>
+
+   <!-- OutlineCode FieldGUID -->
+   <jxb:bindings node="//xsd:element[@name='OutlineCode']//xsd:element[@name='FieldGUID']">
+      <jxb:bindings node=".">
+         <jxb:property>
+            <jxb:baseType>
+               <jxb:javaType name="java.util.UUID"
+                             parseMethod="org.mpxj.mspdi.DatatypeConverter.parseUUID"
+                             printMethod="org.mpxj.mspdi.DatatypeConverter.printUUID"/>
+            </jxb:baseType>
+         </jxb:property>
+      </jxb:bindings>
+   </jxb:bindings>
+
+   <!-- Calendar GUID -->
+   <jxb:bindings node="//xsd:element[@name='Calendar']//xsd:element[@name='GUID']">
+      <jxb:bindings node=".">
+         <jxb:property>
+            <jxb:baseType>
+               <jxb:javaType name="java.util.UUID"
+                             parseMethod="org.mpxj.mspdi.DatatypeConverter.parseUUID"
+                             printMethod="org.mpxj.mspdi.DatatypeConverter.printUUID"/>
+            </jxb:baseType>
+         </jxb:property>
+      </jxb:bindings>
+   </jxb:bindings>
+
+   <!-- ExtendedAttribute Ltuid -->
+   <jxb:bindings node="//xsd:element[@name='ExtendedAttribute']//xsd:element[@name='Ltuid']">
+      <jxb:bindings node=".">
+         <jxb:property>
+            <jxb:baseType>
+               <jxb:javaType name="java.util.UUID"
+                             parseMethod="org.mpxj.mspdi.DatatypeConverter.parseUUID"
+                             printMethod="org.mpxj.mspdi.DatatypeConverter.printUUID"/>
+            </jxb:baseType>
+         </jxb:property>
+      </jxb:bindings>
+   </jxb:bindings>
+
+   <!-- Resource.ExtendedAttribute.ValueGUID -->
+   <jxb:bindings node="//xsd:element[@name='Resource']//xsd:element[@name='ExtendedAttribute']/xsd:complexType/xsd:sequence/xsd:element[@name='ValueGUID']">
+      <jxb:bindings node=".">
+         <jxb:property>
+            <jxb:baseType>
+               <jxb:javaType name="java.util.UUID"
+                             parseMethod="org.mpxj.mspdi.DatatypeConverter.parseUUID"
+                             printMethod="org.mpxj.mspdi.DatatypeConverter.printUUID"/>
+            </jxb:baseType>
+         </jxb:property>
+      </jxb:bindings>
+   </jxb:bindings>
+
+   <!-- Task.ExtendedAttribute.ValueGUID -->
+   <jxb:bindings node="//xsd:element[@name='Task']//xsd:element[@name='ExtendedAttribute']/xsd:complexType/xsd:sequence/xsd:element[@name='ValueGUID']">
+      <jxb:bindings node=".">
+         <jxb:property>
+            <jxb:baseType>
+               <jxb:javaType name="java.util.UUID"
+                             parseMethod="org.mpxj.mspdi.DatatypeConverter.parseUUID"
+                             printMethod="org.mpxj.mspdi.DatatypeConverter.printUUID"/>
+            </jxb:baseType>
+         </jxb:property>
+      </jxb:bindings>
+   </jxb:bindings>
+
+   <!-- Assignment.ExtendedAttribute.ValueGUID -->
+   <jxb:bindings node="//xsd:element[@name='Assignment']//xsd:element[@name='ExtendedAttribute']/xsd:complexType/xsd:sequence/xsd:element[@name='ValueGUID']">
+      <jxb:bindings node=".">
+         <jxb:property>
+            <jxb:baseType>
+               <jxb:javaType name="java.util.UUID"
+                             parseMethod="org.mpxj.mspdi.DatatypeConverter.parseUUID"
+                             printMethod="org.mpxj.mspdi.DatatypeConverter.printUUID"/>
+            </jxb:baseType>
+         </jxb:property>
+      </jxb:bindings>
+   </jxb:bindings>
+
+   <!-- Task.PercentComplete -->
+   <jxb:bindings node="//xsd:element[@name='Task']//xsd:element[@name='PercentComplete']">
+      <jxb:bindings node=".">
+         <jxb:property>
+            <jxb:baseType>
+               <jxb:javaType name="java.lang.Number"
+                             parseMethod="org.mpxj.mspdi.DatatypeConverter.parsePercentComplete"
+                             printMethod="org.mpxj.mspdi.DatatypeConverter.printPercentComplete"/>
+            </jxb:baseType>
+         </jxb:property>
+      </jxb:bindings>
+   </jxb:bindings>
+
+   <!-- Task.PhysicalPercentComplete -->
+   <jxb:bindings node="//xsd:element[@name='Task']//xsd:element[@name='PhysicalPercentComplete']">
+      <jxb:bindings node=".">
+         <jxb:property>
+            <jxb:baseType>
+               <jxb:javaType name="java.lang.Number"
+                             parseMethod="org.mpxj.mspdi.DatatypeConverter.parsePercentComplete"
+                             printMethod="org.mpxj.mspdi.DatatypeConverter.printPercentComplete"/>
+            </jxb:baseType>
+         </jxb:property>
+      </jxb:bindings>
+   </jxb:bindings>
+
+   <!-- Task.PercentWorkComplete -->
+   <jxb:bindings node="//xsd:element[@name='Task']//xsd:element[@name='PercentWorkComplete']">
+      <jxb:bindings node=".">
+         <jxb:property>
+            <jxb:baseType>
+               <jxb:javaType name="java.lang.Number"
+                             parseMethod="org.mpxj.mspdi.DatatypeConverter.parsePercentComplete"
+                             printMethod="org.mpxj.mspdi.DatatypeConverter.printPercentComplete"/>
+            </jxb:baseType>
+         </jxb:property>
+      </jxb:bindings>
+   </jxb:bindings>
+
+   <!-- Resource.PercentWorkComplete -->
+   <jxb:bindings node="//xsd:element[@name='Resource']//xsd:element[@name='PercentWorkComplete']">
+      <jxb:bindings node=".">
+         <jxb:property>
+            <jxb:baseType>
+               <jxb:javaType name="java.lang.Number"
+                             parseMethod="org.mpxj.mspdi.DatatypeConverter.parsePercentComplete"
+                             printMethod="org.mpxj.mspdi.DatatypeConverter.printPercentComplete"/>
+            </jxb:baseType>
+         </jxb:property>
+      </jxb:bindings>
+   </jxb:bindings>
+
+   <!-- Assignment.PercentWorkComplete -->
+   <jxb:bindings node="//xsd:element[@name='Assignment']//xsd:element[@name='PercentWorkComplete']">
+      <jxb:bindings node=".">
+         <jxb:property>
+            <jxb:baseType>
+               <jxb:javaType name="java.lang.Number"
+                             parseMethod="org.mpxj.mspdi.DatatypeConverter.parsePercentComplete"
+                             printMethod="org.mpxj.mspdi.DatatypeConverter.printPercentComplete"/>
+            </jxb:baseType>
+         </jxb:property>
+      </jxb:bindings>
+   </jxb:bindings>
+
+  </jxb:bindings>
+</jxb:bindings>

@@ -1,0 +1,504 @@
+/*
+ * file:       RollupHelper.java
+ * author:     Jon Iles
+ * date:       2025-11-12
+ */
+
+/*
+ * This library is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU Lesser General Public License as published by the
+ * Free Software Foundation; either version 2.1 of the License, or (at your
+ * option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+ * or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public
+ * License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this library; if not, write to the Free Software Foundation, Inc.,
+ * 59 Temple Place, Suite 330, Boston, MA 02111-1307, USA.
+ */
+
+package org.mpxj.primavera;
+
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.stream.Collectors;
+
+import org.mpxj.Duration;
+import org.mpxj.ExpenseItem;
+import org.mpxj.PercentCompleteType;
+import org.mpxj.ProjectCalendar;
+import org.mpxj.ProjectFile;
+import org.mpxj.Resource;
+import org.mpxj.ResourceAssignment;
+import org.mpxj.ResourceType;
+import org.mpxj.Task;
+import org.mpxj.TimeUnit;
+import org.mpxj.common.LocalDateTimeHelper;
+import org.mpxj.common.NumberHelper;
+
+/**
+ * Common methods for rolling up data from activities to WBS.
+ */
+class RollupHelper
+{
+   /**
+    * Roll up all relevant values from activities to parent WBS entries.
+    *
+    * @param file ProjectFile instance
+    */
+   public static void rollupValues(ProjectFile file)
+   {
+      file.getChildTasks().forEach(RollupHelper::rollupCalendars);
+      file.getChildTasks().forEach(RollupHelper::rollupDates);
+      file.getChildTasks().forEach(RollupHelper::rollupWork);
+      file.getChildTasks().forEach(RollupHelper::rollupCosts);
+
+      if (file.getProjectProperties().getBaselineProjectUniqueID() == null)
+      {
+         file.getTasks().stream().filter(Task::getSummary).forEach(BaselineHelper::populateBaselineFromCurrentProject);
+      }
+   }
+
+   /**
+    * Roll up costs from a resource assignment to the parent task.
+    *
+    * @param assignment resource assignment
+    */
+   public static void resourceAssignmentCostRollup(ResourceAssignment assignment)
+   {
+      Task task = assignment.getTask();
+      task.setPlannedCost(NumberHelper.sumAsDouble(task.getPlannedCost(), assignment.getPlannedCost()));
+      task.setActualCost(NumberHelper.sumAsDouble(task.getActualCost(), assignment.getActualCost()));
+      task.setRemainingCost(NumberHelper.sumAsDouble(task.getRemainingCost(), assignment.getRemainingCost()));
+      task.setCost(NumberHelper.sumAsDouble(task.getCost(), assignment.getCost()));
+
+      Resource resource = assignment.getResource();
+      if (resource == null)
+      {
+         return;
+      }
+
+      ResourceType resourceType = resource.getType();
+      if (resourceType == null)
+      {
+         resourceType = ResourceType.WORK;
+      }
+
+      switch (resourceType)
+      {
+         case WORK:
+         {
+            task.setPlannedCostLabor(NumberHelper.sumAsDouble(task.getPlannedCostLabor(), assignment.getPlannedCost()));
+            task.setActualCostLabor(NumberHelper.sumAsDouble(task.getActualCostLabor(), assignment.getActualCost()));
+            task.setRemainingCostLabor(NumberHelper.sumAsDouble(task.getRemainingCostLabor(), assignment.getRemainingCost()));
+            break;
+         }
+
+         case MATERIAL:
+         {
+            task.setPlannedCostMaterial(NumberHelper.sumAsDouble(task.getPlannedCostMaterial(), assignment.getPlannedCost()));
+            task.setActualCostMaterial(NumberHelper.sumAsDouble(task.getActualCostMaterial(), assignment.getActualCost()));
+            task.setRemainingCostMaterial(NumberHelper.sumAsDouble(task.getRemainingCostMaterial(), assignment.getRemainingCost()));
+            break;
+         }
+
+         case NON_LABOR:
+         {
+            task.setPlannedCostNonLabor(NumberHelper.sumAsDouble(task.getPlannedCostNonLabor(), assignment.getPlannedCost()));
+            task.setActualCostNonLabor(NumberHelper.sumAsDouble(task.getActualCostNonLabor(), assignment.getActualCost()));
+            task.setRemainingCostNonLabor(NumberHelper.sumAsDouble(task.getRemainingCostNonLabor(), assignment.getRemainingCost()));
+            break;
+         }
+      }
+   }
+
+   /**
+    * Roll up costs from an expense item to the parent task.
+    *
+    * @param ei expense item
+    */
+   public static void expenseItemCostRollup(ExpenseItem ei)
+   {
+      Task task = ei.getTask();
+      task.setPlannedCost(NumberHelper.sumAsDouble(task.getPlannedCost(), ei.getPlannedCost()));
+      task.setPlannedCostExpense(NumberHelper.sumAsDouble(task.getPlannedCostExpense(), ei.getPlannedCost()));
+      task.setActualCost(NumberHelper.sumAsDouble(task.getActualCost(), ei.getActualCost()));
+      task.setActualCostExpense(NumberHelper.sumAsDouble(task.getActualCostExpense(), ei.getActualCost()));
+      task.setRemainingCost(NumberHelper.sumAsDouble(task.getRemainingCost(), ei.getRemainingCost()));
+      task.setRemainingCostExpense(NumberHelper.sumAsDouble(task.getRemainingCostExpense(), ei.getRemainingCost()));
+      task.setCost(NumberHelper.sumAsDouble(task.getCost(), ei.getAtCompletionCost()));
+      task.setFixedCost(NumberHelper.sumAsDouble(task.getFixedCost(), ei.getAtCompletionCost()));
+   }
+
+   /**
+    * This method sets the calendar used by a WBS entry. In P6 if all activities
+    * under a WBS entry use the same calendar, the WBS entry uses this calendar
+    * for date calculation. If the activities use different calendars, the WBS
+    * entry will use the project's default calendar.
+    *
+    * @param task task to validate
+    * @return calendar used by this task
+    */
+   private static ProjectCalendar rollupCalendars(Task task)
+   {
+      ProjectCalendar result = null;
+
+      if (task.hasChildTasks())
+      {
+         List<ProjectCalendar> calendars = task.getChildTasks().stream().map(RollupHelper::rollupCalendars).distinct().collect(Collectors.toList());
+
+         if (calendars.size() == 1)
+         {
+            ProjectCalendar firstCalendar = calendars.get(0);
+            if (firstCalendar != null && firstCalendar != task.getParentFile().getDefaultCalendar())
+            {
+               result = firstCalendar;
+               task.setCalendar(result);
+            }
+         }
+      }
+      else
+      {
+         result = task.getCalendar();
+      }
+
+      return result;
+   }
+
+   /**
+    * The Primavera WBS entries we read in as tasks don't have work entered. We try
+    * to compensate for this by summing the child tasks' work. This method recursively
+    * descends through the tasks to do this.
+    *
+    * @param parentTask parent task.
+    */
+   private static void rollupWork(Task parentTask)
+   {
+      if (!parentTask.hasChildTasks())
+      {
+         return;
+      }
+
+      ProjectCalendar calendar = parentTask.getEffectiveCalendar();
+
+      Duration plannedWork = null;
+      Duration plannedWorkLabor = null;
+      Duration plannedWorkNonLabor = null;
+
+      Duration actualWork = null;
+      Duration actualWorkLabor = null;
+      Duration actualWorkNonLabor = null;
+
+      Duration remainingWork = null;
+      Duration remainingWorkLabor = null;
+      Duration remainingWorkNonLabor = null;
+
+      Duration work = null;
+
+      for (Task task : parentTask.getChildTasks())
+      {
+         rollupWork(task);
+
+         plannedWork = Duration.add(plannedWork, task.getPlannedWork(), calendar);
+         plannedWorkLabor = Duration.add(plannedWorkLabor, task.getPlannedWorkLabor(), calendar);
+         plannedWorkNonLabor = Duration.add(plannedWorkNonLabor, task.getPlannedWorkNonLabor(), calendar);
+
+         actualWork = Duration.add(actualWork, task.getActualWork(), calendar);
+         actualWorkLabor = Duration.add(actualWorkLabor, task.getActualWorkLabor(), calendar);
+         actualWorkNonLabor = Duration.add(actualWorkNonLabor, task.getActualWorkNonLabor(), calendar);
+
+         remainingWork = Duration.add(remainingWork, task.getRemainingWork(), calendar);
+         remainingWorkLabor = Duration.add(remainingWorkLabor, task.getRemainingWorkLabor(), calendar);
+         remainingWorkNonLabor = Duration.add(remainingWorkNonLabor, task.getRemainingWorkNonLabor(), calendar);
+
+         work = Duration.add(work, task.getWork(), calendar);
+      }
+
+      parentTask.setPlannedWork(plannedWork);
+      parentTask.setPlannedWorkLabor(plannedWorkLabor);
+      parentTask.setPlannedWorkNonLabor(plannedWorkNonLabor);
+
+      parentTask.setActualWork(actualWork);
+      parentTask.setActualWorkLabor(actualWorkLabor);
+      parentTask.setActualWorkNonLabor(actualWorkNonLabor);
+
+      parentTask.setRemainingWork(remainingWork);
+      parentTask.setRemainingWorkLabor(remainingWork);
+      parentTask.setRemainingWorkNonLabor(remainingWork);
+
+      parentTask.setWork(work);
+   }
+
+   /**
+    * Recursively descend through the task hierarchy summarising costs
+    * to the WBS entries.
+    *
+    * @param parentTask parent task
+    */
+   private static void rollupCosts(Task parentTask)
+   {
+      if (!parentTask.hasChildTasks())
+      {
+         return;
+      }
+
+      double plannedCost = 0;
+      double plannedCostLabor = 0;
+      double plannedCostNonLabor = 0;
+      double plannedCostMaterial = 0;
+      double plannedCostExpense = 0;
+
+      double actualCost = 0;
+      double actualCostLabor = 0;
+      double actualCostNonLabor = 0;
+      double actualCostMaterial = 0;
+      double actualCostExpense = 0;
+
+      double remainingCost = 0;
+      double remainingCostLabor = 0;
+      double remainingCostNonLabor = 0;
+      double remainingCostMaterial = 0;
+      double remainingCostExpense = 0;
+
+      double cost = 0;
+      double fixedCost = 0;
+
+      for (Task child : parentTask.getChildTasks())
+      {
+         //process children first before adding their costs
+         rollupCosts(child);
+
+         plannedCost += NumberHelper.getDouble(child.getPlannedCost());
+         plannedCostLabor += NumberHelper.getDouble(child.getPlannedCostLabor());
+         plannedCostNonLabor += NumberHelper.getDouble(child.getPlannedCostNonLabor());
+         plannedCostMaterial += NumberHelper.getDouble(child.getPlannedCostMaterial());
+         plannedCostExpense += NumberHelper.getDouble(child.getPlannedCostExpense());
+
+         actualCost += NumberHelper.getDouble(child.getActualCost());
+         actualCostLabor += NumberHelper.getDouble(child.getActualCostLabor());
+         actualCostNonLabor += NumberHelper.getDouble(child.getActualCostNonLabor());
+         actualCostMaterial += NumberHelper.getDouble(child.getActualCostMaterial());
+         actualCostExpense += NumberHelper.getDouble(child.getActualCostExpense());
+
+         remainingCost += NumberHelper.getDouble(child.getRemainingCost());
+         remainingCostLabor += NumberHelper.getDouble(child.getRemainingCostLabor());
+         remainingCostNonLabor += NumberHelper.getDouble(child.getRemainingCostNonLabor());
+         remainingCostMaterial += NumberHelper.getDouble(child.getRemainingCostMaterial());
+         remainingCostExpense += NumberHelper.getDouble(child.getRemainingCostExpense());
+
+         cost += NumberHelper.getDouble(child.getCost());
+         fixedCost += NumberHelper.getDouble(child.getFixedCost());
+      }
+
+      parentTask.setPlannedCost(NumberHelper.getDouble(plannedCost));
+      parentTask.setPlannedCostLabor(NumberHelper.getDouble(plannedCostLabor));
+      parentTask.setPlannedCostNonLabor(NumberHelper.getDouble(plannedCostNonLabor));
+      parentTask.setPlannedCostMaterial(NumberHelper.getDouble(plannedCostMaterial));
+      parentTask.setPlannedCostExpense(NumberHelper.getDouble(plannedCostExpense));
+
+      parentTask.setActualCost(NumberHelper.getDouble(actualCost));
+      parentTask.setActualCostLabor(NumberHelper.getDouble(actualCostLabor));
+      parentTask.setActualCostNonLabor(NumberHelper.getDouble(actualCostNonLabor));
+      parentTask.setActualCostMaterial(NumberHelper.getDouble(actualCostMaterial));
+      parentTask.setActualCostExpense(NumberHelper.getDouble(actualCostExpense));
+
+      parentTask.setRemainingCost(NumberHelper.getDouble(remainingCost));
+      parentTask.setRemainingCostLabor(NumberHelper.getDouble(remainingCostLabor));
+      parentTask.setRemainingCostNonLabor(NumberHelper.getDouble(remainingCostNonLabor));
+      parentTask.setRemainingCostMaterial(NumberHelper.getDouble(remainingCostMaterial));
+      parentTask.setRemainingCostExpense(NumberHelper.getDouble(remainingCostExpense));
+
+      parentTask.setCost(NumberHelper.getDouble(cost));
+      parentTask.setFixedCost(NumberHelper.getDouble(fixedCost));
+   }
+
+   /**
+    * The Primavera WBS entries we read in as tasks have user-entered start and end dates
+    * which aren't calculated or adjusted based on the child task dates. We try
+    * to compensate for this by using these user-entered dates as baseline dates, and
+    * deriving the planned start, actual start, planned finish and actual finish from
+    * the child tasks. This method recursively descends through the tasks to do this.
+    *
+    * @param parentTask parent task.
+    */
+   private static void rollupDates(Task parentTask)
+   {
+      if (!parentTask.hasChildTasks())
+      {
+         return;
+      }
+
+      int finished = 0;
+      LocalDateTime startDate = parentTask.getStart();
+      LocalDateTime finishDate = parentTask.getFinish();
+      LocalDateTime plannedStartDate = parentTask.getPlannedStart();
+      LocalDateTime plannedFinishDate = parentTask.getPlannedFinish();
+      LocalDateTime actualStartDate = parentTask.getActualStart();
+      LocalDateTime actualFinishDate = parentTask.getActualFinish();
+      LocalDateTime earlyStartDate = parentTask.getEarlyStart();
+      LocalDateTime earlyFinishDate = parentTask.getEarlyFinish();
+      LocalDateTime lateStartDate = parentTask.getLateStart();
+      LocalDateTime lateFinishDate = parentTask.getLateFinish();
+      LocalDateTime baselineStartDate = parentTask.getBaselineStart();
+      LocalDateTime baselineFinishDate = parentTask.getBaselineFinish();
+      LocalDateTime remainingEarlyStartDate = parentTask.getRemainingEarlyStart();
+      LocalDateTime remainingEarlyFinishDate = parentTask.getRemainingEarlyFinish();
+      LocalDateTime remainingLateStartDate = parentTask.getRemainingLateStart();
+      LocalDateTime remainingLateFinishDate = parentTask.getRemainingLateFinish();
+      boolean critical = false;
+
+      for (Task task : parentTask.getChildTasks())
+      {
+         rollupDates(task);
+
+         // the child tasks can have null dates (e.g. for nested wbs elements with no task children) so we
+         // still must protect against some children having null dates
+
+         startDate = LocalDateTimeHelper.min(startDate, task.getStart());
+         finishDate = LocalDateTimeHelper.max(finishDate, task.getFinish());
+         plannedStartDate = LocalDateTimeHelper.min(plannedStartDate, task.getPlannedStart());
+         plannedFinishDate = LocalDateTimeHelper.max(plannedFinishDate, task.getPlannedFinish());
+         actualStartDate = LocalDateTimeHelper.min(actualStartDate, task.getActualStart());
+         actualFinishDate = LocalDateTimeHelper.max(actualFinishDate, task.getActualFinish());
+         earlyStartDate = LocalDateTimeHelper.min(earlyStartDate, task.getEarlyStart());
+         earlyFinishDate = LocalDateTimeHelper.max(earlyFinishDate, task.getEarlyFinish());
+         remainingEarlyStartDate = LocalDateTimeHelper.min(remainingEarlyStartDate, task.getRemainingEarlyStart());
+         remainingEarlyFinishDate = LocalDateTimeHelper.max(remainingEarlyFinishDate, task.getRemainingEarlyFinish());
+         lateStartDate = LocalDateTimeHelper.min(lateStartDate, task.getLateStart());
+         lateFinishDate = LocalDateTimeHelper.max(lateFinishDate, task.getLateFinish());
+         remainingLateStartDate = LocalDateTimeHelper.min(remainingLateStartDate, task.getRemainingLateStart());
+         remainingLateFinishDate = LocalDateTimeHelper.max(remainingLateFinishDate, task.getRemainingLateFinish());
+         baselineStartDate = LocalDateTimeHelper.min(baselineStartDate, task.getBaselineStart());
+         baselineFinishDate = LocalDateTimeHelper.max(baselineFinishDate, task.getBaselineFinish());
+
+         if (task.getActualFinish() != null)
+         {
+            ++finished;
+         }
+
+         critical = critical || task.getCritical();
+      }
+
+      parentTask.setStart(startDate);
+      parentTask.setFinish(finishDate);
+      parentTask.setPlannedStart(plannedStartDate);
+      parentTask.setPlannedFinish(plannedFinishDate);
+      parentTask.setActualStart(actualStartDate);
+      parentTask.setEarlyStart(earlyStartDate);
+      parentTask.setEarlyFinish(earlyFinishDate);
+      parentTask.setRemainingEarlyStart(remainingEarlyStartDate);
+      parentTask.setRemainingEarlyFinish(remainingEarlyFinishDate);
+      parentTask.setLateStart(lateStartDate);
+      parentTask.setLateFinish(lateFinishDate);
+      parentTask.setRemainingLateStart(remainingLateStartDate);
+      parentTask.setRemainingLateFinish(remainingLateFinishDate);
+      parentTask.setBaselineStart(baselineStartDate);
+      parentTask.setBaselineFinish(baselineFinishDate);
+
+      //
+      // Only if all child tasks have actual finish dates do we
+      // set the actual finish date on the parent task.
+      //
+      if (finished == parentTask.getChildTasks().size())
+      {
+         parentTask.setActualFinish(actualFinishDate);
+      }
+
+      Duration plannedDuration = null;
+      Duration actualDuration = null;
+      Duration remainingDuration = null;
+      Duration duration = null;
+
+      ProjectCalendar effectiveCalendar = parentTask.getEffectiveCalendar();
+      if (effectiveCalendar != null)
+      {
+         if (plannedStartDate != null && plannedFinishDate != null)
+         {
+            plannedDuration = effectiveCalendar.getWork(plannedStartDate, plannedFinishDate, TimeUnit.HOURS);
+            parentTask.setPlannedDuration(plannedDuration);
+         }
+
+         if (parentTask.getActualFinish() == null)
+         {
+            LocalDateTime taskStartDate = parentTask.getRemainingEarlyStart();
+            if (taskStartDate == null)
+            {
+               taskStartDate = parentTask.getEarlyStart();
+               if (taskStartDate == null)
+               {
+                  taskStartDate = plannedStartDate;
+               }
+            }
+
+            LocalDateTime taskFinishDate = parentTask.getRemainingEarlyFinish();
+            if (taskFinishDate == null)
+            {
+               taskFinishDate = parentTask.getEarlyFinish();
+               if (taskFinishDate == null)
+               {
+                  taskFinishDate = plannedFinishDate;
+               }
+            }
+
+            if (taskStartDate != null)
+            {
+               if (parentTask.getActualStart() != null)
+               {
+                  actualDuration = effectiveCalendar.getWork(parentTask.getActualStart(), taskStartDate, TimeUnit.HOURS);
+               }
+
+               if (taskFinishDate != null)
+               {
+                  remainingDuration = effectiveCalendar.getWork(taskStartDate, taskFinishDate, TimeUnit.HOURS);
+               }
+            }
+         }
+         else
+         {
+            actualDuration = effectiveCalendar.getWork(parentTask.getActualStart(), parentTask.getActualFinish(), TimeUnit.HOURS);
+            remainingDuration = Duration.getInstance(0, TimeUnit.HOURS);
+         }
+
+         if (actualDuration != null && actualDuration.getDuration() < 0)
+         {
+            actualDuration = null;
+         }
+
+         if (remainingDuration != null && remainingDuration.getDuration() < 0)
+         {
+            remainingDuration = null;
+         }
+
+         duration = Duration.add(actualDuration, remainingDuration, effectiveCalendar);
+      }
+
+      parentTask.setActualDuration(actualDuration);
+      parentTask.setRemainingDuration(remainingDuration);
+      parentTask.setDuration(duration);
+
+      if (plannedDuration != null && remainingDuration != null && plannedDuration.getDuration() != 0)
+      {
+         double durationPercentComplete = ((plannedDuration.getDuration() - remainingDuration.getDuration()) / plannedDuration.getDuration()) * 100.0;
+         if (durationPercentComplete < 0)
+         {
+            durationPercentComplete = 0;
+         }
+         else
+         {
+            if (durationPercentComplete > 100)
+            {
+               durationPercentComplete = 100;
+            }
+         }
+         parentTask.setPercentageComplete(Double.valueOf(durationPercentComplete));
+         parentTask.setPercentCompleteType(PercentCompleteType.DURATION);
+      }
+
+      // Force total slack calculation to avoid overwriting the critical flag
+      parentTask.getTotalSlack();
+      parentTask.setCritical(critical);
+   }
+}

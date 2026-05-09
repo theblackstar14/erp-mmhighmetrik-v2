@@ -1,0 +1,151 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* v1 design tokens · light mode (blue + amber) */
+    --background: 60 10% 96%;       /* #F5F5F2 */
+    --bg-elev: 0 0% 100%;
+    --bg-sunken: 60 8% 93%;          /* #EFEFEB */
+    --foreground: 0 0% 11%;          /* #1C1C1C */
+    --ink-2: 60 4% 23%;
+    --ink-3: 60 3% 42%;
+    --ink-4: 60 3% 60%;
+    --line: 60 7% 88%;               /* #E4E4DF */
+    --line-2: 60 6% 83%;
+    --line-strong: 60 5% 76%;
+
+    --primary: 230 68% 55%;          /* #3B5BDB */
+    --primary-foreground: 0 0% 100%;
+    --primary-soft: 224 73% 94%;
+    --primary-ink: 230 64% 30%;
+
+    --warn: 38 100% 48%;             /* #F59F00 */
+    --warn-soft: 41 89% 91%;
+    --warn-ink: 36 100% 24%;
+
+    --destructive: 5 62% 53%;        /* #D1453B */
+    --destructive-foreground: 0 0% 100%;
+    --destructive-soft: 7 73% 93%;
+
+    --ok: 154 45% 34%;               /* #2F7D5C */
+    --ok-soft: 144 36% 90%;
+    --ok-ink: 154 49% 19%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 11%;
+    --secondary: 60 8% 93%;
+    --secondary-foreground: 0 0% 11%;
+    --muted: 60 8% 93%;
+    --muted-foreground: 60 3% 42%;
+    --accent: 230 68% 55%;
+    --accent-foreground: 0 0% 100%;
+    --border: 60 7% 88%;
+    --input: 60 7% 88%;
+    --ring: 230 68% 55%;
+    --radius: 6px;
+  }
+
+  [data-theme='dark'] {
+    --background: 220 12% 8%;
+    --bg-elev: 220 13% 11%;
+    --bg-sunken: 220 14% 6%;
+    --foreground: 60 12% 90%;
+    --ink-2: 60 7% 76%;
+    --ink-3: 60 4% 53%;
+    --ink-4: 60 3% 36%;
+    --line: 220 9% 17%;
+    --line-2: 220 9% 21%;
+    --line-strong: 220 9% 26%;
+
+    --primary: 226 73% 67%;
+    --primary-foreground: 0 0% 100%;
+    --primary-soft: 230 44% 19%;
+    --primary-ink: 226 75% 84%;
+
+    --warn: 41 91% 59%;
+    --warn-ink: 38 87% 68%;
+
+    --destructive: 5 73% 63%;
+
+    --card: 220 13% 11%;
+    --card-foreground: 60 12% 90%;
+    --secondary: 220 13% 14%;
+    --secondary-foreground: 60 12% 90%;
+    --muted: 220 13% 14%;
+    --muted-foreground: 60 4% 53%;
+    --accent: 226 73% 67%;
+    --accent-foreground: 0 0% 100%;
+    --border: 220 9% 17%;
+    --input: 220 9% 17%;
+    --ring: 226 73% 67%;
+  }
+
+  * {
+    @apply border-border;
+  }
+  html, body, #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 13px;
+    line-height: 1.5;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11', 'ss01';
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background: hsl(var(--primary-soft));
+    color: hsl(var(--primary-ink));
+  }
+}
+
+@layer components {
+  .mono {
+    font-family: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+  .num {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum';
+  }
+
+  /* Chip · usado para status badges */
+  .chip {
+    @apply inline-flex items-center gap-1 rounded px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider;
+    background: hsl(var(--bg-sunken));
+    color: hsl(var(--ink-3));
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .chip.blue {
+    background: hsl(var(--primary-soft));
+    color: hsl(var(--primary-ink));
+  }
+  .chip.amber {
+    background: hsl(var(--warn-soft));
+    color: hsl(var(--warn-ink));
+  }
+  .chip.green {
+    background: hsl(var(--ok-soft));
+    color: hsl(var(--ok-ink));
+  }
+  .chip.red {
+    background: hsl(var(--destructive-soft));
+    color: hsl(var(--destructive));
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--line-2));
+  border-radius: 6px;
+  border: 2px solid hsl(var(--background));
+}
+::-webkit-scrollbar-thumb:hover { background: hsl(var(--line-strong)); }

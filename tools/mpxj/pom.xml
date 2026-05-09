@@ -1,0 +1,512 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd"
+	xmlns="http://maven.apache.org/POM/4.0.0"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+	<modelVersion>4.0.0</modelVersion>
+	<groupId>net.sf.mpxj</groupId>
+	<artifactId>mpxj</artifactId>
+	<version>16.1.0</version>
+	<name>MPXJ</name>
+	<url>http://mpxj.org</url>
+
+	<description>MPXJ is a library which allows you to read, manipulate, and write project information from Java, .Net, Python and Ruby. MPXJ supports a range of data formats: Microsoft Project Exchange (MPX), Microsoft Project (MPP, MPT), Microsoft Project Data Interchange (MSPDI XML), Microsoft Project Database (MPD), Planner (XML), Primavera P6 (PMXML, XER, and database), Primavera P3, Primavera Suretrak, Asta Powerproject (PP, MDB), Asta Easyplan (PP), Phoenix Project Manager (PPX), FastTrack Schedule (FTS), Ganttproject (GAN), Turboproject (PEP), Conceptdraw PROJECT (CDPX, CDPZ, CDPTZ), Synchro Scheduler (SP) Gantt Designer (GNT), Standard Data Exchange Format (SDEF), Project Commander (PC), Deltek Open Plan (BK3), and Edraw Project (EDPX). MPXJ can also read project data from Microsoft Project Server, Primavera P6 Web Services (P6 EPPM), and Oracle Primavera Cloud (OPC).</description>
+
+	<organization>
+		<name>MPXJ</name>
+		<url>http://mpxj.org</url>
+	</organization>
+	<inceptionYear>2000</inceptionYear>
+
+	<dependencies>
+
+		<dependency>
+			<groupId>org.apache.poi</groupId>
+			<artifactId>poi</artifactId>
+			<version>5.5.1</version>
+		</dependency>
+
+		<dependency>
+			<groupId>org.xerial</groupId>
+			<artifactId>sqlite-jdbc</artifactId>
+			<version>3.51.2.0</version>
+		</dependency>
+
+		<dependency>
+			<groupId>com.jgoodies</groupId>
+			<artifactId>jgoodies-binding</artifactId>
+			<version>2.13.0</version>
+		</dependency>
+
+		<dependency>
+			<groupId>com.github.joniles</groupId>
+			<artifactId>rtfparserkit</artifactId>
+			<version>1.16.0</version>
+		</dependency>
+
+		<dependency>
+		    <groupId>jakarta.xml.bind</groupId>
+		    <artifactId>jakarta.xml.bind-api</artifactId>
+		    <version>3.0.1</version>
+		</dependency>
+
+		<dependency>
+		    <groupId>org.glassfish.jaxb</groupId>
+		    <artifactId>jaxb-runtime</artifactId>
+		    <version>3.0.2</version>
+		</dependency>
+
+		<dependency>
+			<groupId>com.healthmarketscience.jackcess</groupId>
+			<artifactId>jackcess</artifactId>
+			<version>4.0.10</version>
+		</dependency>
+
+		<dependency>
+			<groupId>org.jsoup</groupId>
+			<artifactId>jsoup</artifactId>
+			<version>1.22.1</version>
+		</dependency>
+
+		<dependency>
+			<groupId>com.fasterxml.jackson.core</groupId>
+			<artifactId>jackson-core</artifactId>
+			<version>2.21.1</version>
+		</dependency>
+
+		<dependency>
+			<groupId>com.fasterxml.jackson.core</groupId>
+			<artifactId>jackson-databind</artifactId>
+			<version>2.21.1</version>
+		</dependency>
+
+		<!-- Test dependencies -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-engine</artifactId>
+            <version>5.14.3</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.platform</groupId>
+            <artifactId>junit-platform-launcher</artifactId>
+            <version>1.14.3</version>
+            <scope>test</scope>
+        </dependency>
+	</dependencies>
+
+	<mailingLists>
+		<mailingList>
+			<name>MPXJ Developers List</name>
+			<subscribe>http://lists.sourceforge.net/lists/listinfo/mpxj-developers</subscribe>
+			<unsubscribe>http://lists.sourceforge.net/lists/listinfo/mpxj-developers</unsubscribe>
+			<archive>http://sourceforge.net/mailarchive/forum.php?forum=mpxj-developers</archive>
+		</mailingList>
+	</mailingLists>
+
+	<issueManagement>
+		<system>SourceForge2</system>
+		<url>https://sourceforge.net/p/mpxj/bugs/</url>
+	</issueManagement>
+
+	<scm>
+		<url>https://github.com/joniles/mpxj</url>
+		<connection>scm:git:git://github.com/joniles/mpxj.git</connection>
+		<developerConnection>scm:git:git@github.com:joniles/mpxj.git</developerConnection>
+	</scm>
+
+	<developers>
+		<developer>
+			<id>joniles</id>
+			<name>Jon Iles</name>
+			<email>jon@timephased.com</email>
+			<organization>Timephased</organization>
+		</developer>
+	</developers>
+
+	<contributors>
+		<contributor>
+			<name>Pasha Ashpak</name>
+		</contributor>
+		<contributor>
+			<name>Mark Atwood</name>
+		</contributor>
+		<contributor>
+			<name>Benoit Baranne</name>
+		</contributor>
+		<contributor>
+			<name>Agustin Barto</name>
+		</contributor>
+		<contributor>
+			<name>Jonathan Besanceney</name>
+		</contributor>
+		<contributor>
+			<name>Roman Bilous</name>
+		</contributor>
+		<contributor>
+			<name>Todd Brannam</name>
+		</contributor>
+		<contributor>
+			<name>Nick Burch</name>
+		</contributor>
+		<contributor>
+			<name>Pramodh C</name>
+		</contributor>
+		<contributor>
+			<name>Leslie Damon</name>
+		</contributor>
+        <contributor>
+            <name>danielfromCL</name>
+        </contributor>
+		<contributor>
+			<name>Claudio Engelsdorff Avila</name>
+		</contributor>
+		<contributor>
+			<name>Forenpm</name>
+		</contributor>
+        <contributor>
+			<name>Mario Fuentes</name>
+		</contributor>
+		<contributor>
+			<name>Bruno Gasnier</name>
+		</contributor>
+		<contributor>
+			<name>Vadim Gerya</name>
+		</contributor>
+        <contributor>
+            <name>gitgood88</name>
+        </contributor>
+        <contributor>
+			<name>Wade Golden</name>
+		</contributor>
+		<contributor>
+			<name>Lord Helmchen</name>
+		</contributor>
+		<contributor>
+			<name>Brandon Herzog</name>
+		</contributor>
+		<contributor>
+			<name>Harald Hett</name>
+		</contributor>
+		<contributor>
+			<name>Frank Illenberger</name>
+		</contributor>
+		<contributor>
+			<name>William Iverson</name>
+		</contributor>
+		<contributor>
+			<name>Christopher John</name>
+		</contributor>
+		<contributor>
+			<name>Brian Leach</name>
+		</contributor>
+		<contributor>
+			<name>lobmelon</name>
+		</contributor>
+		<contributor>
+			<name>Šimon Macharáček</name>
+		</contributor>
+		<contributor>
+			<name>Andrew Marks</name>
+		</contributor>
+		<contributor>
+			<name>Nathaniel Marrin</name>
+		</contributor>
+		<contributor>
+			<name>Alex Matatov</name>
+		</contributor>
+		<contributor>
+			<name>Dave McKay</name>
+		</contributor>
+		<contributor>
+			<name>Gary McKenney</name>
+		</contributor>
+		<contributor>
+			<name>Tiago de Mello</name>
+		</contributor>
+		<contributor>
+			<name>Scott Melville</name>
+		</contributor>
+		<contributor>
+			<name>Josh Micich</name>
+		</contributor>
+		<contributor>
+			<name>Andrei Missine</name>
+		</contributor>
+		<contributor>
+			<name>ninthwaveltd</name>
+		</contributor>
+		<contributor>
+			<name>Jari Niskala</name>
+		</contributor>
+		<contributor>
+			<name>Jonathan Leitschuh</name>
+		</contributor>
+		<contributor>
+			<name>Kyle Patmore</name>
+		</contributor>
+		<contributor>
+			<name>Paul Pogonyshev</name>
+		</contributor>
+		<contributor>
+			<name>Daniel Schmidt</name>
+		</contributor>
+		<contributor>
+			<name>Fabian Schmidt</name>
+		</contributor>
+		<contributor>
+			<name>Rohit Sinha</name>
+		</contributor>
+		<contributor>
+			<name>Sruthi-Ganesh</name>
+		</contributor>
+		<contributor>
+			<name>Sebastian Stock</name>
+		</contributor>
+		<contributor>
+			<name>James Styles</name>
+		</contributor>
+		<contributor>
+			<name>Shlomo Swidler</name>
+		</contributor>
+		<contributor>
+			<name>szadev</name>
+		</contributor>
+		<contributor>
+			<name>Daniel Taylor</name>
+		</contributor>
+		<contributor>
+			<name>Jonas Tampier</name>
+		</contributor>
+		<contributor>
+			<name>Felix Tian</name>
+		</contributor>
+		<contributor>
+			<name>Elio Zoggia</name>
+		</contributor>
+		<contributor>
+			<name>ztravis</name>
+		</contributor>
+	</contributors>
+
+	<licenses>
+		<license>
+			<name>GNU Lesser General Public License v2.1 or later</name>
+			<url>https://www.gnu.org/licenses/old-licenses/lgpl-2.1-standalone.html</url>
+		</license>
+	</licenses>
+
+	<build>
+		<plugins>
+
+			<!-- Ensure the compiler is using the correct Java version -->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-compiler-plugin</artifactId>
+				<version>3.8.1</version>
+				<configuration>
+					<source>1.8</source>
+					<target>1.8</target>
+				</configuration>
+			</plugin>
+
+			<!-- Inject Google analytics into generated Javadoc -->
+			<plugin>
+				<groupId>com.google.code.maven-replacer-plugin</groupId>
+				<artifactId>replacer</artifactId>
+				<version>1.5.3</version>
+				<executions>
+					<execution>
+						<phase>post-site</phase>
+						<goals>
+							<goal>replace</goal>
+						</goals>
+					</execution>
+				</executions>
+				<configuration>
+					<includes>
+						<include>${basedir}/docs/apidocs/**/*.html</include>
+					</includes>
+					<token><![CDATA[</head>]]></token>
+					<value><![CDATA[</head>
+					<script async src="https://www.googletagmanager.com/gtag/js?id=G-9R48LPVHKE"></script>
+					<script>
+					  window.dataLayer = window.dataLayer || [];
+					  function gtag(){dataLayer.push(arguments);}
+					  gtag('js', new Date());
+					  gtag('config', 'G-9R48LPVHKE');
+					</script>]]></value>
+				</configuration>
+			</plugin>
+
+			<!-- Use our own site template -->
+			<plugin>
+				<artifactId>maven-site-plugin</artifactId>
+				<version>3.9.1</version>
+				<configuration>
+					<outputDirectory>./docs</outputDirectory>
+					<inputEncoding>UTF-8</inputEncoding>
+					<outputEncoding>UTF-8</outputEncoding>
+				</configuration>
+			</plugin>
+
+			<!-- Pass test data location from Maven command line parameter -Dmpxj.junit.datadir=<dir>
+				to allow unit tests to run -->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-surefire-plugin</artifactId>
+				<version>2.22.2</version>
+				<configuration>
+					<systemProperties>
+						<property>
+							<name>mpxj.junit.datadir</name>
+							<value>${mpxj.junit.datadir}</value>
+						</property>
+					</systemProperties>
+				</configuration>
+			</plugin>
+
+			<!-- Supports deployment to Maven Central -->
+	        <plugin>
+				<groupId>org.sonatype.central</groupId>
+				<artifactId>central-publishing-maven-plugin</artifactId>
+				<version>0.7.0</version>
+				<extensions>true</extensions>
+				<configuration>
+					<publishingServerId>central</publishingServerId>
+					<autoPublish>true</autoPublish>
+					<waitUntil>validated</waitUntil>
+				</configuration>
+	        </plugin>
+
+			<!-- Supports deployment to Maven Central -->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-source-plugin</artifactId>
+				<version>3.2.1</version>
+				<executions>
+					<execution>
+						<id>attach-sources</id>
+						<goals>
+							<goal>jar-no-fork</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
+
+			<!-- Supports deployment to Maven Central -->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-javadoc-plugin</artifactId>
+				<version>3.2.0</version>
+				<configuration>
+					<doclint>none</doclint>
+					<notimestamp>true</notimestamp>
+					<excludePackageNames>*.schema.*</excludePackageNames>
+				</configuration>
+				<executions>
+					<execution>
+						<id>attach-javadocs</id>
+						<goals>
+							<goal>jar</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
+
+			<!-- Supports deployment to Maven Central -->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-gpg-plugin</artifactId>
+				<version>1.6</version>
+				<executions>
+					<execution>
+						<id>sign-artifacts</id>
+						<phase>verify</phase>
+						<goals>
+							<goal>sign</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
+
+			<!-- Copy dependencies to lib dir -->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-dependency-plugin</artifactId>
+				<version>3.1.1</version>
+				<executions>
+					<execution>
+						<id>copy-dependencies</id>
+						<phase>package</phase>
+						<goals>
+							<goal>copy-dependencies</goal>
+						</goals>
+						<configuration>
+							<outputDirectory>./lib</outputDirectory>
+							<overWriteReleases>false</overWriteReleases>
+							<overWriteSnapshots>false</overWriteSnapshots>
+							<overWriteIfNewer>true</overWriteIfNewer>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+		</plugins>
+	</build>
+
+	<reporting>
+		<plugins>
+
+			<!-- Define the reports we want to produce -->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-project-info-reports-plugin</artifactId>
+				<version>3.1.1</version>
+				<reportSets>
+					<reportSet>
+						<reports>
+							<report>summary</report>
+							<report>team</report>
+							<report>mailing-lists</report>
+							<report>issue-management</report>
+							<report>scm</report>
+						</reports>
+					</reportSet>
+				</reportSets>
+			</plugin>
+
+			<plugin>
+				<artifactId>maven-changes-plugin</artifactId>
+				<version>2.12.1</version>
+				<configuration>
+					<feedType>rss_2.0</feedType>
+				</configuration>
+			</plugin>
+
+			<plugin>
+				<artifactId>maven-javadoc-plugin</artifactId>
+				<version>3.2.0</version>
+				<configuration>
+					<doclint>none</doclint>
+					<notimestamp>true</notimestamp>
+					<excludePackageNames>*.schema.*</excludePackageNames>
+				</configuration>
+			</plugin>
+
+		    <plugin>
+		      <groupId>org.codehaus.mojo</groupId>
+		      <artifactId>versions-maven-plugin</artifactId>
+		      <version>2.8.1</version>
+		      <reportSets>
+		        <reportSet>
+		          <reports>
+		            <report>dependency-updates-report</report>
+		            <report>plugin-updates-report</report>
+		          </reports>
+		        </reportSet>
+		      </reportSets>
+		    </plugin>
+		</plugins>
+	</reporting>
+</project>

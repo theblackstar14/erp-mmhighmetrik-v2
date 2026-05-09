@@ -1,0 +1,30 @@
+{
+  "name": "erp-mmhighmetrik",
+  "version": "2.0.0",
+  "description": "ERP empresarial MM HIGH METRIK ENGINEERS S.A.C. · construcción civil Peru",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm --parallel --filter \"./apps/**\" dev",
+    "build": "pnpm --filter \"./apps/**\" build",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "typecheck": "pnpm --recursive typecheck",
+    "db:generate": "pnpm --filter @erp/db generate",
+    "db:migrate": "pnpm --filter @erp/db migrate",
+    "db:studio": "pnpm --filter @erp/db studio",
+    "db:seed": "pnpm --filter @erp/db seed",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "typescript": "^5.7.3"
+  },
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=9"
+  },
+  "packageManager": "pnpm@9.15.0"
+}

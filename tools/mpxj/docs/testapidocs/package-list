@@ -1,0 +1,9 @@
+org.mpxj.junit
+org.mpxj.junit.assignment
+org.mpxj.junit.calendar
+org.mpxj.junit.legacy
+org.mpxj.junit.primavera
+org.mpxj.junit.project
+org.mpxj.junit.resource
+org.mpxj.junit.task
+org.mpxj.mspdi

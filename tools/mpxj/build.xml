@@ -1,0 +1,362 @@
+<?xml version="1.0"?>
+
+<project name="org.mpxj" default="archive" basedir=".">
+
+	<target name="init" description="Initialize properties">
+		<tstamp />
+		<property environment="env"/>
+
+		<!-- Build Configuration -->
+		<property name="current.version" value="16.1.0" />
+		<property name="current.version.classifier" value="" />
+
+		<!-- Environment Configuration-->
+		<property name="jaxb.name" value = "jaxb-ri-3.0.2"/>
+
+		<condition property="os.family.name" value="windows">
+			<os family="windows" />
+		</condition>
+		<condition property="os.family.name" value="unix">
+			<os family="unix" />
+		</condition>
+
+		<property file="build.${os.family.name}.properties"/>
+
+		<!-- Common properties -->
+		<property name="dist.dir" value="${basedir}/dist" />
+		<property name="lib.dir" value="${basedir}/lib" />
+		<property name="distribution" value="${dist.dir}/mpxj-${current.version}.zip" />
+
+		<mkdir dir="${lib.dir}" />
+	</target>
+
+	<target name="update-version-numbers" depends="init" description="Ensure that version numbers in the code are up-to-date">
+		<exec executable="${maven.cmd}" dir="${basedir}" failonerror="true">
+			<arg line="versions:set -DnewVersion=${current.version}${current.version.classifier}"/>
+		</exec>
+		<exec executable="${maven.cmd}" dir="${basedir}" failonerror="true">
+			<arg line="versions:set -f ${basedir}/pom.tests.xml -DnewVersion=${current.version}${current.version.classifier}"/>
+		</exec>
+		<exec executable="${maven.cmd}" dir="${basedir}" failonerror="true">
+			<arg line="versions:commit"/>
+		</exec>
+		<exec executable="${maven.cmd}" dir="${basedir}" failonerror="true">
+			<arg line="versions:commit -f ${basedir}/pom.tests.xml"/>
+		</exec>
+
+		<replaceregexp file="${basedir}/src/main/java/org/mpxj/MPXJ.java"
+					   match='VERSION = ".*"'
+					   replace='VERSION = "${current.version}"'
+					   byline="true"
+		/>
+
+		<replaceregexp file="${basedir}/src.ruby/mpxj/lib/mpxj/version.rb"
+		               match='VERSION = ".*"'
+		               replace='VERSION = "${current.version}"'
+		               byline="true"
+		/>
+
+		<replaceregexp file="${basedir}/src.python/mpxj/setup.py"
+		               match='version=".*",'
+		               replace='version="${current.version}",'
+		               byline="true"
+		/>
+	</target>
+
+	<target name="maven-install" depends="init,update-version-numbers">
+		<exec executable="${maven.cmd}" dir="${basedir}" failonerror="true">
+			<arg line="-DskipTests=true -Dmaven.javadoc.skip=true -Dsource.skip=true install" />
+		</exec>
+		<exec executable="${maven.cmd}" dir="${basedir}" failonerror="true">
+			<arg line="-f ${basedir}/pom.tests.xml -DskipTests=true -Dmaven.javadoc.skip=true -Dsource.skip=true install" />
+		</exec>
+		<copy file="${basedir}/target/mpxj-${current.version}${current.version.classifier}.jar" tofile="${basedir}/mpxj.jar"/>
+		<copy file="${basedir}/target.tests/mpxj-tests-${current.version}${current.version.classifier}.jar" tofile="${basedir}/mpxj-test.jar"/>
+	</target>
+
+	<target name="changelog" description="Update changelog">
+		<xslt in="${basedir}/src/changes/changes.xml" out="${basedir}/CHANGELOG.md" style="${basedir}/doc/changelog.xsl"/>
+	</target>
+
+	<target name="releasenotes" depends="init" description="Create release notes">
+		<xslt in="${basedir}/src/changes/changes.xml" out="${dist.dir}/readme.md" style="${basedir}/doc/releasenote.xsl">
+			<param name="version" expression="${current.version}"/>
+		</xslt>
+	</target>
+
+	<target name="gem-source" description="Generate source required by Ruby gem">
+		<java classname="org.mpxj.ruby.MethodGenerator" failonerror="true">
+			<arg value="${basedir}/src.ruby/mpxj/lib/mpxj" />
+			<classpath>
+				<pathelement path="${classpath}" />
+				<pathelement path="${basedir}/mpxj.jar" />
+			</classpath>
+		</java>
+	</target>
+
+	<!-- For deploy efficiency, assumes that the maven-install target has been run -->
+	<target name="gem-setup" depends="init" description="Build jars required by ruby gem and copy to correct location">
+		<copy file="${basedir}/mpxj.jar" todir="${basedir}/src.ruby/mpxj/lib/mpxj"/>
+		<copy todir="${basedir}/src.ruby/mpxj/lib/mpxj">
+			<fileset dir="${lib.dir}" includes="*.jar" />
+		</copy>
+		<copy todir="${basedir}/src.ruby/mpxj/legal">
+			<fileset dir="${basedir}/legal" includes="*" />
+		</copy>
+		<exec executable="${bundle.cmd}" dir="${basedir}/src.ruby/mpxj" failonerror="true">
+			<arg line="install" />
+		</exec>
+	</target>
+
+	<target name="gem-test" depends="gem-setup" description="Run ruby gem tests">
+		<exec executable="${bundle.cmd}" dir="${basedir}/src.ruby/mpxj" failonerror="true">
+			<arg line="exec rspec spec" />
+		</exec>
+	</target>
+
+	<target name="gem-deploy" depends="gem-setup" description="Deploy rubygem to rubygems.org">
+		<exec executable="${bundle.cmd}" dir="${basedir}/src.ruby/mpxj" failonerror="true">
+			<arg line="exec rake build release:rubygem_push" />
+		</exec>
+	</target>
+
+	<target name="gem-copy" depends="gem-setup" description="Copy gem to a local directory">
+		<copy todir="//VBOXSVR/Downloads/mpxj.gem">
+			<fileset dir="${basedir}/src.ruby/mpxj" includes="**" />
+		</copy>
+	</target>
+
+	<!-- For deploy efficiency, assumes that the maven-install target has been run -->
+	<target name="python-setup" depends="init" description="Build jars required by python package and copy to correct location">
+		<copy file="${basedir}/mpxj.jar" todir="${basedir}/src.python/mpxj/mpxj/lib"/>
+		<copy todir="${basedir}/src.python/mpxj/mpxj/lib">
+			<fileset dir="${lib.dir}" includes="*.jar" />
+		</copy>
+		<copy todir="${basedir}/src.python/mpxj/legal">
+			<fileset dir="${basedir}/legal" includes="*" />
+		</copy>
+	</target>
+
+	<!-- Ensure build is installed: py -m pip install - -upgrade build -->
+	<target name="python-build" depends="python-setup" description="Build python package">
+		<exec executable="${python.cmd}" dir="${basedir}/src.python/mpxj" failonerror="true">
+			<arg line="-m build" />
+		</exec>
+	</target>
+
+	<target name="python-copy" depends="python-build" description="Copy python package to a local directory">
+		<copy todir="//VBOXSVR/Downloads">
+			<fileset dir="${basedir}/src.python/mpxj/dist" includes="*.gz" />
+		</copy>
+	</target>
+
+	<target name="python-deploy-test" depends="python-build" description="Deploy python package to pypitest">
+		<exec executable="${python.cmd}" dir="${basedir}/src.python/mpxj" failonerror="true">
+			<arg line="-m twine upload -r pypitest dist/*" />
+		</exec>
+	</target>
+
+	<!-- Ensure twine is installed py -m pip install twine -->
+	<target name="python-deploy" depends="python-build" description="Deploy python package to pypi">
+		<exec executable="${python.cmd}" dir="${basedir}/src.python/mpxj" failonerror="true">
+			<arg line="-m twine upload -r pypi dist/*" />
+		</exec>
+	</target>
+
+	<target name="xjc-pmxml" depends="init" description="PMXML schema code generation">
+		<property name="classes.dir" value="${basedir}/target/classes" />
+		<copy file="${env.MPXJ_SCHEMA_DIR}/pmxml/p6v2512-p6apibo-corrected.xsd" toDir="${basedir}/jaxb"/>
+		<exec executable="${xjc.cmd}" dir="${basedir}/jaxb" failonerror="true">
+			<arg line="-classpath ${classes.dir} -d ${basedir}/src/main/java -b pm-binding.xjb -p org.mpxj.primavera.schema p6v2512-p6apibo-corrected.xsd" />
+		</exec>
+		<delete file="${basedir}/jaxb/p6v2512-p6apibo-corrected.xsd"/>
+	</target>
+
+	<target name="xjc-mspdi" depends="init" description="MSPDI schema code generation">
+		<property name="classes.dir" value="${basedir}/target/classes" />
+		<copy file="${env.MPXJ_SCHEMA_DIR}/mspdi/mspdi_pj15-corrected.xsd" toDir="${basedir}/jaxb"/>
+		<exec executable="${xjc.cmd}" dir="${basedir}/jaxb" failonerror="true">
+			<arg line="-classpath ${classes.dir} -d ${basedir}/src/main/java -b mspdi-binding.xjb -p org.mpxj.mspdi.schema mspdi_pj15-corrected.xsd" />
+		</exec>
+		<delete file="${basedir}/jaxb/mspdi_pj15-corrected.xsd"/>
+	</target>
+
+	<target name="xjc-planner" depends="init" description="Planner schema code generation">
+		<property name="classes.dir" value="${basedir}/target/classes" />
+		<exec executable="${xjc.cmd}" dir="${basedir}/jaxb" failonerror="true">
+			<arg line="-classpath ${classes.dir} -d ${basedir}/src/main/java -b mrproject.xjb -p org.mpxj.planner.schema mrproject-0.6.xsd" />
+		</exec>
+	</target>
+
+	<target name="xjc-phoenix4" depends="init" description="Phoenix 4 schema code generation">
+		<property name="classes.dir" value="${basedir}/target/classes" />
+		<exec executable="${xjc.cmd}" dir="${basedir}/jaxb" failonerror="true">
+			<arg line="-classpath ${classes.dir} -d ${basedir}/src/main/java -b phoenix-4-binding.xjb -p org.mpxj.phoenix.schema.phoenix4 phoenix-4.xsd" />
+		</exec>
+	</target>
+
+	<target name="xjc-phoenix5" depends="init" description="Phoenix 5 schema code generation">
+		<property name="classes.dir" value="${basedir}/target/classes" />
+		<exec executable="${xjc.cmd}" dir="${basedir}/jaxb" failonerror="true">
+			<arg line="-classpath ${classes.dir} -d ${basedir}/src/main/java -b phoenix-5-binding.xjb -p org.mpxj.phoenix.schema.phoenix5 phoenix-5.xsd" />
+		</exec>
+	</target>
+
+	<target name="xjc-ganttproject" depends="init" description="GanttProject schema code generation">
+		<property name="classes.dir" value="${basedir}/target/classes" />
+		<exec executable="${xjc.cmd}" dir="${basedir}/jaxb" failonerror="true">
+			<arg line="-classpath ${classes.dir} -d ${basedir}/src/main/java -b ganttproject-binding.xjb -p org.mpxj.ganttproject.schema ganttproject-2.8.xsd" />
+		</exec>
+	</target>
+
+	<target name="xjc-conceptdraw" depends="init" description="ConceptDraw schema code generation">
+		<property name="classes.dir" value="${basedir}/target/classes" />
+		<copy file="${env.MPXJ_SCHEMA_DIR}/conceptdraw/document-corrected.xsd" toDir="${basedir}/jaxb"/>
+		<exec executable="${xjc.cmd}" dir="${basedir}/jaxb" failonerror="true">
+			<arg line="-classpath ${classes.dir} -d ${basedir}/src/main/java -b conceptdraw-binding.xjb -p org.mpxj.conceptdraw.schema document-corrected.xsd" />
+		</exec>
+		<delete file="${basedir}/jaxb/document-corrected.xsd"/>
+	</target>
+
+	<target name="xjc-ganttdesigner" depends="init" description="Gantt Designer schema code generation">
+		<property name="classes.dir" value="${basedir}/target/classes" />
+		<exec executable="${xjc.cmd}" dir="${basedir}/jaxb" failonerror="true">
+			<arg line="-classpath ${classes.dir} -d ${basedir}/src/main/java -b gantt-designer-binding.xjb -p org.mpxj.ganttdesigner.schema gantt-designer.xsd" />
+		</exec>
+	</target>
+
+	<target name="xjc-edrawproject" depends="init" description="Edraw Project schema code generation">
+		<property name="classes.dir" value="${basedir}/target/classes" />
+		<exec executable="${xjc.cmd}" dir="${basedir}/jaxb" failonerror="true">
+			<arg line="-classpath ${classes.dir} -d ${basedir}/src/main/java -b edraw-project-binding.xjb -p org.mpxj.edrawproject.schema edraw-project.xsd" />
+		</exec>
+	</target>
+
+	<target name="archive" depends="maven-install,gem-source,changelog,releasenotes" description="Create library files"/>
+
+	<target name="distribute" depends="archive" description="Create distribution">
+		<zip zipfile="${distribution}">
+			<zipfileset dir="${basedir}" prefix="mpxj" excludes="target/**, dist/**" />
+		</zip>
+	</target>
+
+	<target name="dist-clean" depends="init" description="Clean up distribution folder">
+		<delete dir="${dist.dir}" />
+	</target>
+
+	<target name="temp-clean" depends="init" description="Clean up temporary files">
+		<delete>
+			<fileset dir="${basedir}" includes="**/*~" defaultexcludes="no" />
+		</delete>
+	</target>
+
+	<target name="gem-clean" depends="init" description="Clean up Ruby files">
+		<delete dir="${basedir}/src.ruby/mpxj/doc" />
+		<delete dir="${basedir}/src.ruby/mpxj/legal" />
+		<delete dir="${basedir}/src.ruby/mpxj/pkg" />
+		<delete dir="${basedir}/src.ruby/mpxj/Gemfile.lock" />
+
+		<delete includeemptydirs="true">
+			<fileset dir="${basedir}/src.ruby/mpxj" defaultexcludes="false">
+				<include name="**/*.jar" />
+			</fileset>
+		</delete>
+	</target>
+
+	<target name="python-clean" depends="init" description="Clean up python files">
+		<delete dir="${basedir}/src.python/mpxj/build" />
+		<delete dir="${basedir}/src.python/mpxj/dist" />
+		<delete dir="${basedir}/src.python/mpxj/mpxj.egg-info" />
+		<delete dir="${basedir}/src.python/mpxj/legal" />
+		<delete dir="${basedir}/src.python/mpxj/mpxj/lib" />
+		<mkdir dir="${basedir}/src.python/mpxj/mpxj/lib" />
+	</target>
+
+	<target name="clean" depends="init, temp-clean, gem-clean, python-clean, maven-clean" description="Clean up all files">
+		<delete file="${basedir}/mpxj.jar" />
+		<delete file="${basedir}/mpxj-test.jar" />
+
+		<delete>
+			<fileset dir="${lib.dir}">
+				<include name="*.jar"/>
+			</fileset>
+		</delete>
+	</target>
+
+	<target name="maven-clean" depends="init" description="Cleans the maven directory">
+		<exec executable="${maven.cmd}" dir="${basedir}" failonerror="true">
+			<arg line="clean" />
+		</exec>
+		<exec executable="${maven.cmd}" dir="${basedir}" failonerror="true">
+			<arg line="-f ${basedir}/pom.tests.xml clean" />
+		</exec>
+	</target>
+
+	<!-- Ensure mkdocs-material is installed: py -m pip install - -upgrade mkdocs-material -->
+	<target name="site-build" depends="changelog, mkdocs-site-build, maven-site-build, readme-build" description="Produce site content"/>
+
+	<target name="mkdocs-site-build" depends="init" description="Execute mkdocs to produce site content">
+		<property name="docs.dir" value="${basedir}/docs" />
+		<copy file="${basedir}/CHANGELOG.md" tofile="${basedir}/mkdocs/docs/CHANGELOG.md"/>
+		<exec executable="${python.cmd}" dir="${basedir}/mkdocs" failonerror="true">
+			<arg line="-m mkdocs build -d ${docs.dir}" />
+		</exec>
+		<delete file="${basedir}/docs/sitemap.xml" />
+		<delete file="${basedir}/docs/sitemap.xml.gz" />
+		<echo file="${docs.dir}/CNAME" append="false">www.mpxj.org</echo>
+	</target>
+
+	<target name="maven-site-build" depends="init" description="Execute maven to produce site content">
+		<exec executable="${maven.cmd}" dir="${basedir}" failonerror="true">
+			<arg line="post-site" />
+		</exec>
+
+		<!-- Remove the table which just lists the version numbers -->
+		<replaceregexp
+			file="docs/changes-report.html"
+			match='&lt;h3&gt;&lt;a name="Release_History"&gt;(.+?)/table&gt;'
+		    replace=""
+			flags="gis"
+			byline="false"/>
+	</target>
+
+	<target name="readme-build" depends="init" description="Populate readme.md">
+		<copy file="${basedir}/mkdocs/docs/index.md" tofile="${basedir}/readme.md"/>
+
+		<replaceregexp file="${basedir}/readme.md"
+		               match='\]\((.+)\.md\)'
+		               replace='](https://www.mpxj.org/\1/)'
+		               byline="true">
+		</replaceregexp>
+
+		<replaceregexp file="${basedir}/readme.md"
+		               match='"images/'
+		               replace='"mkdocs/docs/images/'
+		               byline="true">
+		</replaceregexp>
+
+		<replaceregexp file="${basedir}/readme.md"
+		               match='# Introduction'
+		               replace='# MPXJ'
+		               byline="true">
+		</replaceregexp>
+	</target>
+
+	<target name="maven-test" depends="init" description="Execute maven and run tests">
+		<exec executable="${maven.cmd}" dir="${basedir}" failonerror="true">
+			<arg line="-Dmpxj.junit.datadir=${basedir}/junit/data clean test" />
+		</exec>
+	</target>
+
+	<target name="maven-deploy" depends="init" description="Execute maven and deploy to OSSRH">
+		<exec executable="${maven.cmd}" dir="${basedir}" failonerror="true">
+			<arg line="-DskipTests=true clean deploy" />
+		</exec>
+	</target>
+
+	<target name="github-deploy" depends="init" description="Deploy to GitHub">
+		<exec executable="gh" failonerror="true">
+			<arg line='release create -F ${dist.dir}/readme.md -t "Version ${current.version}" v${current.version} ${distribution}'/>
+		</exec>
+	</target>
+</project>

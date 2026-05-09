@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/tmp/**)",
+      "Bash(python -c \"from docx import Document; d=Document\\(r'C:\\\\Users\\\\gabri\\\\Downloads\\\\CONTRATO DE CONSORCIO \\(1\\).docx'\\); [print\\(p.text\\) for p in d.paragraphs if p.text.strip\\(\\)]\")",
+      "Bash(python -c \"import openpyxl; wb=openpyxl.load_workbook\\(r'C:\\\\Users\\\\gabri\\\\Downloads\\\\PRESUPUESTO DE EJECUCION CREMATORIO \\(3\\).xlsx', data_only=True\\); [print\\('---SHEET:',s.title\\) or [print\\('|'.join\\(str\\(c\\) if c is not None else '' for c in r\\)\\) for r in s.iter_rows\\(values_only=True, max_row=80\\)] for s in wb.worksheets]\")"
+    ]
+  }
+}

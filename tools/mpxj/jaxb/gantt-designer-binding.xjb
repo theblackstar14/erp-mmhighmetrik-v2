@@ -1,0 +1,35 @@
+<jxb:bindings version="3.0"
+               xmlns:jxb="https://jakarta.ee/xml/ns/jaxb"
+               xmlns:xs="http://www.w3.org/2001/XMLSchema"
+               schemaLocation="gantt-designer.xsd">
+
+   <jxb:globalBindings>
+      <jxb:javaType name="java.time.LocalDateTime"
+         xmlType="xs:dateTime"
+         parseMethod="org.mpxj.ganttdesigner.DatatypeConverter.parseTimestamp"
+         printMethod="org.mpxj.ganttdesigner.DatatypeConverter.printTimestamp"/>
+
+      <jxb:javaType name="java.time.LocalDate"
+         xmlType="xs:date"
+         parseMethod="org.mpxj.ganttdesigner.DatatypeConverter.parseDate"
+         printMethod="org.mpxj.ganttdesigner.DatatypeConverter.printDate"/>
+
+	  <jxb:javaType name="org.mpxj.Duration"
+	     xmlType="ganttDesignerDuration"
+	     parseMethod="org.mpxj.ganttdesigner.DatatypeConverter.parseDuration"
+	     printMethod="org.mpxj.ganttdesigner.DatatypeConverter.printDuration"/>
+
+	  <jxb:javaType name="java.lang.Double"
+	     xmlType="ganttDesignerPercent"
+	     parseMethod="org.mpxj.ganttdesigner.DatatypeConverter.parsePercent"
+	     printMethod="org.mpxj.ganttdesigner.DatatypeConverter.printPercent"/>
+
+	  <jxb:javaType name="java.time.DayOfWeek"
+	     xmlType="ganttDesignerDay"
+	     parseMethod="org.mpxj.ganttdesigner.DatatypeConverter.parseDay"
+	     printMethod="org.mpxj.ganttdesigner.DatatypeConverter.printDay"/>
+
+   </jxb:globalBindings>
+
+
+</jxb:bindings>
