@@ -1,4 +1,4 @@
-import type { Avance, Partida } from '@erp/db';
+import type { Avance, Partida, Valorizacion, ValorizacionPartida } from '@erp/db';
 
 export type Bucket = {
   key: string; // 'YYYY-MM'
@@ -18,6 +18,7 @@ export type CurvaSResult = {
   earned: number[]; // EV mensual
   earnedAcum: number[]; // EV acumulado
   hoyIdx: number; // bucket actual
+  fuente: 'avances' | 'valorizaciones' | 'mixed' | 'plan-only';
   evm: {
     BAC: number;
     PV: number; // Plan acumulado al hoy
@@ -33,27 +34,43 @@ export type CurvaSResult = {
 };
 
 /**
- * Computa Curva S del proyecto · distribución lineal del costo de cada partida
- * entre fechaInicio y fechaFin · agregado por bucket mensual.
+ * Computa Curva S del proyecto
+ *   PV  · distribución lineal de presupuesto contractual sobre fechas cronograma
+ *   EV  · valorizaciones (montoCd c/reajuste) o avances físico × presupuesto
+ *   AC  · costos reales (placeholder = EV hasta tener tracking compras+planillas)
+ *
+ * Fuente prioridad: valorizaciones > avances > plan-only
  */
 export function computeCurvaS(
   partidas: Partida[],
   latestAvances: Avance[],
+  valorizaciones: Valorizacion[] = [],
+  valorizacionesPartidas: ValorizacionPartida[] = [],
   today: Date = new Date(),
 ): CurvaSResult | null {
-  // Solo hojas con fechas + presupuesto
+  // Solo hojas con fechas + presupuesto contractual > 0 (fallback referencial)
   const parents = new Set(partidas.map((p) => p.parentCodigo).filter(Boolean) as string[]);
-  const leaves = partidas.filter(
-    (p) => !parents.has(p.codigo) && p.fechaInicio && p.fechaFin && Number(p.presupuesto) > 0,
-  );
+  const leaves = partidas.filter((p) => {
+    if (parents.has(p.codigo)) return false;
+    if (!p.fechaInicio || !p.fechaFin) return false;
+    const presup = Number(p.presupuestoContractual ?? 0) || Number(p.presupuesto ?? 0);
+    return presup > 0;
+  });
   if (leaves.length === 0) return null;
 
-  // Range global
+  // Range global · partidas (cronograma) + valorizaciones (ejecución real)
   let minDate = new Date(leaves[0]!.fechaInicio!);
   let maxDate = new Date(leaves[0]!.fechaFin!);
   for (const p of leaves) {
     const s = new Date(p.fechaInicio!);
     const f = new Date(p.fechaFin!);
+    if (s < minDate) minDate = s;
+    if (f > maxDate) maxDate = f;
+  }
+  // Expandir con valorizaciones (pueden caer fuera del plan)
+  for (const v of valorizaciones) {
+    const s = new Date(v.fechaDesde);
+    const f = new Date(v.fechaHasta);
     if (s < minDate) minDate = s;
     if (f > maxDate) maxDate = f;
   }
@@ -77,13 +94,14 @@ export function computeCurvaS(
     cursor.setMonth(cursor.getMonth() + 1);
   }
 
-  // Plan · distribución lineal
+  // Plan · distribución lineal sobre presupuestoContractual (fallback presupuesto)
   const plan = buckets.map(() => 0);
   for (const p of leaves) {
     const s = new Date(p.fechaInicio!);
     const f = new Date(p.fechaFin!);
+    const presup = Number(p.presupuestoContractual ?? 0) || Number(p.presupuesto ?? 0);
     const dias = Math.max(1, Math.round((f.getTime() - s.getTime()) / 86_400_000) + 1);
-    const costoPorDia = Number(p.presupuesto) / dias;
+    const costoPorDia = presup / dias;
     buckets.forEach((b, idx) => {
       const bs = b.start > s ? b.start : s;
       const bf = b.finish < f ? b.finish : f;
@@ -102,62 +120,72 @@ export function computeCurvaS(
     });
   }
 
-  // Real · agregar por mes según fecha de cada avance
+  // EV / AC · prioridad valorizaciones
+  const earned = buckets.map(() => 0);
   const real = buckets.map(() => 0);
-  // Hash partidaId → última cumulative real (para diff por mes)
-  // Simplificación: usamos el último avance de cada partida como total ejecutado al hoy
-  // Distribución mensual: si tenemos histórico ordenado, podemos computar diffs por bucket
-  const avancesPorPartida = new Map<string, Avance[]>();
-  for (const a of latestAvances) {
-    if (!avancesPorPartida.has(a.partidaId)) avancesPorPartida.set(a.partidaId, []);
-    avancesPorPartida.get(a.partidaId)!.push(a);
-  }
-  for (const [pid, avs] of avancesPorPartida) {
-    const sorted = avs.sort((x, y) => new Date(x.fecha).getTime() - new Date(y.fecha).getTime());
-    let prevAcum = 0;
-    for (const av of sorted) {
-      const fecha = new Date(av.fecha);
+  let fuente: CurvaSResult['fuente'] = 'plan-only';
+
+  if (valorizaciones.length > 0) {
+    fuente = 'valorizaciones';
+    // EV: por valorización · sumar montoCd bruto (sin reajuste · presupuesto contractual ganado)
+    for (const v of valorizaciones) {
+      const fecha = new Date(v.fechaHasta);
       const bucketIdx = buckets.findIndex((b) => fecha >= b.start && fecha <= b.finish);
-      if (bucketIdx >= 0) {
-        const curr = Number(av.realCost);
-        real[bucketIdx]! += curr - prevAcum;
-        prevAcum = curr;
+      if (bucketIdx < 0) continue;
+      const cdConReaj = Number(v.montoCd);
+      const reajuste = Number(v.montoReajuste ?? 0);
+      const cdBruto = cdConReaj - reajuste;
+      // EV: lo "ganado" físicamente = sin reajuste (para comparar con plan en moneda Io)
+      earned[bucketIdx]! += cdBruto;
+      // AC: lo cobrado/costo equivalente = con reajuste (en moneda Ir)
+      real[bucketIdx]! += cdConReaj;
+    }
+  } else if (latestAvances.length > 0) {
+    fuente = 'avances';
+    // Fallback: usar avances histórico (legacy)
+    const avancesPorPartida = new Map<string, Avance[]>();
+    for (const a of latestAvances) {
+      if (!avancesPorPartida.has(a.partidaId)) avancesPorPartida.set(a.partidaId, []);
+      avancesPorPartida.get(a.partidaId)!.push(a);
+    }
+    for (const [pid, avs] of avancesPorPartida) {
+      const partida = leaves.find((p) => p.id === pid);
+      if (!partida) continue;
+      const budget = Number(partida.presupuestoContractual ?? 0) || Number(partida.presupuesto ?? 0);
+      const sorted = avs.sort((x, y) => new Date(x.fecha).getTime() - new Date(y.fecha).getTime());
+      let prevPct = 0;
+      let prevAcum = 0;
+      for (const av of sorted) {
+        const fecha = new Date(av.fecha);
+        const bucketIdx = buckets.findIndex((b) => fecha >= b.start && fecha <= b.finish);
+        if (bucketIdx >= 0) {
+          const currPct = Number(av.avancePct);
+          earned[bucketIdx]! += (budget * (currPct - prevPct)) / 100;
+          prevPct = currPct;
+          const currAcum = Number(av.realCost);
+          real[bucketIdx]! += currAcum - prevAcum;
+          prevAcum = currAcum;
+        }
       }
     }
-  }
-  const realAcum: number[] = [];
-  {
-    let acc = 0;
-    real.forEach((v) => {
-      acc += v;
-      realAcum.push(acc);
-    });
   }
 
-  // Earned · % avance × budget de cada hoja, distribuido por fecha del avance
-  const earned = buckets.map(() => 0);
-  for (const [pid, avs] of avancesPorPartida) {
-    const partida = leaves.find((p) => p.id === pid);
-    if (!partida) continue;
-    const budget = Number(partida.presupuesto);
-    const sorted = avs.sort((x, y) => new Date(x.fecha).getTime() - new Date(y.fecha).getTime());
-    let prevPct = 0;
-    for (const av of sorted) {
-      const fecha = new Date(av.fecha);
-      const bucketIdx = buckets.findIndex((b) => fecha >= b.start && fecha <= b.finish);
-      if (bucketIdx >= 0) {
-        const currPct = Number(av.avancePct);
-        earned[bucketIdx]! += (budget * (currPct - prevPct)) / 100;
-        prevPct = currPct;
-      }
-    }
-  }
+  void valorizacionesPartidas; // no usado por ahora · disponible para drilldown
+
   const earnedAcum: number[] = [];
+  const realAcum: number[] = [];
   {
     let acc = 0;
     earned.forEach((v) => {
       acc += v;
       earnedAcum.push(acc);
+    });
+  }
+  {
+    let acc = 0;
+    real.forEach((v) => {
+      acc += v;
+      realAcum.push(acc);
     });
   }
 
@@ -167,7 +195,7 @@ export function computeCurvaS(
   const PV = idxCorte >= 0 ? planAcum[idxCorte]! : 0;
   const AC = idxCorte >= 0 ? realAcum[idxCorte]! : 0;
   const EV = idxCorte >= 0 ? earnedAcum[idxCorte]! : 0;
-  const BAC = leaves.reduce((s, p) => s + Number(p.presupuesto), 0);
+  const BAC = leaves.reduce((s, p) => s + (Number(p.presupuestoContractual ?? 0) || Number(p.presupuesto ?? 0)), 0);
   const SPI = PV > 0 ? EV / PV : 0;
   const CPI = AC > 0 ? EV / AC : 0;
   const SV = EV - PV;
@@ -184,6 +212,7 @@ export function computeCurvaS(
     earned,
     earnedAcum,
     hoyIdx: idxCorte,
+    fuente,
     evm: { BAC, PV, AC, EV, SPI, CPI, SV, CV, EAC, pctCompletado },
   };
 }

@@ -128,7 +128,21 @@ router.get('/proyectos/:proyectoId/curva-s', async (req, res) => {
             .where(inArray(schema.avances.partidaId, partidaIds))
         : [];
 
-    const data = computeCurvaS(partidas, allAvances);
+    // Valorizaciones · prioridad sobre avances histórico
+    const valorizaciones = await db
+      .select()
+      .from(schema.valorizaciones)
+      .where(eq(schema.valorizaciones.proyectoId, proyectoId));
+    const valorizacionIds = valorizaciones.map((v) => v.id);
+    const valpartidas =
+      valorizacionIds.length > 0
+        ? await db
+            .select()
+            .from(schema.valorizacionesPartidas)
+            .where(inArray(schema.valorizacionesPartidas.valorizacionId, valorizacionIds))
+        : [];
+
+    const data = computeCurvaS(partidas, allAvances, valorizaciones, valpartidas);
     return res.json({ data });
   } catch (e) {
     console.error('curva-s error:', e);

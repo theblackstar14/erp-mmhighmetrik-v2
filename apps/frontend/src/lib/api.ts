@@ -241,6 +241,7 @@ export type CurvaSData = {
   earned: number[];
   earnedAcum: number[];
   hoyIdx: number;
+  fuente: 'avances' | 'valorizaciones' | 'mixed' | 'plan-only';
   evm: {
     BAC: number;
     PV: number;

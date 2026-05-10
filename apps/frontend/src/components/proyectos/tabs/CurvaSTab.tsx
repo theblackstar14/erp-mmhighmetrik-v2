@@ -25,7 +25,13 @@ export function CurvaSTab({ proyectoId }: { proyectoId: string }) {
     );
   }
 
-  const hayEjecucion = data.realAcum.some((v) => v > 0);
+  const hayEjecucion = data.realAcum.some((v) => v > 0) || data.earnedAcum.some((v) => v > 0);
+  const fuenteLabel = {
+    valorizaciones: { txt: 'Valorizaciones aprobadas', cls: 'green' },
+    avances: { txt: 'Avances físicos', cls: 'blue' },
+    mixed: { txt: 'Valorizaciones + avances', cls: 'blue' },
+    'plan-only': { txt: 'Solo plan · sin ejecución', cls: 'amber' },
+  }[data.fuente];
   const labelOf = (b: CurvaSData['buckets'][number]) =>
     labelMode === 'mes'
       ? `Mes ${b.idx}`
@@ -36,7 +42,10 @@ export function CurvaSTab({ proyectoId }: { proyectoId: string }) {
       {/* Toolbar */}
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-line bg-bg-elev px-3 py-2">
         <div>
-          <h3 className="text-[13px] font-semibold">Curva S · Avance acumulado</h3>
+          <h3 className="text-[13px] font-semibold flex items-center gap-2">
+            Curva S · Avance acumulado
+            <span className={`chip ${fuenteLabel.cls}`}>{fuenteLabel.txt}</span>
+          </h3>
           <p className="text-[11px] text-ink-3 mt-0.5">
             {data.buckets.length} meses · Fecha de corte: {new Date().toLocaleDateString('es-PE')}
             {!hayEjecucion && (
