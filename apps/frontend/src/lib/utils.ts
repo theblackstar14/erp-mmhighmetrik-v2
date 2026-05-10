@@ -20,6 +20,28 @@ export function fmtCompact(n: number): string {
   return s + 'S/ ' + a.toFixed(0);
 }
 
+/**
+ * Lee presupuesto contractual (lo que le corresponde a la empresa = referencial × factor_oferta)
+ * Fallback a presupuesto legacy solo si contractual no existe (datos pre-F1.A)
+ */
+export function partidaPresupuesto(p: { presupuestoContractual?: string | null; presupuesto?: string | null }): number {
+  const c = Number(p.presupuestoContractual ?? 0);
+  if (c > 0) return c;
+  return Number(p.presupuesto ?? 0);
+}
+
+/**
+ * Precio unitario contractual · null si no hay
+ */
+export function partidaPrecioUnitario(p: {
+  precioUnitarioContractual?: string | null;
+  precioUnitario?: string | null;
+}): number | null {
+  if (p.precioUnitarioContractual) return Number(p.precioUnitarioContractual);
+  if (p.precioUnitario) return Number(p.precioUnitario);
+  return null;
+}
+
 export function fmtDate(s: string | Date | null | undefined): string {
   if (!s) return '—';
   // Force UTC parse · evita off-by-1 (Postgres date sin TZ → JS Date asume UTC)

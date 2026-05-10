@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Clock, History, Loader2, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { type Partida, api } from '@/lib/api.js';
-import { fmtPEN } from '@/lib/utils.js';
+import { fmtPEN, partidaPresupuesto } from '@/lib/utils.js';
 
 type Props = {
   partida: Partida;
@@ -14,7 +14,7 @@ type Props = {
 
 export function EditAvanceModal({ partida, proyectoId, initialAvancePct, initialRealCost, onClose }: Props) {
   const qc = useQueryClient();
-  const budget = Number(partida.presupuesto);
+  const budget = partidaPresupuesto(partida);
 
   const [avancePct, setAvancePct] = useState(initialAvancePct ?? 0);
   const [realCost, setRealCost] = useState(initialRealCost ?? 0);

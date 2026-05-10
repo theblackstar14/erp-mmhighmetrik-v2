@@ -49,7 +49,7 @@ export function computeAvancesRollup(
       result[codigo] = empty;
       return empty;
     }
-    const budget = Number(partida.presupuesto);
+    const budget = Number(partida.presupuestoContractual ?? 0) || Number(partida.presupuesto ?? 0);
     const children = childMap.get(codigo) ?? [];
 
     if (children.length === 0) {

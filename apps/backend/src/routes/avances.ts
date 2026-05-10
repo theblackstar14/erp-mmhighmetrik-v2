@@ -85,19 +85,25 @@ router.get('/proyectos/:proyectoId/avances', async (req, res) => {
   // 3. Compute rollup
   const avances = computeAvancesRollup(partidas, latestAvances as unknown as schema.Avance[]);
 
-  // 4. KPIs proyecto
+  // 4. KPIs proyecto · contractual (lo que cobra empresa)
+  const budgetOf = (p: schema.Partida) =>
+    Number(p.presupuestoContractual ?? 0) || Number(p.presupuesto ?? 0);
   const cap1 = partidas.filter((p) => p.nivel === 1);
-  const totalCD = cap1.reduce((s, p) => s + Number(p.presupuesto), 0);
+  const totalCD = cap1.reduce((s, p) => s + budgetOf(p), 0);
   const totalReal = cap1.reduce((s, p) => s + (avances[p.codigo]?.realCost ?? 0), 0);
   const earnedValue = cap1.reduce((s, p) => {
     const a = avances[p.codigo];
-    return s + Number(p.presupuesto) * ((a?.avancePct ?? 0) / 100);
+    return s + budgetOf(p) * ((a?.avancePct ?? 0) / 100);
   }, 0);
   const avanceFisicoPct = totalCD > 0 ? (earnedValue / totalCD) * 100 : 0;
   const avanceFinancieroPct = totalCD > 0 ? (totalReal / totalCD) * 100 : 0;
 
   return res.json({
-    partidas: partidas.map((p) => ({ id: p.id, codigo: p.codigo, presupuesto: p.presupuesto })),
+    partidas: partidas.map((p) => ({
+      id: p.id,
+      codigo: p.codigo,
+      presupuesto: String(budgetOf(p)),
+    })),
     avances,
     kpis: {
       totalCD,

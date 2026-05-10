@@ -2,7 +2,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { Calendar, ChevronDown, ChevronRight, Diamond, Search, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Partida } from '@/lib/api.js';
-import { cn, fmtPEN } from '@/lib/utils.js';
+import { cn, fmtPEN, partidaPrecioUnitario, partidaPresupuesto } from '@/lib/utils.js';
 
 type ZoomLevel = 'day' | 'week' | 'month' | 'quarter';
 const PX_PER_DAY: Record<ZoomLevel, number> = { day: 24, week: 8, month: 3, quarter: 1 };
@@ -81,8 +81,7 @@ export function GanttViewer({ partidas, height = 700 }: Props) {
     // Incluir TODAS las partidas nivel 1 (incluso si no tienen fechas/dur)
     // Para el viewer Gantt usamos validPartidas pero el cost total incluye todas
     const cap1 = partidas.filter((p) => p.nivel === 1);
-    const totalCost = cap1.reduce((s, p) => s + Number(p.presupuesto), 0);
-    const totalCostContractual = cap1.reduce((s, p) => s + Number(p.presupuestoContractual ?? 0), 0);
+    const totalCost = cap1.reduce((s, p) => s + partidaPresupuesto(p), 0);
     const leaves = validPartidas.filter((p) => !hasChildren(p, validPartidas));
     const avgProgress =
       leaves.length > 0
@@ -94,7 +93,7 @@ export function GanttViewer({ partidas, height = 700 }: Props) {
     const totalDuration = dateRangeReal
       ? Math.ceil((dateRangeReal.max.getTime() - dateRangeReal.min.getTime()) / 86_400_000)
       : 0;
-    return { totalDuration, totalCost, totalCostContractual, avgProgress, criticas, totalLeaves: leaves.length, hitos };
+    return { totalDuration, totalCost, avgProgress, criticas, totalLeaves: leaves.length, hitos };
   }, [validPartidas, dateRangeReal]);
 
   // Virtualizer
@@ -212,8 +211,8 @@ export function GanttViewer({ partidas, height = 700 }: Props) {
         <Kpi lbl="Duración" val={`${kpis.totalDuration}d`} sub={dateRangeReal ? `${dateRangeReal.min.toLocaleDateString('es-PE', { day: '2-digit', month: 'short', timeZone: 'UTC' })} → ${dateRangeReal.max.toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' })}` : ''} />
         <Kpi
           lbl="Costo Contractual"
-          val={fmtPEN(kpis.totalCostContractual > 0 ? kpis.totalCostContractual : kpis.totalCost)}
-          sub={kpis.totalCostContractual > 0 ? `Ref: ${fmtPEN(kpis.totalCost)}` : 'Suma capítulos nivel 1'}
+          val={fmtPEN(kpis.totalCost)}
+          sub="Suma capítulos nivel 1"
           mono
         />
         <Kpi lbl="Progreso" val={`${kpis.avgProgress.toFixed(1)}%`} sub={`${kpis.totalLeaves} hojas`} />
@@ -684,13 +683,13 @@ function GanttDetailsPanel({
           <Row lbl="% Completado" val={`${Number(p.percentComplete ?? 0).toFixed(1)}%`} />
         </Section>
 
-        {/* Económico */}
+        {/* Económico · Contractual */}
         <Section title="Económico">
-          <Row lbl="Presupuesto" val={fmtPEN(Number(p.presupuesto))} mono />
+          <Row lbl="Presupuesto" val={fmtPEN(partidaPresupuesto(p))} mono />
           {p.unidad && <Row lbl="Unidad" val={p.unidad} />}
           {p.cantidad && <Row lbl="Cantidad" val={Number(p.cantidad).toLocaleString('es-PE')} />}
-          {p.precioUnitario && (
-            <Row lbl="Precio Unitario" val={fmtPEN(Number(p.precioUnitario))} mono />
+          {partidaPrecioUnitario(p) !== null && (
+            <Row lbl="Precio Unitario" val={fmtPEN(partidaPrecioUnitario(p) ?? 0)} mono />
           )}
         </Section>
 

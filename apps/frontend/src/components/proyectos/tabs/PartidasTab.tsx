@@ -3,7 +3,7 @@ import { ChevronDown, ChevronRight, FileText, Search } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { EditAvanceModal } from '@/components/proyectos/avance/EditAvanceModal.js';
 import { type Partida, api } from '@/lib/api.js';
-import { cn, fmtPEN } from '@/lib/utils.js';
+import { cn, fmtPEN, partidaPrecioUnitario, partidaPresupuesto } from '@/lib/utils.js';
 
 export function PartidasTab({ proyectoId }: { proyectoId: string }) {
   const partidasQ = useQuery({
@@ -23,14 +23,8 @@ export function PartidasTab({ proyectoId }: { proyectoId: string }) {
   const avances = avancesQ.data?.avances ?? {};
 
   // Siempre vista contractual (lo que se cobra · MPP cronograma)
-  const getBudget = (p: Partida): number =>
-    Number(p.presupuestoContractual ?? p.presupuesto ?? 0);
-  const getPU = (p: Partida): number | null =>
-    p.precioUnitarioContractual
-      ? Number(p.precioUnitarioContractual)
-      : p.precioUnitario
-        ? Number(p.precioUnitario)
-        : null;
+  const getBudget = partidaPresupuesto;
+  const getPU = partidaPrecioUnitario;
 
   // Inicializar nivel 1 expandidos
   useMemo(() => {
@@ -85,9 +79,6 @@ export function PartidasTab({ proyectoId }: { proyectoId: string }) {
     setExpanded(new Set(partidas.filter((p) => p.nivel === 1).map((p) => p.codigo)));
 
   const totalCD = partidas.filter((p) => p.nivel === 1).reduce((s, p) => s + getBudget(p), 0);
-  const totalReferencial = partidas
-    .filter((p) => p.nivel === 1)
-    .reduce((s, p) => s + Number(p.presupuesto ?? 0), 0);
   const totalReal = partidas
     .filter((p) => p.nivel === 1)
     .reduce((s, p) => s + (avances[p.codigo]?.realCost ?? 0), 0);
@@ -113,7 +104,7 @@ export function PartidasTab({ proyectoId }: { proyectoId: string }) {
         <Stat
           lbl="Presupuesto Contractual"
           val={fmtPEN(totalCD)}
-          sub={`Referencial: ${fmtPEN(totalReferencial)}`}
+          sub="Suma capítulos nivel 1"
           accent
         />
         <Stat lbl="Real ejecutado" val={fmtPEN(totalReal)} accent />

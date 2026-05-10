@@ -3,7 +3,7 @@ import { CheckCircle2, ChevronUp, FileText, Loader2, RefreshCw, Upload } from 'l
 import { useState } from 'react';
 import { GanttViewer } from '@/components/proyectos/gantt/GanttViewer.js';
 import { api } from '@/lib/api.js';
-import { fmtPEN } from '@/lib/utils.js';
+import { fmtPEN, partidaPresupuesto } from '@/lib/utils.js';
 
 export function CronogramaTab({ proyectoId }: { proyectoId: string }) {
   const qc = useQueryClient();
@@ -156,11 +156,9 @@ export function CronogramaTab({ proyectoId }: { proyectoId: string }) {
               val={fmtPEN(
                 partidas
                   .filter((p) => p.nivel === 1)
-                  .reduce((s, p) => s + Number(p.presupuestoContractual ?? 0), 0),
+                  .reduce((s, p) => s + partidaPresupuesto(p), 0),
               )}
-              sub={`Ref: ${fmtPEN(
-                partidas.filter((p) => p.nivel === 1).reduce((s, p) => s + Number(p.presupuesto), 0),
-              )}`}
+              sub="Suma capítulos nivel 1"
             />
           </div>
 
