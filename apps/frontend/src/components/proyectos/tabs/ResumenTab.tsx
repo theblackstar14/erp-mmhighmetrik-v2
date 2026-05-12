@@ -204,7 +204,7 @@ export function ResumenTab({ proyecto }: { proyecto: Proyecto }) {
               <div className="text-[14px] font-bold text-foreground mt-0.5">
                 {fmtPEN(Number.parseFloat(proyecto.montoReferencial ?? '0'))}
               </div>
-              <div className="text-[10px] text-ink-3 mt-0.5">CD: {fmtPEN(cdReferencial)}</div>
+              <div className="text-[10px] text-ink-3 mt-0.5">CD contractual: {fmtPEN(cdContractual)}</div>
             </div>
             <div className="border-t border-line pt-3">
               <div className="font-mono text-[9px] uppercase tracking-[0.06em] text-ink-4">
