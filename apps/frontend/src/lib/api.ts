@@ -193,6 +193,9 @@ export type Proyecto = {
   pctGg: string | null;
   pctUtilidad: string | null;
   pctIgv: string | null;
+  costoDirectoSinIgv: string | null;
+  montoSubtotal: string | null;
+  montoIgv: string | null;
   fechaInicio: string | null;
   fechaFin: string | null;
   fechaBuenaPro: string | null;

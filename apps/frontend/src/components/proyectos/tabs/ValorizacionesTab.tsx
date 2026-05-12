@@ -30,17 +30,27 @@ const SUBP_NOMBRE: Record<string, string> = {
   GLOBAL: 'OBRA GLOBAL',
 };
 
+type Modo = 'pen' | 'pct';
+
 export function ValorizacionesTab({ proyectoId }: { proyectoId: string }) {
   const qc = useQueryClient();
   const { data, isLoading } = useQuery({
     queryKey: ['valorizaciones', proyectoId],
     queryFn: () => api.proyectos.getValorizaciones(proyectoId),
   });
+  const proyQ = useQuery({
+    queryKey: ['proyecto', proyectoId],
+    queryFn: () => api.proyectos.get(proyectoId),
+  });
 
+  const [modo, setModo] = useState<Modo>('pen');
   const [expandidas, setExpandidas] = useState<Set<string>>(new Set());
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadOk, setUploadOk] = useState<string | null>(null);
+
+  const montoSubtotal = Number(proyQ.data?.proyecto?.montoSubtotal ?? 0);
+  const baseRef = montoSubtotal > 0 ? montoSubtotal : 1;
 
   const uploadMut = useMutation({
     mutationFn: (file: File) => api.proyectos.uploadValorizacion(proyectoId, file),
@@ -79,21 +89,26 @@ export function ValorizacionesTab({ proyectoId }: { proyectoId: string }) {
     return map;
   }, [reajustes]);
 
-  // Curva acumulada
+  // Curva acumulada · ejecutado + programado
   const curvaAcum = useMemo(() => {
-    let acum = 0;
+    let acumEjec = 0;
+    let acumProg = 0;
     return valorizaciones.map((v) => {
-      acum += Number(v.montoCd);
+      acumEjec += Number(v.montoCd);
+      acumProg += Number(v.vProgramado ?? 0);
       return {
         num: v.numero,
-        label: v.fechaHasta.slice(0, 7),
-        periodo: Number(v.montoCd),
-        acumulado: acum,
-        pctAvance: Number(v.pctAvance),
+        label: v.mesPeriodo ?? v.fechaHasta.slice(0, 7),
+        periodoEjec: Number(v.montoCd),
+        acumEjec,
+        periodoProg: Number(v.vProgramado ?? 0),
+        acumProg,
+        pctEjec: Number(v.pctAvance),
+        pctProg: baseRef > 0 ? (acumProg / baseRef) * 100 : 0,
         k: Number(v.factorReajusteK ?? 1),
       };
     });
-  }, [valorizaciones]);
+  }, [valorizaciones, baseRef]);
 
   if (isLoading) {
     return <div className="text-[13px] text-ink-3">Cargando valorizaciones...</div>;
@@ -108,22 +123,38 @@ export function ValorizacionesTab({ proyectoId }: { proyectoId: string }) {
 
   // Curva chart dimensions
   const chartW = 880;
-  const chartH = 200;
-  const padL = 50;
+  const chartH = 220;
+  const padL = 56;
   const padR = 16;
   const padT = 16;
-  const padB = 28;
+  const padB = 32;
   const innerW = chartW - padL - padR;
   const innerH = chartH - padT - padB;
-  const maxAcum = curvaAcum.length > 0 ? Math.max(...curvaAcum.map((c) => c.acumulado)) : 1;
+
+  // En modo % usamos base = 100% · 0.5 step grid; en modo S/ usamos max acumulado
+  const valAt = (c: { acumEjec: number; acumProg: number; pctEjec: number; pctProg: number }, who: 'e' | 'p') =>
+    modo === 'pen' ? (who === 'e' ? c.acumEjec : c.acumProg) : who === 'e' ? c.pctEjec : c.pctProg;
+  const maxVal =
+    curvaAcum.length === 0
+      ? 1
+      : modo === 'pen'
+        ? Math.max(...curvaAcum.flatMap((c) => [c.acumEjec, c.acumProg, baseRef]))
+        : 100;
   const xStep = curvaAcum.length > 1 ? innerW / (curvaAcum.length - 1) : innerW;
-  const points = curvaAcum.map((c, i) => ({
+  const pointsEjec = curvaAcum.map((c, i) => ({
     x: padL + i * xStep,
-    y: padT + innerH - (c.acumulado / maxAcum) * innerH,
+    y: padT + innerH - (valAt(c, 'e') / maxVal) * innerH,
     label: c.label,
-    val: c.acumulado,
+    val: valAt(c, 'e'),
     num: c.num,
   }));
+  const pointsProg = curvaAcum.map((c, i) => ({
+    x: padL + i * xStep,
+    y: padT + innerH - (valAt(c, 'p') / maxVal) * innerH,
+    val: valAt(c, 'p'),
+    num: c.num,
+  }));
+  const fmtAxis = (n: number) => (modo === 'pen' ? fmtCompact(n) : `${n.toFixed(0)}%`);
 
   const hayValorizaciones = valorizaciones.length > 0;
 
@@ -186,28 +217,94 @@ export function ValorizacionesTab({ proyectoId }: { proyectoId: string }) {
         </div>
       )}
 
+      {/* Toggle modo S/ vs % */}
+      {hayValorizaciones && (
+        <div className="flex items-center justify-between">
+          <div className="text-[11px] text-ink-3">
+            {montoSubtotal > 0 ? `Base: Subtotal contratado S/ ${montoSubtotal.toLocaleString('es-PE', { minimumFractionDigits: 2 })}` : 'Subtotal contratado no configurado'}
+          </div>
+          <div className="inline-flex rounded-md border border-line p-0.5 bg-bg-sunken">
+            <button
+              type="button"
+              onClick={() => setModo('pen')}
+              className={cn(
+                'h-7 px-3 rounded-[5px] text-[11.5px] font-medium transition-colors',
+                modo === 'pen' ? 'bg-bg-elev text-foreground shadow-sm' : 'text-ink-3 hover:text-foreground',
+              )}
+            >
+              S/
+            </button>
+            <button
+              type="button"
+              onClick={() => setModo('pct')}
+              className={cn(
+                'h-7 px-3 rounded-[5px] text-[11.5px] font-medium transition-colors',
+                modo === 'pct' ? 'bg-bg-elev text-foreground shadow-sm' : 'text-ink-3 hover:text-foreground',
+              )}
+            >
+              %
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Stats */}
       {hayValorizaciones && stats && (
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-6">
           <Stat label="Valorizaciones" value={stats.cantidad.toString()} />
-          <Stat label="Σ CD c/reajuste" value={fmtPEN(stats.sumCd)} />
-          <Stat label="Σ Reajuste" value={fmtPEN(stats.sumReajuste)} accent="amber" />
-          <Stat label="Σ Total c/IGV" value={fmtPEN(stats.sumTotal)} />
-          <Stat label="% Avance acum" value={`${stats.pctAvanceUltima.toFixed(1)}%`} accent="blue" />
+          {modo === 'pen' ? (
+            <>
+              <Stat label="Σ CD ejecutado" value={fmtPEN(stats.sumCd)} />
+              <Stat label="Σ Reajuste" value={fmtPEN(stats.sumReajuste)} accent="amber" />
+              <Stat label="Σ Total c/IGV" value={fmtPEN(stats.sumTotal)} />
+            </>
+          ) : (
+            <>
+              <Stat
+                label="% Ejecutado acum"
+                value={`${((stats.sumCd / baseRef) * 100).toFixed(2)}%`}
+                accent="blue"
+              />
+              <Stat
+                label="% Programado acum"
+                value={`${((curvaAcum[curvaAcum.length - 1]?.acumProg ?? 0) / baseRef * 100).toFixed(2)}%`}
+              />
+              <Stat
+                label="Δ Ejec-Prog"
+                value={`${(((stats.sumCd - (curvaAcum[curvaAcum.length - 1]?.acumProg ?? 0)) / baseRef) * 100).toFixed(2)}%`}
+                accent={stats.sumCd >= (curvaAcum[curvaAcum.length - 1]?.acumProg ?? 0) ? 'green' : 'amber'}
+              />
+            </>
+          )}
+          <Stat label="% Avance ejec" value={`${stats.pctAvanceUltima.toFixed(2)}%`} accent="blue" />
           <Stat label="K promedio" value={stats.kPromedio.toFixed(5)} accent="blue" />
         </div>
       )}
 
-      {/* Curva acumulada */}
+      {/* Curva acumulada · ejecutado vs programado */}
       {hayValorizaciones && (
       <div className="rounded-md border border-line bg-bg-elev p-4">
-        <div className="flex items-center gap-2 mb-3">
-          <TrendingUp className="h-4 w-4 text-ink-3" />
-          <h3 className="text-[13px] font-semibold">Curva valorización acumulada</h3>
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <TrendingUp className="h-4 w-4 text-ink-3" />
+            <h3 className="text-[13px] font-semibold">
+              Curva valorización · {modo === 'pen' ? 'monto (S/)' : 'porcentaje acumulado'}
+            </h3>
+          </div>
+          <div className="flex items-center gap-4 text-[11px]">
+            <span className="flex items-center gap-1.5">
+              <span className="inline-block w-3 h-[2px] bg-blue-500" />
+              Programado
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="inline-block w-3 h-[2px]" style={{ background: 'hsl(var(--destructive))' }} />
+              Ejecutado
+            </span>
+          </div>
         </div>
         <svg
           viewBox={`0 0 ${chartW} ${chartH}`}
-          className="w-full h-[200px]"
+          className="w-full h-[220px]"
           preserveAspectRatio="none"
         >
           {/* Y-axis grid */}
@@ -227,21 +324,49 @@ export function ValorizacionesTab({ proyectoId }: { proyectoId: string }) {
                 textAnchor="end"
                 className="fill-ink-3 text-[9px]"
               >
-                {fmtCompact(maxAcum * p)}
+                {fmtAxis(maxVal * p)}
               </text>
             </g>
           ))}
-          {/* Línea acumulada */}
+          {/* Línea programada · azul */}
           <polyline
             fill="none"
-            stroke="hsl(var(--primary))"
+            stroke="rgb(59 130 246)"
             strokeWidth="2"
-            points={points.map((p) => `${p.x},${p.y}`).join(' ')}
+            strokeDasharray="4 3"
+            points={pointsProg.map((p) => `${p.x},${p.y}`).join(' ')}
           />
-          {/* Puntos */}
-          {points.map((p) => (
-            <g key={p.num}>
-              <circle cx={p.x} cy={p.y} r="3" fill="hsl(var(--primary))" />
+          {pointsProg.map((p) => (
+            <g key={`p-${p.num}`}>
+              <circle cx={p.x} cy={p.y} r="3" fill="rgb(59 130 246)" />
+              <text
+                x={p.x}
+                y={p.y - 6}
+                textAnchor="middle"
+                className="fill-blue-600 dark:fill-blue-400 text-[9px] font-medium"
+              >
+                {modo === 'pen' ? fmtCompact(p.val) : `${p.val.toFixed(1)}%`}
+              </text>
+            </g>
+          ))}
+          {/* Línea ejecutada · rojo */}
+          <polyline
+            fill="none"
+            stroke="hsl(var(--destructive))"
+            strokeWidth="2.5"
+            points={pointsEjec.map((p) => `${p.x},${p.y}`).join(' ')}
+          />
+          {pointsEjec.map((p) => (
+            <g key={`e-${p.num}`}>
+              <circle cx={p.x} cy={p.y} r="3.5" fill="hsl(var(--destructive))" />
+              <text
+                x={p.x}
+                y={p.y + 14}
+                textAnchor="middle"
+                className="fill-[hsl(var(--destructive))] text-[9px] font-semibold"
+              >
+                {modo === 'pen' ? fmtCompact(p.val) : `${p.val.toFixed(2)}%`}
+              </text>
               <text
                 x={p.x}
                 y={chartH - 8}
@@ -265,23 +390,37 @@ export function ValorizacionesTab({ proyectoId }: { proyectoId: string }) {
               <th className="w-8 px-2 py-2"></th>
               <th className="px-2 py-2">N°</th>
               <th className="px-2 py-2">Periodo</th>
-              <th className="px-2 py-2">% Avance</th>
-              <th className="px-2 py-2 text-right">CD bruto</th>
-              <th className="px-2 py-2 text-right">K avg</th>
-              <th className="px-2 py-2 text-right">Reajuste</th>
-              <th className="px-2 py-2 text-right">CD c/reajuste</th>
-              <th className="px-2 py-2 text-right">IGV 18%</th>
-              <th className="px-2 py-2 text-right">Total</th>
+              {modo === 'pen' ? (
+                <>
+                  <th className="px-2 py-2">% Avance</th>
+                  <th className="px-2 py-2 text-right">CD bruto</th>
+                  <th className="px-2 py-2 text-right">K avg</th>
+                  <th className="px-2 py-2 text-right">Reajuste</th>
+                  <th className="px-2 py-2 text-right">CD c/reajuste</th>
+                  <th className="px-2 py-2 text-right">IGV 18%</th>
+                  <th className="px-2 py-2 text-right">Total</th>
+                </>
+              ) : (
+                <>
+                  <th className="px-2 py-2 text-right">% Prog mes</th>
+                  <th className="px-2 py-2 text-right">% Ejec mes</th>
+                  <th className="px-2 py-2 text-right">Δ mes</th>
+                  <th className="px-2 py-2 text-right">% Prog acum</th>
+                  <th className="px-2 py-2 text-right">% Ejec acum</th>
+                  <th className="px-2 py-2 text-right">K avg</th>
+                </>
+              )}
               <th className="px-2 py-2">Estado</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-line">
-            {valorizaciones.map((v) => {
+            {valorizaciones.map((v, i) => {
               const isExpanded = expandidas.has(v.id);
               const reaj = reajustesPorVal.get(v.id) ?? [];
               const reajusteMonto = Number(v.montoReajuste ?? 0);
               const cdConReaj = Number(v.montoCd);
               const cdBruto = cdConReaj - reajusteMonto;
+              const curvaRow = curvaAcum[i];
               return (
                 <FilaValorizacion
                   key={v.id}
@@ -290,6 +429,9 @@ export function ValorizacionesTab({ proyectoId }: { proyectoId: string }) {
                   isExpanded={isExpanded}
                   reaj={reaj}
                   onToggle={() => toggleExpand(v.id)}
+                  modo={modo}
+                  baseRef={baseRef}
+                  pctProgAcum={curvaRow?.pctProg ?? 0}
                 />
               );
             })}
@@ -307,12 +449,18 @@ function FilaValorizacion({
   isExpanded,
   reaj,
   onToggle,
+  modo,
+  baseRef,
+  pctProgAcum,
 }: {
   v: Valorizacion;
   cdBruto: number;
   isExpanded: boolean;
   reaj: ValorizacionReajuste[];
   onToggle: () => void;
+  modo: Modo;
+  baseRef: number;
+  pctProgAcum: number;
 }) {
   const Caret = isExpanded ? ChevronDown : ChevronRight;
   const cd = Number(v.montoCd);
@@ -331,24 +479,49 @@ function FilaValorizacion({
         </td>
         <td className="px-2 py-2 font-mono font-semibold">N°{v.numero}</td>
         <td className="px-2 py-2 text-ink-2">
-          {v.fechaDesde.slice(0, 7)} → {v.fechaHasta.slice(0, 7)}
+          {v.mesPeriodo ?? `${v.fechaDesde.slice(0, 7)} → ${v.fechaHasta.slice(0, 7)}`}
         </td>
-        <td className="px-2 py-2">{pctAv.toFixed(1)}%</td>
-        <td className="px-2 py-2 text-right tabular-nums">{fmtPEN(cdBruto)}</td>
-        <td className="px-2 py-2 text-right tabular-nums">{k.toFixed(5)}</td>
-        <td className="px-2 py-2 text-right tabular-nums text-amber-700 dark:text-amber-400">
-          {fmtPEN(reajuste)}
-        </td>
-        <td className="px-2 py-2 text-right tabular-nums font-medium">{fmtPEN(cd)}</td>
-        <td className="px-2 py-2 text-right tabular-nums text-ink-3">{fmtPEN(igv)}</td>
-        <td className="px-2 py-2 text-right tabular-nums font-semibold">{fmtPEN(total)}</td>
+        {modo === 'pen' ? (
+          <>
+            <td className="px-2 py-2">{pctAv.toFixed(2)}%</td>
+            <td className="px-2 py-2 text-right tabular-nums">{fmtPEN(cdBruto)}</td>
+            <td className="px-2 py-2 text-right tabular-nums">{k.toFixed(5)}</td>
+            <td className="px-2 py-2 text-right tabular-nums text-amber-700 dark:text-amber-400">
+              {fmtPEN(reajuste)}
+            </td>
+            <td className="px-2 py-2 text-right tabular-nums font-medium">{fmtPEN(cd)}</td>
+            <td className="px-2 py-2 text-right tabular-nums text-ink-3">{fmtPEN(igv)}</td>
+            <td className="px-2 py-2 text-right tabular-nums font-semibold">{fmtPEN(total)}</td>
+          </>
+        ) : (
+          (() => {
+            const vProg = Number(v.vProgramado ?? 0);
+            const pctProgMes = baseRef > 0 ? (vProg / baseRef) * 100 : 0;
+            const pctEjecMes = baseRef > 0 ? (cd / baseRef) * 100 : 0;
+            const delta = pctEjecMes - pctProgMes;
+            const deltaColor = delta >= 0 ? 'text-emerald-600' : 'text-amber-700 dark:text-amber-400';
+            return (
+              <>
+                <td className="px-2 py-2 text-right tabular-nums">{pctProgMes.toFixed(2)}%</td>
+                <td className="px-2 py-2 text-right tabular-nums font-medium">{pctEjecMes.toFixed(2)}%</td>
+                <td className={cn('px-2 py-2 text-right tabular-nums', deltaColor)}>
+                  {delta >= 0 ? '+' : ''}
+                  {delta.toFixed(2)}%
+                </td>
+                <td className="px-2 py-2 text-right tabular-nums text-ink-3">{pctProgAcum.toFixed(2)}%</td>
+                <td className="px-2 py-2 text-right tabular-nums font-semibold">{pctAv.toFixed(2)}%</td>
+                <td className="px-2 py-2 text-right tabular-nums">{k.toFixed(5)}</td>
+              </>
+            );
+          })()
+        )}
         <td className="px-2 py-2">
           <span className={`chip ${chipKind}`}>{v.status}</span>
         </td>
       </tr>
       {isExpanded && (
         <tr className="bg-bg-sunken/40">
-          <td colSpan={11} className="px-4 py-3">
+          <td colSpan={modo === 'pen' ? 11 : 10} className="px-4 py-3">
             <div className="space-y-4">
               {/* RES.VALO cabecera S10 */}
               <div>
