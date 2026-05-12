@@ -4,13 +4,11 @@ import { LogisticaIusPage } from '@/components/logistica/LogisticaIusPage.js';
 import { LogisticaOrdenesPage } from '@/components/logistica/LogisticaOrdenesPage.js';
 import { LogisticaProveedoresPage } from '@/components/logistica/LogisticaProveedoresPage.js';
 import { LogisticaRecursosPage } from '@/components/logistica/LogisticaRecursosPage.js';
-import { LogisticaRequerimientosPage } from '@/components/logistica/LogisticaRequerimientosPage.js';
 import { EmptyModulePage } from './EmptyModulePage.js';
 import { cn } from '@/lib/utils.js';
 
 const TABS = [
   { key: 'proveedores', label: 'Proveedores', icon: Truck },
-  { key: 'requerimientos', label: 'Requerimientos', icon: FileText },
   { key: 'ordenes', label: 'Órdenes Compra', icon: ShoppingCart },
   { key: 'comprobantes', label: 'Comprobantes', icon: Receipt },
   { key: 'recursos', label: 'Recursos', icon: Boxes },
@@ -61,7 +59,6 @@ export function LogisticaPage() {
       <Routes>
         <Route index element={<Navigate to="proveedores" replace />} />
         <Route path="proveedores" element={<LogisticaProveedoresPage />} />
-        <Route path="requerimientos" element={<LogisticaRequerimientosPage />} />
         <Route path="ordenes" element={<LogisticaOrdenesPage />} />
         <Route
           path="comprobantes"
