@@ -94,6 +94,66 @@ export const api = {
     },
   },
 
+  // Logística · catálogos globales
+  logistica: {
+    listRecursos: () =>
+      req<{
+        recursos: Recurso[];
+        stats: {
+          total: number;
+          porTipo: Record<string, number>;
+          iuClasificados: number;
+          sinIu: number;
+        };
+      }>(`/api/logistica/recursos`),
+    updateRecurso: (id: string, data: {
+      iuCodigo?: string | null;
+      categoria?: string | null;
+      descripcion?: string;
+      tipo?: Recurso['tipo'];
+    }) =>
+      req<{ recurso: Recurso }>(`/api/logistica/recursos/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }),
+    createRecurso: (data: {
+      codigo: string;
+      descripcion: string;
+      unidad: string;
+      tipo: Recurso['tipo'];
+      categoria?: string;
+      precioReferencial?: number;
+      iuCodigo?: string;
+    }) =>
+      req<{ recurso: Recurso }>(`/api/logistica/recursos`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    listIus: () =>
+      req<{
+        ius: (IndiceUnificado & { recursosCount: number })[];
+        stats: {
+          total: number;
+          enUso: number;
+          sinUso: number;
+          totalRecursosClasificados: number;
+          totalRecursosSinClasificar: number;
+        };
+      }>(`/api/logistica/ius`),
+    createIu: (data: { codigo: string; descripcion: string; categoria?: string }) =>
+      req<{ iu: IndiceUnificado }>(`/api/logistica/ius`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    updateIu: (codigo: string, data: { descripcion?: string; categoria?: string; vigente?: boolean }) =>
+      req<{ iu: IndiceUnificado }>(`/api/logistica/ius/${codigo}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }),
+    deleteIu: (codigo: string) =>
+      req<{ ok: boolean }>(`/api/logistica/ius/${codigo}`, { method: 'DELETE' }),
+  },
+
   // Avances
   partidas: {
     createAvance: (partidaId: string, data: { avancePct: number; realCost: number; nota?: string }) =>

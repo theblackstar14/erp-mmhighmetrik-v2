@@ -8,7 +8,7 @@ import {
   HardHat,
   LayoutDashboard,
   Package,
-  ShoppingCart,
+  Truck,
   TrendingUp,
   Wallet,
 } from 'lucide-react';
@@ -31,7 +31,7 @@ const NAV_GROUPS = [
     items: [
       { to: '/finanzas', icon: TrendingUp, label: 'Finanzas' },
       { to: '/contabilidad', icon: Wallet, label: 'Contabilidad' },
-      { to: '/compras', icon: ShoppingCart, label: 'Compras' },
+      { to: '/logistica', icon: Truck, label: 'Logística' },
       { to: '/inventario', icon: Package, label: 'Inventario' },
       { to: '/personal', icon: HardHat, label: 'Personal' },
     ],

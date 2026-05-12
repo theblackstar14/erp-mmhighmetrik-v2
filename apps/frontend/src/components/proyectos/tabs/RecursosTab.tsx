@@ -1,60 +1,20 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Boxes, Check, HardHat, Loader2, Pencil, Search, Wrench, X } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { Boxes, ExternalLink, HardHat, Search, Wrench } from 'lucide-react';
 import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { type Recurso, api } from '@/lib/api.js';
 import { cn, fmtPEN } from '@/lib/utils.js';
 
 type FiltroTipo = 'todos' | 'mano_obra' | 'material' | 'equipo';
-type FiltroIu = 'todos' | 'sin_iu' | 'con_iu';
 
 export function RecursosTab({ proyectoId }: { proyectoId: string }) {
-  const qc = useQueryClient();
   const { data, isLoading } = useQuery({
     queryKey: ['recursos', proyectoId],
     queryFn: () => api.proyectos.getRecursos(proyectoId),
   });
-  const iusCatQ = useQuery({
-    queryKey: ['ius-catalogo'],
-    queryFn: () => api.proyectos.getIusCatalogo(),
-    staleTime: 5 * 60 * 1000, // 5min · cambia poco
-  });
 
   const [search, setSearch] = useState('');
   const [filtroTipo, setFiltroTipo] = useState<FiltroTipo>('todos');
-  const [filtroIu, setFiltroIu] = useState<FiltroIu>('todos');
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editValue, setEditValue] = useState<string>('');
-  const [creatingIu, setCreatingIu] = useState<string | null>(null); // recursoId que está creando IU
-  const [newIuCodigo, setNewIuCodigo] = useState('');
-  const [newIuDesc, setNewIuDesc] = useState('');
-  const [createError, setCreateError] = useState<string | null>(null);
-
-  const updateMut = useMutation({
-    mutationFn: ({ recursoId, iuCodigo }: { recursoId: string; iuCodigo: string | null }) =>
-      api.proyectos.updateRecurso(proyectoId, recursoId, { iuCodigo }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['recursos', proyectoId] });
-      setEditingId(null);
-    },
-  });
-
-  const createIuMut = useMutation({
-    mutationFn: (data: { codigo: string; descripcion: string }) => api.proyectos.createIu(data),
-    onSuccess: (r) => {
-      qc.invalidateQueries({ queryKey: ['ius-catalogo'] });
-      // Auto-asignar al recurso que abrió creación
-      if (creatingIu) {
-        updateMut.mutate({ recursoId: creatingIu, iuCodigo: r.iu.codigo });
-      }
-      setCreatingIu(null);
-      setNewIuCodigo('');
-      setNewIuDesc('');
-      setCreateError(null);
-    },
-    onError: (e: Error) => setCreateError(e.message),
-  });
-
-  const ius = iusCatQ.data?.ius ?? [];
 
   // Hooks ANTES de early returns (regla React)
   const recursos = data?.recursos ?? [];
@@ -90,8 +50,6 @@ export function RecursosTab({ proyectoId }: { proyectoId: string }) {
     const ql = search.trim().toLowerCase();
     return recursosConTotal.filter((rt) => {
       if (filtroTipo !== 'todos' && rt.recurso.tipo !== filtroTipo) return false;
-      if (filtroIu === 'sin_iu' && rt.recurso.iuCodigo) return false;
-      if (filtroIu === 'con_iu' && !rt.recurso.iuCodigo) return false;
       if (!ql) return true;
       return (
         rt.recurso.descripcion.toLowerCase().includes(ql) ||
@@ -99,7 +57,7 @@ export function RecursosTab({ proyectoId }: { proyectoId: string }) {
         (rt.recurso.iuCodigo?.includes(ql) ?? false)
       );
     });
-  }, [recursosConTotal, search, filtroTipo, filtroIu]);
+  }, [recursosConTotal, search, filtroTipo]);
 
   const meses = useMemo(() => {
     const set = new Map<number, string>();
@@ -220,25 +178,14 @@ export function RecursosTab({ proyectoId }: { proyectoId: string }) {
                 </button>
               ))}
             </div>
-            {/* Filtro IU clasificación */}
-            <div className="flex rounded-md border border-line overflow-hidden">
-              {(['todos', 'sin_iu', 'con_iu'] as FiltroIu[]).map((t) => (
-                <button
-                  key={t}
-                  type="button"
-                  onClick={() => setFiltroIu(t)}
-                  className={cn(
-                    'px-2.5 py-1 text-[10.5px] font-medium border-l border-line first:border-l-0',
-                    filtroIu === t
-                      ? 'bg-amber-500 text-white'
-                      : 'bg-bg-elev text-ink-3 hover:bg-bg-sunken',
-                  )}
-                  title={t === 'sin_iu' ? 'Solo recursos sin IU asignado' : t === 'con_iu' ? 'Solo recursos clasificados' : 'Todos'}
-                >
-                  {t === 'todos' ? 'IU: Todos' : t === 'sin_iu' ? 'Sin IU' : 'Con IU'}
-                </button>
-              ))}
-            </div>
+            <Link
+              to="/logistica/recursos"
+              className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md border border-line text-[11px] text-ink-2 hover:bg-bg-sunken"
+              title="Editar IUs en módulo Logística"
+            >
+              <ExternalLink className="h-3 w-3" />
+              Editar en Logística
+            </Link>
             <div className="relative">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3 w-3 -translate-y-1/2 text-ink-4" />
               <input
@@ -292,136 +239,22 @@ export function RecursosTab({ proyectoId }: { proyectoId: string }) {
                   <td className="px-2 py-1.5 text-right font-mono text-[11px] font-medium tabular-nums">
                     {fmtPEN(total)}
                   </td>
-                  <td className="px-2 py-1.5 text-center min-w-[120px]">
-                    {creatingIu === r.id ? (
-                      <div className="flex flex-col gap-1 items-center">
-                        <input
-                          value={newIuCodigo}
-                          onChange={(e) => setNewIuCodigo(e.target.value.toUpperCase().slice(0, 3))}
-                          placeholder="cód"
-                          autoFocus
-                          className="h-6 w-14 px-1 rounded border border-primary bg-bg-elev text-[10px] font-mono outline-none text-center"
-                        />
-                        <input
-                          value={newIuDesc}
-                          onChange={(e) => setNewIuDesc(e.target.value)}
-                          placeholder="descripción"
-                          className="h-6 w-32 px-1 rounded border border-primary bg-bg-elev text-[10px] outline-none"
-                        />
-                        <div className="flex items-center gap-1">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (!newIuCodigo.trim() || !newIuDesc.trim()) {
-                                setCreateError('código y descripción obligatorios');
-                                return;
-                              }
-                              createIuMut.mutate({
-                                codigo: newIuCodigo.trim(),
-                                descripcion: newIuDesc.trim(),
-                              });
-                            }}
-                            disabled={createIuMut.isPending}
-                            className="text-emerald-600 hover:text-emerald-700 disabled:opacity-50"
-                          >
-                            {createIuMut.isPending ? (
-                              <Loader2 className="h-3 w-3 animate-spin" />
-                            ) : (
-                              <Check className="h-3 w-3" />
-                            )}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setCreatingIu(null);
-                              setNewIuCodigo('');
-                              setNewIuDesc('');
-                              setCreateError(null);
-                            }}
-                            className="text-ink-3 hover:text-foreground"
-                          >
-                            <X className="h-3 w-3" />
-                          </button>
-                        </div>
-                        {createError && (
-                          <span className="text-[9px] text-destructive">{createError}</span>
-                        )}
-                      </div>
-                    ) : editingId === r.id ? (
-                      <div className="flex items-center gap-1 justify-center">
-                        <select
-                          value={editValue}
-                          onChange={(e) => {
-                            if (e.target.value === '__create__') {
-                              setEditingId(null);
-                              setCreatingIu(r.id);
-                              setNewIuCodigo('');
-                              setNewIuDesc(r.descripcion.slice(0, 50));
-                            } else {
-                              setEditValue(e.target.value);
-                            }
-                          }}
-                          autoFocus
-                          className="h-6 px-1 rounded border border-primary bg-bg-elev text-[10px] font-mono outline-none min-w-[80px]"
-                        >
-                          <option value="">— sin —</option>
-                          {ius.map((iu) => (
-                            <option key={iu.codigo} value={iu.codigo}>
-                              {iu.codigo} · {iu.descripcion.slice(0, 24)}
-                            </option>
-                          ))}
-                          <option value="__create__">+ Crear IU nuevo...</option>
-                        </select>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            updateMut.mutate({
-                              recursoId: r.id,
-                              iuCodigo: editValue || null,
-                            })
-                          }
-                          disabled={updateMut.isPending}
-                          className="text-emerald-600 hover:text-emerald-700 disabled:opacity-50"
-                          title="Guardar"
-                        >
-                          {updateMut.isPending ? (
-                            <Loader2 className="h-3 w-3 animate-spin" />
-                          ) : (
-                            <Check className="h-3 w-3" />
-                          )}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setEditingId(null)}
-                          className="text-ink-3 hover:text-foreground"
-                          title="Cancelar"
-                        >
-                          <X className="h-3 w-3" />
-                        </button>
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditingId(r.id);
-                          setEditValue(r.iuCodigo ?? '');
-                        }}
-                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-bg-sunken/60 group"
-                        title={
-                          r.iuCodigo
-                            ? `IU ${r.iuCodigo} · click para editar`
-                            : 'Click para asignar IU'
-                        }
+                  <td className="px-2 py-1.5 text-center">
+                    {r.iuCodigo ? (
+                      <span
+                        className="inline-block px-1.5 py-0.5 rounded text-[9px] font-mono bg-primary-soft text-primary-ink"
+                        title={`Editar en Logística → Recursos`}
                       >
-                        {r.iuCodigo ? (
-                          <span className="text-[9px] font-mono bg-primary-soft text-primary-ink px-1 py-0.5 rounded">
-                            {r.iuCodigo}
-                          </span>
-                        ) : (
-                          <span className="text-amber-600 text-[10px]">⚠ sin IU</span>
-                        )}
-                        <Pencil className="h-2.5 w-2.5 text-ink-4 opacity-0 group-hover:opacity-100 transition-opacity" />
-                      </button>
+                        {r.iuCodigo}
+                      </span>
+                    ) : (
+                      <Link
+                        to="/logistica/recursos"
+                        className="text-amber-600 text-[10px] hover:underline"
+                        title="Editar en Logística"
+                      >
+                        ⚠ sin IU
+                      </Link>
                     )}
                   </td>
                   {meses.map((m) => {

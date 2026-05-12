@@ -5,6 +5,7 @@ import { api } from './lib/api.js';
 import { useAuthStore } from './lib/auth-store.js';
 import { DashboardPage } from './pages/DashboardPage.js';
 import { EmptyModulePage } from './pages/EmptyModulePage.js';
+import { LogisticaPage } from './pages/LogisticaPage.js';
 import { LoginPage } from './pages/LoginPage.js';
 import { ProjectDetailPage } from './pages/ProjectDetailPage.js';
 import { ProyectosListPage } from './pages/ProyectosListPage.js';
@@ -42,7 +43,7 @@ export default function App() {
         <Route path="seace" element={<EmptyModulePage title="SEACE" description="Buscador licitaciones públicas Peru" />} />
         <Route path="finanzas" element={<EmptyModulePage title="Finanzas" description="Cashflow consolidado · cuentas por cobrar/pagar" />} />
         <Route path="contabilidad" element={<EmptyModulePage title="Contabilidad" description="Plan contable PCGE 2020 · libros · PLE SUNAT" />} />
-        <Route path="compras" element={<EmptyModulePage title="Compras" description="Órdenes de compra y servicio · proveedores" />} />
+        <Route path="logistica/*" element={<LogisticaPage />} />
         <Route path="inventario" element={<EmptyModulePage title="Inventario" description="Stock de almacén · kardex · valorización" />} />
         <Route path="personal" element={<EmptyModulePage title="Personal" description="Base de datos trabajadores · planilla · SCTR" />} />
         <Route path="documentos" element={<EmptyModulePage title="Documentos" description="Conexión NAS Synology · archivos globales" />} />

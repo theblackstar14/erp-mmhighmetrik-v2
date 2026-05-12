@@ -6,6 +6,7 @@ import { authMiddleware } from './middleware/auth.js';
 import authRoutes from './routes/auth.js';
 import avancesRoutes from './routes/avances.js';
 import iaRoutes from './routes/ia.js';
+import logisticaRoutes from './routes/logistica.js';
 import proyectosRoutes from './routes/proyectos.js';
 
 // TLS self-signed (Synology HTTPS LAN)
@@ -39,6 +40,7 @@ app.get('/api/health', (_req, res) => {
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/proyectos', proyectosRoutes);
+app.use('/api/logistica', logisticaRoutes);
 app.use('/api', avancesRoutes); // POST /api/partidas/:id/avances + GET /api/proyectos/:id/avances
 app.use('/api/ia', iaRoutes);
 
