@@ -90,6 +90,62 @@ export function PartidasTab({ proyectoId }: { proyectoId: string }) {
     : partidas.filter((p) => p.nivel === 1).reduce((s, p) => s + (avances[p.codigo]?.realCost ?? 0), 0);
   const pctAvanceGlobal = totalCD > 0 ? (totalRealEfectivo / totalCD) * 100 : 0;
 
+  // ─── Rollup avance · parents = suma hojas descendientes ───
+  const rollup = useMemo(() => {
+    const result = new Map<string, { realCost: number; pctAvance: number; fromVal: boolean }>();
+    if (partidas.length === 0) return result;
+
+    // 1. Cada hoja con valorizado · valor directo
+    for (const p of partidas) {
+      const has = partidas.some((c) => c.parentCodigo === p.codigo);
+      if (!has && p.valorizado) {
+        const real = Number(p.valorizado.montoAcumulado);
+        const pct = Number(p.valorizado.pctAvanceReal);
+        result.set(p.codigo, { realCost: real, pctAvance: pct, fromVal: true });
+      } else if (!has) {
+        const a = avances[p.codigo];
+        result.set(p.codigo, {
+          realCost: a?.realCost ?? 0,
+          pctAvance: a?.avancePct ?? 0,
+          fromVal: false,
+        });
+      }
+    }
+
+    // 2. Bottom-up · parents = suma descendientes
+    const byParent = new Map<string, typeof partidas>();
+    for (const p of partidas) {
+      if (p.parentCodigo) {
+        const arr = byParent.get(p.parentCodigo) ?? [];
+        arr.push(p);
+        byParent.set(p.parentCodigo, arr);
+      }
+    }
+    // Procesar por nivel descendente
+    const niveles = [...new Set(partidas.map((p) => p.nivel))].sort((a, b) => b - a);
+    for (const lvl of niveles) {
+      for (const p of partidas.filter((p) => p.nivel === lvl)) {
+        if (result.has(p.codigo)) continue; // ya es hoja
+        const hijos = byParent.get(p.codigo) ?? [];
+        if (hijos.length === 0) continue;
+        let sumReal = 0;
+        let sumBudget = 0;
+        let anyFromVal = false;
+        for (const h of hijos) {
+          const r = result.get(h.codigo);
+          sumReal += r?.realCost ?? 0;
+          sumBudget += getBudget(h);
+          if (r?.fromVal) anyFromVal = true;
+        }
+        const budget = getBudget(p);
+        const denom = budget > 0 ? budget : sumBudget;
+        const pct = denom > 0 ? (sumReal / denom) * 100 : 0;
+        result.set(p.codigo, { realCost: sumReal, pctAvance: pct, fromVal: anyFromVal });
+      }
+    }
+    return result;
+  }, [partidas, avances]);
+
   if (partidasQ.isLoading) return <div className="text-[12px] text-ink-3">Cargando partidas...</div>;
 
   if (partidas.length === 0) {
@@ -179,13 +235,15 @@ export function PartidasTab({ proyectoId }: { proyectoId: string }) {
                 const fontWeight = p.nivel === 1 ? 700 : p.nivel === 2 ? 600 : 500;
                 const bg = p.nivel === 1 ? 'bg-bg-sunken/50' : p.nivel === 2 ? 'bg-bg-sunken/20' : '';
                 const a = avances[p.codigo];
-                // Prioridad: avance real de valorización · fallback al avance manual
+                // Rollup · si parent, usa suma descendientes; si hoja, valor directo
+                const r = rollup.get(p.codigo);
                 const valorizado = p.valorizado;
                 const valPct = valorizado ? Number(valorizado.pctAvanceReal) : 0;
                 const valMonto = valorizado ? Number(valorizado.montoAcumulado) : 0;
-                const pct = valPct > 0 ? valPct : (a?.avancePct ?? 0);
-                const real = valMonto > 0 ? valMonto : (a?.realCost ?? 0);
-                const fromVal = valPct > 0 || valMonto > 0;
+                // Prioridad: rollup > valorizado hoja > avance manual
+                const pct = r ? r.pctAvance : valPct > 0 ? valPct : (a?.avancePct ?? 0);
+                const real = r ? r.realCost : valMonto > 0 ? valMonto : (a?.realCost ?? 0);
+                const fromVal = (r?.fromVal ?? false) || valPct > 0 || valMonto > 0;
                 const budget = getBudget(p);
                 const pu = getPU(p);
                 const cantidad = p.cantidad ? Number(p.cantidad) : null;
