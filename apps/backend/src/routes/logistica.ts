@@ -228,27 +228,46 @@ router.post('/recursos/auto-clasificar', async (req, res) => {
       .where(eq(schema.indicesUnificados.vigente, true))
       .orderBy(asc(schema.indicesUnificados.codigo));
 
-    // 3. Llamar Gemini batch (split en chunks de 80 para evitar timeouts)
-    const CHUNK = 80;
-    const allSugerencias: Awaited<ReturnType<typeof classifyRecursosWithGemini>> = [];
+    // 3. Llamar Gemini batch · chunks paralelos
+    const CHUNK = 30;
+    const PARALLEL = 4; // 4 calls concurrentes max · evita rate limits
+    const iusSimple = ius.map((iu) => ({
+      codigo: iu.codigo,
+      descripcion: iu.descripcion,
+      categoria: iu.categoria,
+    }));
+    const chunks: typeof recursos[] = [];
     for (let i = 0; i < recursos.length; i += CHUNK) {
-      const chunk = recursos.slice(i, i + CHUNK);
-      const chunkSimple = chunk.map((r) => ({
-        id: r.id,
-        codigo: r.codigo,
-        descripcion: r.descripcion,
-        unidad: r.unidad,
-        tipo: r.tipo,
-      }));
-      const iusSimple = ius.map((iu) => ({
-        codigo: iu.codigo,
-        descripcion: iu.descripcion,
-        categoria: iu.categoria,
-      }));
-      // eslint-disable-next-line no-await-in-loop
-      const result = await classifyRecursosWithGemini(chunkSimple, iusSimple);
-      allSugerencias.push(...result);
+      chunks.push(recursos.slice(i, i + CHUNK));
     }
+    console.log(`[auto-clasificar] ${recursos.length} recursos · ${chunks.length} chunks × ${CHUNK} · ${PARALLEL} paralelos`);
+
+    const allSugerencias: Awaited<ReturnType<typeof classifyRecursosWithGemini>> = [];
+    for (let i = 0; i < chunks.length; i += PARALLEL) {
+      const batch = chunks.slice(i, i + PARALLEL);
+      const t0 = Date.now();
+      // eslint-disable-next-line no-await-in-loop
+      const results = await Promise.all(
+        batch.map((chunk) =>
+          classifyRecursosWithGemini(
+            chunk.map((r) => ({
+              id: r.id,
+              codigo: r.codigo,
+              descripcion: r.descripcion,
+              unidad: r.unidad,
+              tipo: r.tipo,
+            })),
+            iusSimple,
+          ).catch((err) => {
+            console.error('[auto-clasificar] chunk error:', err);
+            return [];
+          }),
+        ),
+      );
+      for (const r of results) allSugerencias.push(...r);
+      console.log(`  ✓ batch ${i / PARALLEL + 1}/${Math.ceil(chunks.length / PARALLEL)} · ${Date.now() - t0}ms`);
+    }
+    console.log(`[auto-clasificar] completado · ${allSugerencias.length} sugerencias`);
 
     // 4. Si dryRun, devolver sin aplicar
     if (dryRun) {
