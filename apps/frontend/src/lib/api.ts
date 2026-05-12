@@ -433,4 +433,10 @@ export type Partida = {
   percentComplete: string | null;
   predecessors: string[] | null;
   orden: number | null;
+  valorizado?: {
+    metradoAcumulado: string;
+    montoAcumulado: string;
+    pctAvanceReal: string;
+    ultimaValNumero: number | null;
+  } | null;
 };

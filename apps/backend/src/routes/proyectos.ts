@@ -202,12 +202,57 @@ router.post('/:id/cronograma', upload.single('file'), async (req, res) => {
 
 // GET /api/proyectos/:id/partidas
 router.get('/:id/partidas', async (req, res) => {
+  const proyectoId = req.params.id!;
   const list = await db
     .select()
     .from(schema.partidas)
-    .where(eq(schema.partidas.proyectoId, req.params.id!))
+    .where(eq(schema.partidas.proyectoId, proyectoId))
     .orderBy(asc(schema.partidas.orden));
-  res.json({ partidas: list });
+
+  // Mergear acumulado de valorizaciones · última fila por partida (mayor val.numero)
+  const vals = await db
+    .select()
+    .from(schema.valorizaciones)
+    .where(eq(schema.valorizaciones.proyectoId, proyectoId));
+  if (vals.length === 0) {
+    return res.json({ partidas: list });
+  }
+  const valIds = vals.map((v) => v.id);
+  const valNumMap = new Map(vals.map((v) => [v.id, v.numero]));
+  const valpart = await db
+    .select()
+    .from(schema.valorizacionesPartidas)
+    .where(inArray(schema.valorizacionesPartidas.valorizacionId, valIds));
+
+  // Por partida_id · agarrar la fila con mayor número de valorización
+  const ultPorPartida = new Map<string, typeof valpart[number]>();
+  for (const vp of valpart) {
+    const numActual = valNumMap.get(vp.valorizacionId) ?? 0;
+    const prev = ultPorPartida.get(vp.partidaId);
+    if (!prev) {
+      ultPorPartida.set(vp.partidaId, vp);
+    } else {
+      const numPrev = valNumMap.get(prev.valorizacionId) ?? 0;
+      if (numActual > numPrev) ultPorPartida.set(vp.partidaId, vp);
+    }
+  }
+
+  const enriched = list.map((p) => {
+    const vp = ultPorPartida.get(p.id);
+    return {
+      ...p,
+      valorizado: vp
+        ? {
+            metradoAcumulado: vp.metradoAcumulado,
+            montoAcumulado: vp.montoAcumulado,
+            pctAvanceReal: vp.pctAvance,
+            ultimaValNumero: valNumMap.get(vp.valorizacionId) ?? null,
+          }
+        : null,
+    };
+  });
+
+  res.json({ partidas: enriched });
 });
 
 // GET /api/proyectos/:id/recursos · catálogo + cronograma adquisiciones

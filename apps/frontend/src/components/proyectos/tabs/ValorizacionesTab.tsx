@@ -6,6 +6,7 @@ import {
   FileText,
   Loader2,
   Receipt,
+  TrendingDown,
   TrendingUp,
   Upload,
 } from 'lucide-react';
@@ -255,6 +256,74 @@ export function ValorizacionesTab({ proyectoId }: { proyectoId: string }) {
           </div>
         </div>
       )}
+
+      {/* Adelanto/Atraso destacado */}
+      {hayValorizaciones && (() => {
+        // Último mes con ejecución · comparar pctEjecAcum vs pctProgAcum
+        const ultimoMesEjec = [...curvaSCompleta]
+          .filter((p) => p.label === 'INICIO' || p.pctEjecAcum > 0)
+          .pop();
+        if (!ultimoMesEjec || ultimoMesEjec.label === 'INICIO') return null;
+        const delta = ultimoMesEjec.pctEjecAcum - ultimoMesEjec.pctProgAcum;
+        const adelantado = delta >= 0;
+        const Icon = adelantado ? TrendingUp : TrendingDown;
+        const sign = adelantado ? '+' : '';
+        return (
+          <div
+            className={cn(
+              'rounded-md border p-4 flex items-center justify-between gap-4',
+              adelantado
+                ? 'border-emerald-500/30 bg-emerald-50 dark:bg-emerald-950/30'
+                : 'border-amber-500/30 bg-amber-50 dark:bg-amber-950/30',
+            )}
+          >
+            <div className="flex items-center gap-3">
+              <div
+                className={cn(
+                  'h-10 w-10 rounded-full flex items-center justify-center',
+                  adelantado
+                    ? 'bg-emerald-100 dark:bg-emerald-900/50 text-emerald-700 dark:text-emerald-400'
+                    : 'bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-400',
+                )}
+              >
+                <Icon className="h-5 w-5" />
+              </div>
+              <div>
+                <div
+                  className={cn(
+                    'text-[14px] font-semibold',
+                    adelantado
+                      ? 'text-emerald-700 dark:text-emerald-400'
+                      : 'text-amber-700 dark:text-amber-400',
+                  )}
+                >
+                  {adelantado ? 'Obra adelantada' : 'Obra atrasada'} · {sign}
+                  {delta.toFixed(2)}%
+                </div>
+                <div className="text-[11px] text-ink-3 mt-0.5">
+                  Mes {ultimoMesEjec.label} · Ejecutado {ultimoMesEjec.pctEjecAcum.toFixed(2)}% vs
+                  Programado {ultimoMesEjec.pctProgAcum.toFixed(2)}% acumulado
+                </div>
+              </div>
+            </div>
+            <div className="text-right">
+              <div className="text-[10px] uppercase tracking-wide text-ink-3">Equivalente</div>
+              <div
+                className={cn(
+                  'text-[15px] font-semibold tabular-nums',
+                  adelantado
+                    ? 'text-emerald-700 dark:text-emerald-400'
+                    : 'text-amber-700 dark:text-amber-400',
+                )}
+              >
+                {sign}
+                {fmtPEN((delta / 100) * baseRef)}
+              </div>
+              <div className="text-[10px] text-ink-3 mt-0.5">sobre subtotal contratado</div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Toggle modo S/ vs % */}
       {hayValorizaciones && (

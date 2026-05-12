@@ -79,9 +79,16 @@ export function PartidasTab({ proyectoId }: { proyectoId: string }) {
     setExpanded(new Set(partidas.filter((p) => p.nivel === 1).map((p) => p.codigo)));
 
   const totalCD = partidas.filter((p) => p.nivel === 1).reduce((s, p) => s + getBudget(p), 0);
-  const totalReal = partidas
-    .filter((p) => p.nivel === 1)
-    .reduce((s, p) => s + (avances[p.codigo]?.realCost ?? 0), 0);
+  // Total real = suma valorizado de hojas + fallback manual avance solo si NO hay valorización
+  const totalReal = partidas.reduce((s, p) => {
+    if (p.valorizado) return s + Number(p.valorizado.montoAcumulado);
+    return s;
+  }, 0);
+  // Si no hay valorizaciones, usar fallback manual (sum nivel 1 avances)
+  const totalRealEfectivo = totalReal > 0
+    ? totalReal
+    : partidas.filter((p) => p.nivel === 1).reduce((s, p) => s + (avances[p.codigo]?.realCost ?? 0), 0);
+  const pctAvanceGlobal = totalCD > 0 ? (totalRealEfectivo / totalCD) * 100 : 0;
 
   if (partidasQ.isLoading) return <div className="text-[12px] text-ink-3">Cargando partidas...</div>;
 
@@ -107,7 +114,12 @@ export function PartidasTab({ proyectoId }: { proyectoId: string }) {
           sub="Suma capítulos nivel 1"
           accent
         />
-        <Stat lbl="Real ejecutado" val={fmtPEN(totalReal)} accent />
+        <Stat
+          lbl="Real ejecutado"
+          val={fmtPEN(totalRealEfectivo)}
+          sub={`${pctAvanceGlobal.toFixed(2)}% del contractual`}
+          accent
+        />
       </div>
 
       {/* Tabla */}
@@ -167,8 +179,13 @@ export function PartidasTab({ proyectoId }: { proyectoId: string }) {
                 const fontWeight = p.nivel === 1 ? 700 : p.nivel === 2 ? 600 : 500;
                 const bg = p.nivel === 1 ? 'bg-bg-sunken/50' : p.nivel === 2 ? 'bg-bg-sunken/20' : '';
                 const a = avances[p.codigo];
-                const pct = a?.avancePct ?? 0;
-                const real = a?.realCost ?? 0;
+                // Prioridad: avance real de valorización · fallback al avance manual
+                const valorizado = p.valorizado;
+                const valPct = valorizado ? Number(valorizado.pctAvanceReal) : 0;
+                const valMonto = valorizado ? Number(valorizado.montoAcumulado) : 0;
+                const pct = valPct > 0 ? valPct : (a?.avancePct ?? 0);
+                const real = valMonto > 0 ? valMonto : (a?.realCost ?? 0);
+                const fromVal = valPct > 0 || valMonto > 0;
                 const budget = getBudget(p);
                 const pu = getPU(p);
                 const cantidad = p.cantidad ? Number(p.cantidad) : null;
@@ -213,7 +230,12 @@ export function PartidasTab({ proyectoId }: { proyectoId: string }) {
                       style={{ fontWeight, textTransform: p.nivel === 1 ? 'uppercase' : 'none' }}
                     >
                       <span className="text-[11.5px]">{p.nombre}</span>
-                      {a?.source === 'direct' && a.fecha && (
+                      {fromVal && valorizado?.ultimaValNumero != null && (
+                        <span className="ml-2 text-[9.5px] text-primary font-medium">
+                          ● Val N°{valorizado.ultimaValNumero}
+                        </span>
+                      )}
+                      {!fromVal && a?.source === 'direct' && a.fecha && (
                         <span className="ml-2 text-[9.5px] text-ok">● editado</span>
                       )}
                     </td>
