@@ -1,6 +1,7 @@
 import { db, schema } from '@erp/db';
-import { asc, eq, isNull } from 'drizzle-orm';
+import { asc, eq, inArray, isNull } from 'drizzle-orm';
 import { Router } from 'express';
+import { classifyRecursosWithGemini } from '../lib/gemini.js';
 import { requireAuth } from '../middleware/auth.js';
 
 const router = Router();
@@ -193,5 +194,151 @@ router.delete('/ius/:codigo', async (req, res) => {
   res.json({ ok: true });
 });
 
+// ─── AUTO-CLASIFICAR con IA ─────────────────────────────────
+
+// POST /api/logistica/recursos/auto-clasificar · preview (no aplica aún)
+// Body: { dryRun?: boolean, recursoIds?: string[] }
+router.post('/recursos/auto-clasificar', async (req, res) => {
+  try {
+    const { dryRun, recursoIds } = req.body as {
+      dryRun?: boolean;
+      recursoIds?: string[];
+    };
+
+    // 1. Get recursos sin IU (o subset si se pasa)
+    let recursos = await db
+      .select()
+      .from(schema.recursos)
+      .where(eq(schema.recursos.activo, true));
+
+    if (recursoIds && recursoIds.length > 0) {
+      recursos = recursos.filter((r) => recursoIds.includes(r.id));
+    } else {
+      recursos = recursos.filter((r) => !r.iuCodigo);
+    }
+
+    if (recursos.length === 0) {
+      return res.json({ ok: true, sugerencias: [], aplicados: 0, mensaje: 'No hay recursos sin IU' });
+    }
+
+    // 2. Get catálogo IUs vigentes
+    const ius = await db
+      .select()
+      .from(schema.indicesUnificados)
+      .where(eq(schema.indicesUnificados.vigente, true))
+      .orderBy(asc(schema.indicesUnificados.codigo));
+
+    // 3. Llamar Gemini batch (split en chunks de 80 para evitar timeouts)
+    const CHUNK = 80;
+    const allSugerencias: Awaited<ReturnType<typeof classifyRecursosWithGemini>> = [];
+    for (let i = 0; i < recursos.length; i += CHUNK) {
+      const chunk = recursos.slice(i, i + CHUNK);
+      const chunkSimple = chunk.map((r) => ({
+        id: r.id,
+        codigo: r.codigo,
+        descripcion: r.descripcion,
+        unidad: r.unidad,
+        tipo: r.tipo,
+      }));
+      const iusSimple = ius.map((iu) => ({
+        codigo: iu.codigo,
+        descripcion: iu.descripcion,
+        categoria: iu.categoria,
+      }));
+      // eslint-disable-next-line no-await-in-loop
+      const result = await classifyRecursosWithGemini(chunkSimple, iusSimple);
+      allSugerencias.push(...result);
+    }
+
+    // 4. Si dryRun, devolver sin aplicar
+    if (dryRun) {
+      const recursoMap = new Map(recursos.map((r) => [r.id, r]));
+      const enriched = allSugerencias.map((s) => ({
+        ...s,
+        recursoCodigo: recursoMap.get(s.recursoId)?.codigo ?? '',
+        recursoDescripcion: recursoMap.get(s.recursoId)?.descripcion ?? '',
+        recursoTipo: recursoMap.get(s.recursoId)?.tipo ?? '',
+      }));
+      return res.json({
+        ok: true,
+        sugerencias: enriched,
+        total: enriched.length,
+        sinMatch: enriched.filter((s) => !s.iuCodigo).length,
+        altaConfianza: enriched.filter((s) => (s.confianza ?? 0) >= 0.85).length,
+        mediaConfianza: enriched.filter((s) => (s.confianza ?? 0) >= 0.6 && (s.confianza ?? 0) < 0.85).length,
+        bajaConfianza: enriched.filter((s) => (s.confianza ?? 0) < 0.6).length,
+      });
+    }
+
+    // 5. Aplicar sugerencias (solo las con iuCodigo)
+    let aplicados = 0;
+    let descartados = 0;
+    for (const s of allSugerencias) {
+      if (!s.iuCodigo) {
+        descartados++;
+        continue;
+      }
+      // Validar IU existe
+      const iuExists = ius.find((iu) => iu.codigo === s.iuCodigo);
+      if (!iuExists) {
+        descartados++;
+        continue;
+      }
+      await db
+        .update(schema.recursos)
+        .set({
+          iuCodigo: s.iuCodigo,
+          iuClasificacionOrigen: 'auto_ia',
+          iuConfianza: String(s.confianza),
+        })
+        .where(eq(schema.recursos.id, s.recursoId));
+      aplicados++;
+    }
+
+    res.json({
+      ok: true,
+      aplicados,
+      descartados,
+      total: allSugerencias.length,
+    });
+  } catch (err) {
+    console.error('auto-clasificar error:', err);
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+// POST /api/logistica/recursos/aplicar-sugerencias · aplica sugerencias específicas
+// Body: { sugerencias: [{recursoId, iuCodigo, confianza}] }
+router.post('/recursos/aplicar-sugerencias', async (req, res) => {
+  try {
+    const { sugerencias } = req.body as {
+      sugerencias: Array<{ recursoId: string; iuCodigo: string | null; confianza: number }>;
+    };
+    if (!Array.isArray(sugerencias)) {
+      return res.status(400).json({ error: 'sugerencias debe ser array' });
+    }
+
+    let aplicados = 0;
+    for (const s of sugerencias) {
+      if (!s.iuCodigo) continue;
+      await db
+        .update(schema.recursos)
+        .set({
+          iuCodigo: s.iuCodigo,
+          iuClasificacionOrigen: 'auto_ia',
+          iuConfianza: String(s.confianza),
+        })
+        .where(eq(schema.recursos.id, s.recursoId));
+      aplicados++;
+    }
+
+    res.json({ ok: true, aplicados });
+  } catch (err) {
+    console.error('aplicar-sugerencias error:', err);
+    res.status(500).json({ error: String(err) });
+  }
+});
+
 void isNull; // suppress unused
+void inArray;
 export default router;

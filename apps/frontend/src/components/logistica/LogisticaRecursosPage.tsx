@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Boxes, Check, HardHat, Loader2, Pencil, Search, Wrench, X } from 'lucide-react';
+import { Boxes, Check, HardHat, Loader2, Pencil, Search, Sparkles, Wrench, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { type Recurso, api } from '@/lib/api.js';
 import { cn, fmtPEN } from '@/lib/utils.js';
+import { AutoClasificarModal } from './AutoClasificarModal.js';
 
 type FiltroTipo = 'todos' | 'mano_obra' | 'material' | 'equipo';
 type FiltroIu = 'todos' | 'sin_iu' | 'con_iu';
@@ -28,6 +29,7 @@ export function LogisticaRecursosPage() {
   const [newIuCodigo, setNewIuCodigo] = useState('');
   const [newIuDesc, setNewIuDesc] = useState('');
   const [createError, setCreateError] = useState<string | null>(null);
+  const [showAutoModal, setShowAutoModal] = useState(false);
 
   const updateMut = useMutation({
     mutationFn: ({ id, iuCodigo }: { id: string; iuCodigo: string | null }) =>
@@ -106,6 +108,19 @@ export function LogisticaRecursosPage() {
             <h3 className="text-[13px] font-semibold">Catálogo Recursos · Global</h3>
             <p className="text-[11px] text-ink-3 mt-0.5">
               {recursosFiltrados.length} de {recursos.length} · cross-proyecto
+              {(stats?.sinIu ?? 0) > 0 && (
+                <>
+                  {' · '}
+                  <button
+                    type="button"
+                    onClick={() => setShowAutoModal(true)}
+                    className="inline-flex items-center gap-1 text-primary hover:underline font-medium"
+                  >
+                    <Sparkles className="h-3 w-3" />
+                    Auto-clasificar {stats?.sinIu} sin IU con IA
+                  </button>
+                </>
+              )}
             </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
@@ -276,9 +291,26 @@ export function LogisticaRecursosPage() {
                           setEditValue(r.iuCodigo ?? '');
                         }}
                         className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-bg-sunken/60 group"
+                        title={
+                          r.iuCodigo
+                            ? `Origen: ${r.iuClasificacionOrigen ?? 'manual'} · confianza ${((Number(r.iuConfianza ?? 0)) * 100).toFixed(0)}%`
+                            : 'Click para asignar IU'
+                        }
                       >
                         {r.iuCodigo ? (
-                          <span className="text-[9px] font-mono bg-primary-soft text-primary-ink px-1 py-0.5 rounded">
+                          <span
+                            className={cn(
+                              'text-[9px] font-mono px-1 py-0.5 rounded inline-flex items-center gap-0.5',
+                              r.iuClasificacionOrigen === 'auto_ia'
+                                ? Number(r.iuConfianza ?? 0) >= 0.85
+                                  ? 'bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-400 border border-amber-500/30'
+                                  : 'bg-amber-100 dark:bg-amber-950/50 text-amber-800 dark:text-amber-300 border border-amber-500/50'
+                                : 'bg-primary-soft text-primary-ink',
+                            )}
+                          >
+                            {r.iuClasificacionOrigen === 'auto_ia' && (
+                              <Sparkles className="h-2.5 w-2.5" />
+                            )}
                             {r.iuCodigo}
                           </span>
                         ) : (
@@ -302,6 +334,9 @@ export function LogisticaRecursosPage() {
           )}
         </div>
       </div>
+
+      {/* Modal auto-clasificar IA */}
+      {showAutoModal && <AutoClasificarModal onClose={() => setShowAutoModal(false)} />}
     </div>
   );
 }

@@ -152,6 +152,35 @@ export const api = {
       }),
     deleteIu: (codigo: string) =>
       req<{ ok: boolean }>(`/api/logistica/ius/${codigo}`, { method: 'DELETE' }),
+    autoClasificarPreview: () =>
+      req<{
+        ok: boolean;
+        sugerencias: Array<{
+          recursoId: string;
+          recursoCodigo: string;
+          recursoDescripcion: string;
+          recursoTipo: string;
+          iuCodigo: string | null;
+          confianza: number;
+          razon: string;
+        }>;
+        total: number;
+        sinMatch: number;
+        altaConfianza: number;
+        mediaConfianza: number;
+        bajaConfianza: number;
+      }>(`/api/logistica/recursos/auto-clasificar`, {
+        method: 'POST',
+        body: JSON.stringify({ dryRun: true }),
+      }),
+    aplicarSugerencias: (sugerencias: Array<{ recursoId: string; iuCodigo: string | null; confianza: number }>) =>
+      req<{ ok: boolean; aplicados: number }>(
+        `/api/logistica/recursos/aplicar-sugerencias`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ sugerencias }),
+        },
+      ),
   },
 
   // Avances
