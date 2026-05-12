@@ -419,8 +419,11 @@ router.post('/:id/valorizaciones', upload.single('file'), async (req, res) => {
       .returning();
 
     // Insertar valorizaciones_partidas (solo las que matchean con DB)
+    // Además sincronizar partida.precio_unitario_contractual y presupuesto_contractual
+    // con valores Excel S10 (source of truth · evita drift de rounding)
     let partidasInsertadas = 0;
     let partidasSinMatch = 0;
+    let partidasSincronizadas = 0;
     for (const p of parsed.partidas) {
       const dbP = partidasMap.get(p.codigo);
       if (!dbP) {
@@ -442,6 +445,24 @@ router.post('/:id/valorizaciones', upload.single('file'), async (req, res) => {
         pctAvance: String((p.pctAcumulado * 100).toFixed(2)),
       });
       partidasInsertadas++;
+
+      // Sync partida con valores S10 si difieren
+      const dbPu = Number(dbP.precioUnitarioContractual ?? 0);
+      const dbBudget = Number(dbP.presupuestoContractual ?? 0);
+      const excelSubTotal = p.subTotal > 0 ? p.subTotal : p.precioUnitario * p.metradoContractual;
+      if (
+        Math.abs(dbPu - p.precioUnitario) > 0.0001 ||
+        Math.abs(dbBudget - excelSubTotal) > 0.01
+      ) {
+        await db
+          .update(schema.partidas)
+          .set({
+            precioUnitarioContractual: String(p.precioUnitario),
+            presupuestoContractual: String(excelSubTotal.toFixed(2)),
+          })
+          .where(eq(schema.partidas.id, dbP.id));
+        partidasSincronizadas++;
+      }
     }
 
     // Insertar reajuste · 1 fila (FP global)
@@ -472,6 +493,7 @@ router.post('/:id/valorizaciones', upload.single('file'), async (req, res) => {
       valorizacion: valRow,
       partidasInsertadas,
       partidasSinMatch,
+      partidasSincronizadas,
       warnings: parsed.warnings,
     });
   } catch (err) {
