@@ -9,10 +9,15 @@ export class ApiError extends Error {
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     credentials: 'include',
+    cache: 'no-store',
     headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
     ...init,
   });
   if (!res.ok) {
+    // 304 Not Modified · no body · re-fetch fresco
+    if (res.status === 304) {
+      return req<T>(`${path}${path.includes('?') ? '&' : '?'}_=${Date.now()}`, init);
+    }
     const body = await res.json().catch(() => ({}));
     throw new ApiError(res.status, body.error ?? res.statusText, body);
   }

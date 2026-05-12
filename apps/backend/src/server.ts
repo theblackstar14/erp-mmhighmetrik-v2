@@ -14,6 +14,8 @@ if (env.NAS_TLS_INSECURE) {
 }
 
 const app = express();
+// Deshabilitar ETag · evita 304 que rompe req helper en frontend (body vacío en res.json())
+app.set('etag', false);
 
 app.use(
   pinoHttp({
