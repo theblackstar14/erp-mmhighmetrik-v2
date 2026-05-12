@@ -27,7 +27,7 @@ export function GanttViewer({ partidas, height = 700 }: Props) {
   });
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Solo partidas con fechas válidas · hitos al tope ordenados por fecha
+  // Solo partidas con fechas válidas · hitos bracket: 1er hito arriba, resto al final
   const validPartidas = useMemo(() => {
     const filtered = partidas.filter((p) => p.fechaInicio && p.fechaFin);
     const hitos = filtered
@@ -36,7 +36,10 @@ export function GanttViewer({ partidas, height = 700 }: Props) {
     const noHitos = filtered.filter(
       (p) => !p.isMilestone && !p.codigo.startsWith('00.HITO'),
     );
-    return [...hitos, ...noHitos];
+    if (hitos.length === 0) return noHitos;
+    if (hitos.length === 1) return [hitos[0]!, ...noHitos];
+    // 2+ hitos · primero al tope · resto al final ordenados por fecha
+    return [hitos[0]!, ...noHitos, ...hitos.slice(1)];
   }, [partidas]);
 
   // Aplicar collapse + filtros
