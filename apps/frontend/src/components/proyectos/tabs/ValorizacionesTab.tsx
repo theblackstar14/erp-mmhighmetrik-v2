@@ -1,6 +1,15 @@
-import { useQuery } from '@tanstack/react-query';
-import { ChevronDown, ChevronRight, FileText, Receipt, TrendingUp } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  AlertTriangle,
+  ChevronDown,
+  ChevronRight,
+  FileText,
+  Loader2,
+  Receipt,
+  TrendingUp,
+  Upload,
+} from 'lucide-react';
+import { useMemo, useRef, useState } from 'react';
 import { api, type Valorizacion, type ValorizacionReajuste } from '@/lib/api.js';
 import { cn, fmtCompact, fmtPEN } from '@/lib/utils.js';
 
@@ -18,15 +27,43 @@ const SUBP_NOMBRE: Record<string, string> = {
   '003': 'ARQUITECTURA',
   '004': 'INSTALACIONES SANITARIAS',
   '005': 'INSTALACIONES ELÉCTRICAS',
+  GLOBAL: 'OBRA GLOBAL',
 };
 
 export function ValorizacionesTab({ proyectoId }: { proyectoId: string }) {
+  const qc = useQueryClient();
   const { data, isLoading } = useQuery({
     queryKey: ['valorizaciones', proyectoId],
     queryFn: () => api.proyectos.getValorizaciones(proyectoId),
   });
 
   const [expandidas, setExpandidas] = useState<Set<string>>(new Set());
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadOk, setUploadOk] = useState<string | null>(null);
+
+  const uploadMut = useMutation({
+    mutationFn: (file: File) => api.proyectos.uploadValorizacion(proyectoId, file),
+    onSuccess: (r) => {
+      setUploadError(null);
+      setUploadOk(
+        `Val N°${r.valorizacion.numero} ${r.valorizacion.mesPeriodo} · ${r.partidasInsertadas} partidas · ${r.partidasSinMatch} sin match`,
+      );
+      qc.invalidateQueries({ queryKey: ['valorizaciones', proyectoId] });
+      qc.invalidateQueries({ queryKey: ['proyecto', proyectoId] });
+    },
+    onError: (e: Error) => {
+      setUploadOk(null);
+      setUploadError(e.message);
+    },
+  });
+
+  const onFile = (f: File | null) => {
+    if (!f) return;
+    setUploadOk(null);
+    setUploadError(null);
+    uploadMut.mutate(f);
+  };
 
   const valorizaciones = data?.valorizaciones ?? [];
   const reajustes = data?.reajustes ?? [];
@@ -62,18 +99,6 @@ export function ValorizacionesTab({ proyectoId }: { proyectoId: string }) {
     return <div className="text-[13px] text-ink-3">Cargando valorizaciones...</div>;
   }
 
-  if (valorizaciones.length === 0) {
-    return (
-      <div className="rounded-md border border-line bg-bg-elev p-6 text-center">
-        <Receipt className="mx-auto h-8 w-8 text-ink-3 mb-2" />
-        <div className="text-[13px] text-ink-2">Sin valorizaciones registradas</div>
-        <div className="text-[12px] text-ink-3 mt-1">
-          Genera valorizaciones desde Excel S10 mensual
-        </div>
-      </div>
-    );
-  }
-
   const toggleExpand = (id: string) => {
     const next = new Set(expandidas);
     if (next.has(id)) next.delete(id);
@@ -90,7 +115,7 @@ export function ValorizacionesTab({ proyectoId }: { proyectoId: string }) {
   const padB = 28;
   const innerW = chartW - padL - padR;
   const innerH = chartH - padT - padB;
-  const maxAcum = Math.max(...curvaAcum.map((c) => c.acumulado));
+  const maxAcum = curvaAcum.length > 0 ? Math.max(...curvaAcum.map((c) => c.acumulado)) : 1;
   const xStep = curvaAcum.length > 1 ? innerW / (curvaAcum.length - 1) : innerW;
   const points = curvaAcum.map((c, i) => ({
     x: padL + i * xStep,
@@ -100,10 +125,69 @@ export function ValorizacionesTab({ proyectoId }: { proyectoId: string }) {
     num: c.num,
   }));
 
+  const hayValorizaciones = valorizaciones.length > 0;
+
   return (
     <div className="space-y-5">
+      {/* Upload bar */}
+      <div className="rounded-md border border-line bg-bg-elev p-4 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="text-[13px] font-semibold flex items-center gap-1.5">
+            <Upload className="h-3.5 w-3.5 text-ink-3" />
+            Subir valorización mensual
+          </h3>
+          <p className="text-[11px] text-ink-3 mt-0.5">
+            Formato Excel S10 (.xlsx) · cabecera + K + Reajuste + partidas detalle
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".xlsx,.xls"
+            className="hidden"
+            onChange={(e) => onFile(e.target.files?.[0] ?? null)}
+          />
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            disabled={uploadMut.isPending}
+            className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md bg-primary text-primary-foreground text-[12px] font-medium hover:opacity-90 disabled:opacity-50"
+          >
+            {uploadMut.isPending ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Upload className="h-3.5 w-3.5" />
+            )}
+            {uploadMut.isPending ? 'Procesando...' : 'Subir .xlsx'}
+          </button>
+        </div>
+      </div>
+
+      {uploadError && (
+        <div className="rounded-md border border-destructive/30 bg-destructive-soft px-3 py-2 text-[12px] text-destructive flex items-start gap-2">
+          <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+          <span>Error · {uploadError}</span>
+        </div>
+      )}
+      {uploadOk && (
+        <div className="rounded-md border border-emerald-500/30 bg-emerald-50 dark:bg-emerald-950/30 px-3 py-2 text-[12px] text-emerald-700 dark:text-emerald-400">
+          ✓ {uploadOk}
+        </div>
+      )}
+
+      {!hayValorizaciones && (
+        <div className="rounded-md border border-line bg-bg-elev p-6 text-center">
+          <Receipt className="mx-auto h-8 w-8 text-ink-3 mb-2" />
+          <div className="text-[13px] text-ink-2">Sin valorizaciones registradas</div>
+          <div className="text-[12px] text-ink-3 mt-1">
+            Sube la valorización N°1 en Excel para empezar
+          </div>
+        </div>
+      )}
+
       {/* Stats */}
-      {stats && (
+      {hayValorizaciones && stats && (
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-6">
           <Stat label="Valorizaciones" value={stats.cantidad.toString()} />
           <Stat label="Σ CD c/reajuste" value={fmtPEN(stats.sumCd)} />
@@ -115,6 +199,7 @@ export function ValorizacionesTab({ proyectoId }: { proyectoId: string }) {
       )}
 
       {/* Curva acumulada */}
+      {hayValorizaciones && (
       <div className="rounded-md border border-line bg-bg-elev p-4">
         <div className="flex items-center gap-2 mb-3">
           <TrendingUp className="h-4 w-4 text-ink-3" />
@@ -169,8 +254,10 @@ export function ValorizacionesTab({ proyectoId }: { proyectoId: string }) {
           ))}
         </svg>
       </div>
+      )}
 
       {/* Tabla valorizaciones */}
+      {hayValorizaciones && (
       <div className="rounded-md border border-line overflow-hidden">
         <table className="w-full text-[12px]">
           <thead className="bg-bg-sunken border-b border-line">
@@ -209,10 +296,7 @@ export function ValorizacionesTab({ proyectoId }: { proyectoId: string }) {
           </tbody>
         </table>
       </div>
-
-      <div className="text-[11px] text-ink-3 italic">
-        ⚠ Datos placeholder · valores K calculados con IUs INEI sintéticos · reemplazar con publicaciones reales
-      </div>
+      )}
     </div>
   );
 }
@@ -265,21 +349,141 @@ function FilaValorizacion({
       {isExpanded && (
         <tr className="bg-bg-sunken/40">
           <td colSpan={11} className="px-4 py-3">
-            <div className="space-y-3">
-              <div className="flex items-center gap-2 text-[11px] uppercase tracking-wide text-ink-3 font-semibold">
-                <FileText className="h-3.5 w-3.5" />
-                Reajuste por subpresupuesto · IUs mes {reaj[0]?.anioMesIndice ?? '—'}
+            <div className="space-y-4">
+              {/* RES.VALO cabecera S10 */}
+              <div>
+                <div className="flex items-center gap-2 text-[11px] uppercase tracking-wide text-ink-3 font-semibold mb-2">
+                  <Receipt className="h-3.5 w-3.5" />
+                  Resumen valorización S10 {v.archivoXlsx ? `· ${v.archivoXlsx}` : ''}
+                </div>
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+                  <MiniStat lbl="V (Valorización)" val={fmtPEN(Number(v.montoCd))} />
+                  <MiniStat lbl="Reajuste R" val={fmtPEN(Number(v.montoReajuste ?? 0))} />
+                  <MiniStat lbl="Deducciones D" val={fmtPEN(Number(v.montoDeducciones ?? 0))} />
+                  <MiniStat lbl="VB (V+R-D)" val={fmtPEN(Number(v.montoValorizacionBruta ?? 0))} />
+                  <MiniStat lbl="Amortizaciones A" val={fmtPEN(Number(v.montoAmortizaciones ?? 0))} />
+                  <MiniStat lbl="VN (VB-A)" val={fmtPEN(Number(v.montoValorizacionNeta ?? 0))} />
+                  <MiniStat lbl="Multa" val={fmtPEN(Number(v.multa ?? 0))} />
+                  <MiniStat lbl="IGV 18%" val={fmtPEN(Number(v.montoIgv))} />
+                  <MiniStat lbl="Total con IGV" val={fmtPEN(Number(v.montoTotalConIgv ?? v.montoTotal))} />
+                  <MiniStat lbl="Retención" val={fmtPEN(Number(v.montoRetencion ?? 0))} accent="amber" />
+                  <MiniStat
+                    lbl="Total contratista"
+                    val={fmtPEN(Number(v.totalContratista ?? 0))}
+                    accent="green"
+                  />
+                  <MiniStat lbl="Condición" val={v.condicion ?? '—'} accent="blue" />
+                </div>
               </div>
-              <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
-                {reaj.map((r) => (
-                  <DetalleReajuste key={r.id} r={r} />
-                ))}
-              </div>
+
+              {/* Reajuste detalle real/prog/reconocido/pagado */}
+              {(v.vProgramado || v.reajusteReal) && (
+                <div>
+                  <div className="flex items-center gap-2 text-[11px] uppercase tracking-wide text-ink-3 font-semibold mb-2">
+                    <TrendingUp className="h-3.5 w-3.5" />
+                    Cálculo reajuste · R = V × (K-1)
+                  </div>
+                  <table className="w-full text-[11px]">
+                    <thead className="text-ink-3 border-b border-line">
+                      <tr>
+                        <th className="text-left py-1">Concepto</th>
+                        <th className="text-right py-1">Valor</th>
+                        <th className="text-left pl-3 py-1">Concepto</th>
+                        <th className="text-right py-1">Valor</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-line/40">
+                      <tr>
+                        <td className="py-1">V-real (V) (1)</td>
+                        <td className="py-1 text-right tabular-nums">{fmtPEN(Number(v.montoCd))}</td>
+                        <td className="pl-3 py-1">V-programado (2)</td>
+                        <td className="py-1 text-right tabular-nums">{fmtPEN(Number(v.vProgramado ?? 0))}</td>
+                      </tr>
+                      <tr>
+                        <td className="py-1">K-1 (3)</td>
+                        <td className="py-1 text-right tabular-nums">
+                          {(Number(v.factorReajusteK ?? 1) - 1).toFixed(6)}
+                        </td>
+                        <td className="pl-3 py-1">Vr (1)+(6)</td>
+                        <td className="py-1 text-right tabular-nums">{fmtPEN(Number(v.vrConReajuste ?? 0))}</td>
+                      </tr>
+                      <tr>
+                        <td className="py-1">Reajuste REAL (4)=(1)×(3)</td>
+                        <td className="py-1 text-right tabular-nums text-amber-700 dark:text-amber-400">
+                          {fmtPEN(Number(v.reajusteReal ?? 0))}
+                        </td>
+                        <td className="pl-3 py-1">Reajuste PROG (5)=(2)×(3)</td>
+                        <td className="py-1 text-right tabular-nums text-ink-3">
+                          {fmtPEN(Number(v.reajusteProgramado ?? 0))}
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className="py-1">Reajuste RECONOCIDO (6)</td>
+                        <td className="py-1 text-right tabular-nums">{fmtPEN(Number(v.reajusteReconocido ?? 0))}</td>
+                        <td className="pl-3 py-1">Reajuste PAGADO (8)</td>
+                        <td className="py-1 text-right tabular-nums">{fmtPEN(Number(v.reajustePagado ?? 0))}</td>
+                      </tr>
+                      <tr>
+                        <td className="py-1">Acum anterior</td>
+                        <td className="py-1 text-right tabular-nums">{fmtPEN(Number(v.reajusteAcumAnterior ?? 0))}</td>
+                        <td className="pl-3 py-1">Acum actual</td>
+                        <td className="py-1 text-right tabular-nums">{fmtPEN(Number(v.reajusteAcumActual ?? 0))}</td>
+                      </tr>
+                      <tr className="font-semibold">
+                        <td className="py-1">Reajuste presente val</td>
+                        <td className="py-1 text-right tabular-nums">{fmtPEN(Number(v.reajustePresente ?? 0))}</td>
+                        <td colSpan={2} className="pl-3 py-1 text-ink-3 italic">
+                          (valor finalmente aplicado en RES.VALO)
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* K monomios */}
+              {reaj.length > 0 && (
+                <div>
+                  <div className="flex items-center gap-2 text-[11px] uppercase tracking-wide text-ink-3 font-semibold mb-2">
+                    <FileText className="h-3.5 w-3.5" />
+                    Fórmula polinómica K · mes {reaj[0]?.anioMesIndice ?? '—'}
+                  </div>
+                  <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
+                    {reaj.map((r) => (
+                      <DetalleReajuste key={r.id} r={r} />
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </td>
         </tr>
       )}
     </>
+  );
+}
+
+function MiniStat({
+  lbl,
+  val,
+  accent,
+}: {
+  lbl: string;
+  val: string;
+  accent?: 'blue' | 'amber' | 'green';
+}) {
+  const accentClass = {
+    blue: 'text-blue-600 dark:text-blue-400',
+    amber: 'text-amber-700 dark:text-amber-400',
+    green: 'text-emerald-600 dark:text-emerald-400',
+  };
+  return (
+    <div className="rounded border border-line bg-bg-elev px-2.5 py-1.5">
+      <div className="text-[9.5px] uppercase tracking-wide text-ink-3 font-medium">{lbl}</div>
+      <div className={cn('text-[12px] font-semibold tabular-nums', accent && accentClass[accent])}>
+        {val}
+      </div>
+    </div>
   );
 }
 

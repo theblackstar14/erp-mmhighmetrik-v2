@@ -62,6 +62,20 @@ export const api = {
     getCurvaS: (id: string) => req<{ data: CurvaSData | null }>(`/api/proyectos/${id}/curva-s`),
     getRecursos: (id: string) => req<RecursosResponse>(`/api/proyectos/${id}/recursos`),
     getValorizaciones: (id: string) => req<ValorizacionesResponse>(`/api/proyectos/${id}/valorizaciones`),
+    uploadValorizacion: async (id: string, file: File): Promise<UploadValResponse> => {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await fetch(`${API_BASE}/api/proyectos/${id}/valorizaciones`, {
+        method: 'POST',
+        credentials: 'include',
+        body: fd,
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new ApiError(res.status, body.error ?? res.statusText, body);
+      }
+      return res.json();
+    },
   },
 
   // Avances
@@ -295,9 +309,40 @@ export type Valorizacion = {
   pctAvance: string;
   factorReajusteK: string | null;
   montoReajuste: string | null;
+  // Reajuste detail
+  vProgramado: string | null;
+  reajusteReal: string | null;
+  reajusteProgramado: string | null;
+  reajusteReconocido: string | null;
+  reajustePagado: string | null;
+  vrConReajuste: string | null;
+  reajusteAcumAnterior: string | null;
+  reajusteAcumActual: string | null;
+  reajustePresente: string | null;
+  condicion: string | null;
+  mesPeriodo: string | null;
+  // Cabecera RES.VALO
+  montoDeducciones: string | null;
+  montoValorizacionBruta: string | null;
+  montoAmortizaciones: string | null;
+  montoValorizacionNeta: string | null;
+  multa: string | null;
+  montoTotalConIgv: string | null;
+  montoRetencion: string | null;
+  totalContratista: string | null;
+  archivoXlsx: string | null;
+  snapshot: Record<string, unknown> | null;
   status: 'borrador' | 'emitida' | 'aprobada' | 'cobrada' | 'rechazada';
   observaciones: string | null;
   createdAt: string;
+};
+
+export type UploadValResponse = {
+  ok: boolean;
+  valorizacion: Valorizacion;
+  partidasInsertadas: number;
+  partidasSinMatch: number;
+  warnings: string[];
 };
 
 export type ValorizacionReajuste = {

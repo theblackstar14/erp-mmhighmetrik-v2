@@ -225,10 +225,32 @@ export const valorizaciones = pgTable(
     montoIgv: decimal('monto_igv', { precision: 14, scale: 2 }).notNull(),
     montoTotal: decimal('monto_total', { precision: 14, scale: 2 }).notNull(),
     pctAvance: decimal('pct_avance', { precision: 5, scale: 2 }).notNull(),
-    factorReajusteK: decimal('factor_reajuste_k', { precision: 7, scale: 6 }), // FP
+    factorReajusteK: decimal('factor_reajuste_k', { precision: 8, scale: 6 }), // FP global
     montoReajuste: decimal('monto_reajuste', { precision: 14, scale: 2 }),
+    // Detalle Reajuste S10
+    vProgramado: decimal('v_programado', { precision: 14, scale: 2 }), // V-PROG cronograma
+    reajusteReal: decimal('reajuste_real', { precision: 14, scale: 2 }), // V × (K-1)
+    reajusteProgramado: decimal('reajuste_programado', { precision: 14, scale: 2 }), // V-PROG × (K-1)
+    reajusteReconocido: decimal('reajuste_reconocido', { precision: 14, scale: 2 }), // el menor abs
+    reajustePagado: decimal('reajuste_pagado', { precision: 14, scale: 2 }),
+    vrConReajuste: decimal('vr_con_reajuste', { precision: 14, scale: 2 }), // V + R
+    reajusteAcumAnterior: decimal('reajuste_acum_anterior', { precision: 14, scale: 2 }),
+    reajusteAcumActual: decimal('reajuste_acum_actual', { precision: 14, scale: 2 }),
+    reajustePresente: decimal('reajuste_presente', { precision: 14, scale: 2 }),
+    condicion: varchar('condicion', { length: 20 }), // Normal · Especial · etc
+    mesPeriodo: varchar('mes_periodo', { length: 7 }), // 2025-10
+    // Cabecera RES. VALO
+    montoDeducciones: decimal('monto_deducciones', { precision: 14, scale: 2 }).default('0'),
+    montoValorizacionBruta: decimal('monto_valorizacion_bruta', { precision: 14, scale: 2 }),
+    montoAmortizaciones: decimal('monto_amortizaciones', { precision: 14, scale: 2 }).default('0'),
+    montoValorizacionNeta: decimal('monto_valorizacion_neta', { precision: 14, scale: 2 }),
+    multa: decimal('multa', { precision: 14, scale: 2 }).default('0'),
+    montoTotalConIgv: decimal('monto_total_con_igv', { precision: 14, scale: 2 }),
+    montoRetencion: decimal('monto_retencion', { precision: 14, scale: 2 }).default('0'),
+    totalContratista: decimal('total_contratista', { precision: 14, scale: 2 }), // pago final
+    archivoXlsx: varchar('archivo_xlsx', { length: 255 }),
     status: valorizacionStatusEnum('status').notNull().default('borrador'),
-    snapshot: jsonb('snapshot').$type<Record<string, unknown>>(), // copia inmutable rows
+    snapshot: jsonb('snapshot').$type<Record<string, unknown>>(), // hojas K + Reajuste + RES.VALO + Ios/Irs
     observaciones: text('observaciones'),
     createdAt: timestamp('created_at').notNull().defaultNow(),
     updatedAt: timestamp('updated_at').notNull().defaultNow(),
@@ -805,7 +827,7 @@ export const formulasPolinomicas = pgTable(
   {
     id: uuid('id').primaryKey().defaultRandom(),
     proyectoId: uuid('proyecto_id').notNull().references(() => proyectos.id, { onDelete: 'cascade' }),
-    subpresupuestoCodigo: varchar('subpresupuesto_codigo', { length: 5 }).notNull(), // '001'
+    subpresupuestoCodigo: varchar('subpresupuesto_codigo', { length: 10 }).notNull(), // '001' o 'GLOBAL'
     subpresupuestoNombre: varchar('subpresupuesto_nombre', { length: 200 }).notNull(),
     fechaBase: date('fecha_base').notNull(),
     areaGeografica: varchar('area_geografica', { length: 50 }), // '150140 LIMA-LIMA-SANTIAGO DE SURCO'

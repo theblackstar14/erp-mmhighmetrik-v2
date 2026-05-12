@@ -1,4 +1,4 @@
-import { db, schema } from '@erp/db';
+import { db, parseValorizacionXlsx, schema } from '@erp/db';
 import { proyectoCreateSchema } from '@erp/shared';
 import { and, asc, desc, eq, inArray, isNull } from 'drizzle-orm';
 import { Router } from 'express';
@@ -265,6 +265,173 @@ router.get('/:id/recursos', async (req, res) => {
     cronograma: cronog,
     stats,
   });
+});
+
+// ─── POST /api/proyectos/:id/valorizaciones · upload Excel S10 ────
+// Idempotente: si ya existe valorización con mismo número, se reemplaza.
+router.post('/:id/valorizaciones', upload.single('file'), async (req, res) => {
+  try {
+    const proyectoId = req.params.id!;
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    const filename = req.file.originalname.toLowerCase();
+    if (!filename.endsWith('.xlsx') && !filename.endsWith('.xls'))
+      return res.status(400).json({ error: 'Solo .xlsx/.xls soportados' });
+
+    const parsed = parseValorizacionXlsx(req.file.buffer);
+    if (parsed.errors.length) {
+      return res.status(400).json({ error: 'Parse errors', detalles: parsed.errors, warnings: parsed.warnings });
+    }
+
+    // Verificar proyecto existe
+    const [proy] = await db
+      .select()
+      .from(schema.proyectos)
+      .where(eq(schema.proyectos.id, proyectoId))
+      .limit(1);
+    if (!proy) return res.status(404).json({ error: 'Proyecto no encontrado' });
+
+    // Buscar FP global
+    const fps = await db
+      .select()
+      .from(schema.formulasPolinomicas)
+      .where(eq(schema.formulasPolinomicas.proyectoId, proyectoId));
+    const fpGlobal = fps.find((f) => f.subpresupuestoCodigo === 'GLOBAL') ?? fps[0];
+
+    // Mapear partidas Excel ↔ partidas DB por código
+    const dbPartidas = await db
+      .select()
+      .from(schema.partidas)
+      .where(eq(schema.partidas.proyectoId, proyectoId));
+    const partidasMap = new Map(dbPartidas.map((p) => [p.codigo, p]));
+
+    // Idempotencia · borrar valorización previa con mismo número (cascade limpia detalle)
+    const existentes = await db
+      .select()
+      .from(schema.valorizaciones)
+      .where(eq(schema.valorizaciones.proyectoId, proyectoId));
+    const prev = existentes.find((v) => v.numero === parsed.numero);
+    if (prev) {
+      await db.delete(schema.valorizaciones).where(eq(schema.valorizaciones.id, prev.id));
+    }
+
+    // Insertar cabecera
+    const [valRow] = await db
+      .insert(schema.valorizaciones)
+      .values({
+        proyectoId,
+        numero: parsed.numero,
+        fechaDesde: parsed.fechaDesde ?? `${parsed.mesPeriodo}-01`,
+        fechaHasta: parsed.fechaHasta ?? `${parsed.mesPeriodo}-28`,
+        fechaEmision: parsed.fechaDesde ?? `${parsed.mesPeriodo}-01`,
+        montoCd: String(parsed.valorizacion),
+        montoIgv: String(parsed.igv),
+        montoTotal: String(parsed.montoTotalConIgv),
+        pctAvance: String(
+          (() => {
+            const sub = Number(proy.montoSubtotal ?? 0);
+            if (!Number.isFinite(sub) || sub <= 0) return '0';
+            const pct = (parsed.valorizacion / sub) * 100;
+            return Math.min(999.99, Math.max(0, pct)).toFixed(2);
+          })(),
+        ),
+        factorReajusteK: parsed.kCalculado != null ? String(parsed.kCalculado) : null,
+        montoReajuste: String(parsed.reajustePresente ?? 0),
+        vProgramado: parsed.vProgramado != null ? String(parsed.vProgramado) : null,
+        reajusteReal: parsed.reajusteReal != null ? String(parsed.reajusteReal) : null,
+        reajusteProgramado: parsed.reajusteProgramado != null ? String(parsed.reajusteProgramado) : null,
+        reajusteReconocido: parsed.reajusteReconocido != null ? String(parsed.reajusteReconocido) : null,
+        reajustePagado: parsed.reajustePagado != null ? String(parsed.reajustePagado) : null,
+        vrConReajuste: parsed.vrConReajuste != null ? String(parsed.vrConReajuste) : null,
+        reajusteAcumAnterior: String(parsed.reajusteAcumAnterior),
+        reajusteAcumActual: String(parsed.reajusteAcumActual),
+        reajustePresente: String(parsed.reajustePresente),
+        condicion: parsed.condicion,
+        mesPeriodo: parsed.mesPeriodo,
+        montoDeducciones: String(parsed.deducciones),
+        montoValorizacionBruta: String(parsed.valorizacionBruta),
+        montoAmortizaciones: String(parsed.amortizaciones),
+        montoValorizacionNeta: String(parsed.valorizacionNeta),
+        multa: String(parsed.multa),
+        montoTotalConIgv: String(parsed.montoTotalConIgv),
+        montoRetencion: String(parsed.retencion),
+        totalContratista: String(parsed.totalContratista),
+        archivoXlsx: req.file.originalname,
+        status: 'aprobada',
+        snapshot: {
+          obra: parsed.obra,
+          contratista: parsed.contratista,
+          asNumero: parsed.asNumero,
+          entidad: parsed.entidad,
+          pptoBase: parsed.pptoBase,
+          pptoContratado: parsed.pptoContratado,
+          fechaPresupuestoBase: parsed.fechaPresupuestoBase,
+          monomios: parsed.monomios,
+          warnings: parsed.warnings,
+        },
+        observaciones: `Importado desde ${req.file.originalname}`,
+      })
+      .returning();
+
+    // Insertar valorizaciones_partidas (solo las que matchean con DB)
+    let partidasInsertadas = 0;
+    let partidasSinMatch = 0;
+    for (const p of parsed.partidas) {
+      const dbP = partidasMap.get(p.codigo);
+      if (!dbP) {
+        partidasSinMatch++;
+        continue;
+      }
+      const subp = p.codigo.split('.')[0] ?? '';
+      await db.insert(schema.valorizacionesPartidas).values({
+        valorizacionId: valRow!.id,
+        partidaId: dbP.id,
+        subpresupuestoCodigo: subp,
+        metradoContractual: String(p.metradoContractual),
+        metradoAnterior: String(p.metradoAnterior),
+        metradoPeriodo: String(p.metradoActual),
+        metradoAcumulado: String(p.metradoAcumulado),
+        precioUnitario: String(p.precioUnitario),
+        montoPeriodo: String(p.valorActual),
+        montoAcumulado: String(p.valorAcumulado),
+        pctAvance: String((p.pctAcumulado * 100).toFixed(2)),
+      });
+      partidasInsertadas++;
+    }
+
+    // Insertar reajuste · 1 fila (FP global)
+    if (fpGlobal && parsed.kCalculado != null) {
+      await db.insert(schema.valorizacionesReajustes).values({
+        valorizacionId: valRow!.id,
+        formulaId: fpGlobal.id,
+        subpresupuestoCodigo: fpGlobal.subpresupuestoCodigo,
+        anioMesIndice: parsed.mesPeriodo,
+        kCalculado: String(parsed.kCalculado),
+        montoSubpresupuesto: String(parsed.valorizacion),
+        montoReajuste: String(parsed.reajustePresente),
+        detalleK: parsed.monomios.flatMap((m) =>
+          m.ius.map((iu) => ({
+            monomio: m.numero,
+            simbolo: m.simbolo,
+            coef: m.coeficiente,
+            ir: iu.ir,
+            io: iu.io,
+            relacion: iu.io > 0 ? iu.ir / iu.io : 0,
+          })),
+        ),
+      });
+    }
+
+    return res.json({
+      ok: true,
+      valorizacion: valRow,
+      partidasInsertadas,
+      partidasSinMatch,
+      warnings: parsed.warnings,
+    });
+  } catch (err) {
+    console.error('Error upload val:', err);
+    return res.status(500).json({ error: String(err) });
+  }
 });
 
 // GET /api/proyectos/:id/valorizaciones · cabeceras + reajustes + partidas resumen
