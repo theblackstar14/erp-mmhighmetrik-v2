@@ -11,6 +11,52 @@ const ROW_HEIGHT = 26;
 const HEADER_HEIGHT = 44;
 const LEFT_WIDTH = 380;
 
+// Paleta colores por capítulo (top-level) · 10 valores distinguibles
+const CAPITULO_PALETTE = [
+  { bg: 'hsl(217 91% 60% / 0.18)', stroke: 'hsl(217 91% 50%)', fill: 'hsl(217 91% 55%)' }, // azul
+  { bg: 'hsl(265 85% 60% / 0.18)', stroke: 'hsl(265 85% 50%)', fill: 'hsl(265 85% 55%)' }, // violeta
+  { bg: 'hsl(160 60% 45% / 0.18)', stroke: 'hsl(160 60% 38%)', fill: 'hsl(160 60% 42%)' }, // verde
+  { bg: 'hsl(38 92% 55% / 0.20)', stroke: 'hsl(38 92% 48%)', fill: 'hsl(38 92% 52%)' }, // ámbar
+  { bg: 'hsl(335 80% 55% / 0.18)', stroke: 'hsl(335 80% 45%)', fill: 'hsl(335 80% 50%)' }, // rosa
+  { bg: 'hsl(190 75% 45% / 0.18)', stroke: 'hsl(190 75% 38%)', fill: 'hsl(190 75% 42%)' }, // cyan
+  { bg: 'hsl(20 85% 55% / 0.20)', stroke: 'hsl(20 85% 48%)', fill: 'hsl(20 85% 52%)' }, // naranja
+  { bg: 'hsl(290 60% 55% / 0.18)', stroke: 'hsl(290 60% 45%)', fill: 'hsl(290 60% 50%)' }, // morado
+  { bg: 'hsl(75 60% 45% / 0.18)', stroke: 'hsl(75 60% 38%)', fill: 'hsl(75 60% 42%)' }, // verde-amarillo
+  { bg: 'hsl(220 15% 45% / 0.18)', stroke: 'hsl(220 15% 38%)', fill: 'hsl(220 15% 42%)' }, // gris
+];
+
+function getCapituloKey(codigo: string): string {
+  // top-level: primer segmento del código (01, 02, etc)
+  return codigo.split('.')[0] ?? codigo;
+}
+
+type EstadoTarea = 'no_iniciada' | 'en_curso' | 'completada' | 'atrasada' | 'proxima_vence';
+function calcularEstado(
+  p: Partida,
+  pctReal: number,
+  today: Date,
+): EstadoTarea {
+  if (pctReal >= 100) return 'completada';
+  const fin = p.fechaFin ? new Date(`${p.fechaFin.slice(0, 10)}T00:00:00Z`) : null;
+  if (fin && fin < today && pctReal < 100) return 'atrasada';
+  if (pctReal > 0) return 'en_curso';
+  // No iniciada · check si está próxima a vencer (fin dentro 7 días)
+  const ini = p.fechaInicio ? new Date(`${p.fechaInicio.slice(0, 10)}T00:00:00Z`) : null;
+  if (ini && fin) {
+    const dias = (fin.getTime() - today.getTime()) / 86_400_000;
+    if (dias > 0 && dias <= 7 && ini <= today) return 'proxima_vence';
+  }
+  return 'no_iniciada';
+}
+
+const ESTADO_COLORES: Record<EstadoTarea, { bg: string; stroke: string; chip: string; label: string }> = {
+  no_iniciada: { bg: 'hsl(220 13% 80% / 0.4)', stroke: 'hsl(220 13% 60%)', chip: 'gray', label: 'No iniciada' },
+  en_curso: { bg: 'hsl(217 91% 60% / 0.20)', stroke: 'hsl(217 91% 50%)', chip: 'blue', label: 'En curso' },
+  completada: { bg: 'hsl(160 60% 45% / 0.25)', stroke: 'hsl(160 60% 38%)', chip: 'green', label: 'Completada' },
+  atrasada: { bg: 'hsl(0 75% 55% / 0.25)', stroke: 'hsl(0 75% 50%)', chip: 'red', label: 'Atrasada' },
+  proxima_vence: { bg: 'hsl(38 92% 55% / 0.25)', stroke: 'hsl(38 92% 48%)', chip: 'amber', label: 'Próx vencer' },
+};
+
 type Props = {
   partidas: Partida[];
   height?: number;
@@ -104,6 +150,80 @@ export function GanttViewer({ partidas, height = 700 }: Props) {
       : 0;
     return { totalDuration, totalCost, avgProgress, criticas, totalLeaves: leaves.length, hitos };
   }, [validPartidas, dateRangeReal]);
+
+  // Map capítulo → color (top-level capítulos asignados a paleta)
+  const capituloColor = useMemo(() => {
+    const map = new Map<string, (typeof CAPITULO_PALETTE)[number]>();
+    const capitulos = [...new Set(validPartidas.map((p) => getCapituloKey(p.codigo)))].sort();
+    capitulos.forEach((cap, i) => {
+      map.set(cap, CAPITULO_PALETTE[i % CAPITULO_PALETTE.length]!);
+    });
+    return map;
+  }, [validPartidas]);
+
+  // Today reference (1 vez)
+  const todayDate = useMemo(() => {
+    const d = new Date();
+    d.setUTCHours(0, 0, 0, 0);
+    return d;
+  }, []);
+
+  // CPM forward + backward pass · early/late start/finish + holguras
+  type CpmData = {
+    earlyStart: number; // días desde inicio proyecto
+    earlyFinish: number;
+    lateStart: number;
+    lateFinish: number;
+    floatTotal: number; // holgura total
+    floatFree: number; // holgura libre
+  };
+  const cpm = useMemo(() => {
+    const result = new Map<string, CpmData>();
+    if (validPartidas.length === 0 || !dateRange) return result;
+    const minMs = dateRange.min.getTime();
+    const projectFinish = validPartidas.reduce((m, p) => {
+      const f = p.fechaFin ? new Date(`${p.fechaFin.slice(0, 10)}T00:00:00Z`).getTime() : 0;
+      return Math.max(m, f);
+    }, 0);
+    const projectFinishDay = (projectFinish - minMs) / 86_400_000;
+
+    // Calc por partida (hojas con fechas)
+    for (const p of validPartidas) {
+      if (!p.fechaInicio || !p.fechaFin) continue;
+      const es = (new Date(`${p.fechaInicio.slice(0, 10)}T00:00:00Z`).getTime() - minMs) / 86_400_000;
+      const ef = (new Date(`${p.fechaFin.slice(0, 10)}T00:00:00Z`).getTime() - minMs) / 86_400_000;
+      // Late = Early para no-críticas si no calculamos full · simplificación
+      // Para críticas: late = early (holgura 0)
+      // Para no-críticas: calcular holgura desde proyectFin con sucesores
+      let lateFinish = projectFinishDay;
+      let lateStart = lateFinish - (ef - es);
+
+      // Si es crítica · holgura 0
+      if (p.isCritical) {
+        lateStart = es;
+        lateFinish = ef;
+      }
+      // Holgura libre: dist hasta primer sucesor
+      const sucesores = validPartidas.filter((o) => (o.predecessors ?? []).includes(p.codigo));
+      let floatFree = projectFinishDay - ef;
+      for (const suc of sucesores) {
+        if (!suc.fechaInicio) continue;
+        const sucEs = (new Date(`${suc.fechaInicio.slice(0, 10)}T00:00:00Z`).getTime() - minMs) / 86_400_000;
+        floatFree = Math.min(floatFree, sucEs - ef);
+      }
+      const floatTotal = lateFinish - ef;
+
+      result.set(p.codigo, {
+        earlyStart: es,
+        earlyFinish: ef,
+        lateStart,
+        lateFinish,
+        floatTotal: Math.max(0, floatTotal),
+        floatFree: Math.max(0, floatFree),
+      });
+    }
+    return result;
+  }, [validPartidas, dateRange]);
 
   // Virtualizer
   const rowVirtualizer = useVirtualizer({
@@ -202,6 +322,51 @@ export function GanttViewer({ partidas, height = 700 }: Props) {
       rowVirtualizer.scrollToIndex(0, { align: 'start' });
     }
   }, [search, rowVirtualizer, visiblePartidas.length]);
+
+  // Keyboard nav · ↑↓ navegar · Esc cerrar panel · +/- zoom
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      // Solo si el contenedor Gantt tiene foco · evitar interferencia con inputs
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+
+      if (e.key === 'Escape' && selectedId) {
+        e.preventDefault();
+        setSelectedId(null);
+        return;
+      }
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        if (visiblePartidas.length === 0) return;
+        e.preventDefault();
+        const curIdx = selectedId
+          ? visiblePartidas.findIndex((p) => p.id === selectedId)
+          : -1;
+        const nextIdx =
+          e.key === 'ArrowDown'
+            ? Math.min(visiblePartidas.length - 1, curIdx + 1)
+            : Math.max(0, curIdx - 1);
+        const next = visiblePartidas[nextIdx];
+        if (next) {
+          setSelectedId(next.id);
+          rowVirtualizer.scrollToIndex(nextIdx, { align: 'center' });
+        }
+      }
+      if (e.key === '+' || e.key === '=') {
+        e.preventDefault();
+        const order: ZoomLevel[] = ['quarter', 'month', 'week', 'day'];
+        const idx = order.indexOf(zoom);
+        if (idx < order.length - 1) setZoom(order[idx + 1]!);
+      }
+      if (e.key === '-' || e.key === '_') {
+        e.preventDefault();
+        const order: ZoomLevel[] = ['quarter', 'month', 'week', 'day'];
+        const idx = order.indexOf(zoom);
+        if (idx > 0) setZoom(order[idx - 1]!);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [selectedId, visiblePartidas, rowVirtualizer, zoom]);
 
   if (!dateRange) {
     return (
@@ -375,12 +540,26 @@ export function GanttViewer({ partidas, height = 700 }: Props) {
                 const x = dayToX(start);
                 const w = Math.max(2, dayToX(finish) - x);
 
+                // Tooltip info compacta
+                const pctValRow = p.valorizado ? Number(p.valorizado.pctAvanceReal) : 0;
+                const pctMppRow = Number(p.percentComplete ?? 0);
+                const pctRealRow = pctValRow > 0 ? pctValRow : pctMppRow;
+                const tooltipParts = [
+                  `${p.codigo} · ${p.nombre}`,
+                  `${fmtSpanish(p.fechaInicio)} → ${fmtSpanish(p.fechaFin)} (${p.duracionDias ?? 0}d)`,
+                  pctRealRow > 0 ? `Avance: ${pctRealRow.toFixed(1)}%` : 'Sin avance',
+                  p.isCritical ? '⚠ Crítica' : '',
+                  p.isMilestone ? '◆ Hito' : '',
+                  p.valorizado ? `Valorizado: ${fmtPEN(Number(p.valorizado.montoAcumulado))}` : '',
+                ].filter(Boolean).join('\n');
+
                 return (
                   <div
                     key={p.id}
                     onMouseEnter={() => setHover(p.codigo)}
                     onMouseLeave={() => setHover(null)}
                     onClick={() => setSelectedId(p.id)}
+                    title={tooltipParts}
                     className={cn(
                       'absolute left-0 flex border-b border-line/40 cursor-pointer transition-colors',
                       isSel && 'bg-primary-soft',
@@ -488,40 +667,77 @@ export function GanttViewer({ partidas, height = 700 }: Props) {
                             />
                           </g>
                         ) : (
-                          <g>
-                            <rect
-                              x={x}
-                              y={6}
-                              width={w}
-                              height={vrow.size - 12}
-                              fill={p.isCritical ? 'hsl(var(--destructive-soft))' : 'hsl(var(--primary-soft))'}
-                              stroke={p.isCritical ? 'hsl(var(--destructive))' : 'hsl(var(--primary))'}
-                              strokeWidth={p.isCritical ? 1.2 : 0.8}
-                              rx={2}
-                            />
-                            {Number(p.percentComplete ?? 0) > 0 && (
-                              <rect
-                                x={x}
-                                y={6}
-                                width={w * (Number(p.percentComplete) / 100)}
-                                height={vrow.size - 12}
-                                fill={p.isCritical ? 'hsl(var(--destructive))' : 'hsl(var(--primary))'}
-                                rx={2}
-                              />
-                            )}
-                            {w > 28 && (
-                              <text
-                                x={x + 4}
-                                y={vrow.size / 2 + 3}
-                                fontSize="9"
-                                fill={p.isCritical ? 'hsl(var(--destructive))' : 'hsl(var(--primary-ink))'}
-                                fontFamily="monospace"
-                                fontWeight={500}
-                              >
-                                {p.duracionDias}d
-                              </text>
-                            )}
-                          </g>
+                          (() => {
+                            // Pct real desde valorización · fallback al percentComplete MPP
+                            const pctVal = p.valorizado ? Number(p.valorizado.pctAvanceReal) : 0;
+                            const pctMpp = Number(p.percentComplete ?? 0);
+                            const pctReal = pctVal > 0 ? pctVal : pctMpp;
+                            const estado = calcularEstado(p, pctReal, todayDate);
+                            const estColor = ESTADO_COLORES[estado];
+                            const capColor = capituloColor.get(getCapituloKey(p.codigo));
+                            // Crítica overrides estado para borde rojo
+                            const stroke = p.isCritical ? 'hsl(var(--destructive))' : estColor.stroke;
+                            const bg = estado === 'no_iniciada' && capColor ? capColor.bg : estColor.bg;
+                            const fillColor =
+                              estado === 'completada'
+                                ? 'hsl(160 60% 45%)'
+                                : estado === 'atrasada'
+                                  ? 'hsl(0 75% 55%)'
+                                  : estado === 'proxima_vence'
+                                    ? 'hsl(38 92% 55%)'
+                                    : capColor?.fill ?? 'hsl(var(--primary))';
+                            const valW = w * (pctReal / 100);
+                            return (
+                              <g>
+                                <rect
+                                  x={x}
+                                  y={6}
+                                  width={w}
+                                  height={vrow.size - 12}
+                                  fill={bg}
+                                  stroke={stroke}
+                                  strokeWidth={p.isCritical ? 1.4 : 0.8}
+                                  rx={2}
+                                />
+                                {pctReal > 0 && (
+                                  <rect
+                                    x={x}
+                                    y={6}
+                                    width={valW}
+                                    height={vrow.size - 12}
+                                    fill={fillColor}
+                                    rx={2}
+                                  />
+                                )}
+                                {/* Indicador valorización · marca real avance si vino de val */}
+                                {pctVal > 0 && pctVal < 100 && (
+                                  <line
+                                    x1={x + valW}
+                                    y1={4}
+                                    x2={x + valW}
+                                    y2={vrow.size - 4}
+                                    stroke="hsl(var(--foreground))"
+                                    strokeWidth={1.2}
+                                    strokeDasharray="2 1"
+                                  />
+                                )}
+                                {/* Label dentro · duración + % si caben */}
+                                {w > 38 && (
+                                  <text
+                                    x={x + 4}
+                                    y={vrow.size / 2 + 3}
+                                    fontSize="9"
+                                    fill={pctReal > 30 ? 'white' : 'hsl(var(--foreground))'}
+                                    fontFamily="monospace"
+                                    fontWeight={600}
+                                    style={{ pointerEvents: 'none' }}
+                                  >
+                                    {p.duracionDias}d {pctReal > 0 && w > 60 ? `· ${pctReal.toFixed(0)}%` : ''}
+                                  </text>
+                                )}
+                              </g>
+                            );
+                          })()
                         )}
                       </svg>
                     </div>
@@ -537,7 +753,13 @@ export function GanttViewer({ partidas, height = 700 }: Props) {
           <GanttDetailsPanel
             partida={selected}
             allPartidas={validPartidas}
+            cpm={cpm.get(selected.codigo) ?? null}
+            todayDate={todayDate}
             onClose={() => setSelectedId(null)}
+            onNavigate={(codigo) => {
+              const target = validPartidas.find((p) => p.codigo === codigo);
+              if (target) setSelectedId(target.id);
+            }}
           />
         )}
       </div>
@@ -646,11 +868,24 @@ function TimelineHeader({
 function GanttDetailsPanel({
   partida: p,
   allPartidas,
+  cpm,
+  todayDate,
   onClose,
+  onNavigate,
 }: {
   partida: Partida;
   allPartidas: Partida[];
+  cpm: {
+    earlyStart: number;
+    earlyFinish: number;
+    lateStart: number;
+    lateFinish: number;
+    floatTotal: number;
+    floatFree: number;
+  } | null;
+  todayDate: Date;
   onClose: () => void;
+  onNavigate: (codigo: string) => void;
 }) {
   // Predecesoras: lookup por código
   const predecesoras = (p.predecessors ?? [])
@@ -661,12 +896,45 @@ function GanttDetailsPanel({
     (other.predecessors ?? []).includes(p.codigo),
   );
 
+  // Breadcrumb WBS
+  const breadcrumb = useMemo(() => {
+    const segments = p.codigo.split('.');
+    return segments.map((_, idx) => segments.slice(0, idx + 1).join('.'));
+  }, [p.codigo]);
+
+  // Estado + valorización
+  const pctVal = p.valorizado ? Number(p.valorizado.pctAvanceReal) : 0;
+  const pctMpp = Number(p.percentComplete ?? 0);
+  const pctReal = pctVal > 0 ? pctVal : pctMpp;
+  const estado = calcularEstado(p, pctReal, todayDate);
+  const estColor = ESTADO_COLORES[estado];
+
+  // Costos
+  const budget = partidaPresupuesto(p);
+  const valorizado = p.valorizado ? Number(p.valorizado.montoAcumulado) : 0;
+  const restante = budget - valorizado;
+
   return (
     <div className="w-80 shrink-0 rounded-md border border-line bg-bg-elev overflow-hidden flex flex-col">
       <div className="flex items-start justify-between border-b border-line px-3 py-2.5">
         <div className="min-w-0">
-          <div className="font-mono text-[9.5px] uppercase tracking-wider text-ink-4">WBS {p.codigo}</div>
-          <h4 className="text-[12.5px] font-semibold mt-0.5 leading-tight">{p.nombre}</h4>
+          {/* Breadcrumb WBS */}
+          <div className="flex items-center gap-0.5 font-mono text-[9px] uppercase tracking-wider text-ink-4 mb-0.5 flex-wrap">
+            {breadcrumb.map((bc, i) => (
+              <span key={bc} className="flex items-center gap-0.5">
+                <button
+                  type="button"
+                  onClick={() => onNavigate(bc)}
+                  className="hover:text-foreground transition-colors"
+                  title={`Ir a ${bc}`}
+                >
+                  {bc}
+                </button>
+                {i < breadcrumb.length - 1 && <span className="text-ink-4/50">›</span>}
+              </span>
+            ))}
+          </div>
+          <h4 className="text-[12.5px] font-semibold leading-tight">{p.nombre}</h4>
         </div>
         <button
           type="button"
@@ -677,11 +945,15 @@ function GanttDetailsPanel({
         </button>
       </div>
       <div className="flex-1 overflow-y-auto p-3 space-y-3 text-[11.5px]">
-        {/* Chips */}
+        {/* Chips estado */}
         <div className="flex gap-1.5 flex-wrap">
+          <span className={`chip ${estColor.chip}`}>{estColor.label}</span>
           {p.isMilestone && <span className="chip amber">◆ Hito</span>}
           {p.isCritical && <span className="chip red">⚠ Crítica</span>}
           {p.isSummary && <span className="chip blue">Resumen</span>}
+          {p.valorizado?.ultimaValNumero != null && (
+            <span className="chip blue">● Val N°{p.valorizado.ultimaValNumero}</span>
+          )}
         </div>
 
         {/* Fechas */}
@@ -689,12 +961,46 @@ function GanttDetailsPanel({
           <Row lbl="Inicio" val={fmtSpanish(p.fechaInicio)} />
           <Row lbl="Fin" val={fmtSpanish(p.fechaFin)} />
           <Row lbl="Duración" val={`${p.duracionDias ?? 0} días`} />
-          <Row lbl="% Completado" val={`${Number(p.percentComplete ?? 0).toFixed(1)}%`} />
+          <Row
+            lbl="% Avance real"
+            val={`${pctReal.toFixed(1)}%${pctVal > 0 ? ' (val)' : pctMpp > 0 ? ' (MPP)' : ''}`}
+          />
         </Section>
 
-        {/* Económico · Contractual */}
-        <Section title="Económico">
-          <Row lbl="Presupuesto" val={fmtPEN(partidaPresupuesto(p))} mono />
+        {/* CPM · Holguras */}
+        {cpm && !p.isMilestone && !p.isSummary && (
+          <Section title="CPM / Holgura">
+            <Row lbl="Inicio temprano" val={`${cpm.earlyStart.toFixed(0)} d`} />
+            <Row lbl="Fin temprano" val={`${cpm.earlyFinish.toFixed(0)} d`} />
+            <Row lbl="Inicio tardío" val={`${cpm.lateStart.toFixed(0)} d`} />
+            <Row lbl="Fin tardío" val={`${cpm.lateFinish.toFixed(0)} d`} />
+            <Row
+              lbl="Holgura total"
+              val={`${cpm.floatTotal.toFixed(0)} d`}
+              mono
+            />
+            <Row
+              lbl="Holgura libre"
+              val={`${cpm.floatFree.toFixed(0)} d`}
+              mono
+            />
+          </Section>
+        )}
+
+        {/* Económico · Contractual + restante */}
+        <Section title="Costos">
+          <Row lbl="Presupuesto" val={fmtPEN(budget)} mono />
+          {valorizado > 0 && (
+            <>
+              <Row lbl="Valorizado" val={fmtPEN(valorizado)} mono />
+              <Row
+                lbl="Restante"
+                val={fmtPEN(restante)}
+                mono
+              />
+            </>
+          )}
+          {valorizado === 0 && <Row lbl="Restante" val={fmtPEN(budget)} mono />}
           {p.unidad && <Row lbl="Unidad" val={p.unidad} />}
           {p.cantidad && <Row lbl="Cantidad" val={Number(p.cantidad).toLocaleString('es-PE')} />}
           {partidaPrecioUnitario(p) !== null && (
@@ -702,21 +1008,23 @@ function GanttDetailsPanel({
           )}
         </Section>
 
-        {/* Predecesoras */}
+        {/* Predecesoras · click navega */}
         {predecesoras.length > 0 && (
           <Section title={`Predecesoras (${predecesoras.length})`}>
             <div className="space-y-1.5">
               {predecesoras.slice(0, 8).map((pred) => (
-                <div
+                <button
                   key={pred.id}
-                  className="rounded border border-line bg-bg-sunken/40 px-2 py-1.5 flex items-center gap-2"
+                  type="button"
+                  onClick={() => onNavigate(pred.codigo)}
+                  className="w-full rounded border border-line bg-bg-sunken/40 px-2 py-1.5 flex items-center gap-2 hover:border-primary hover:bg-bg-sunken/80 transition-colors text-left"
                 >
                   <span className="chip blue text-[8.5px]">FS</span>
                   <span className="font-mono text-[9.5px] text-ink-3 shrink-0">{pred.codigo}</span>
                   <span className="text-[10.5px] truncate flex-1" title={pred.nombre}>
                     {pred.nombre}
                   </span>
-                </div>
+                </button>
               ))}
               {predecesoras.length > 8 && (
                 <div className="text-[10px] text-ink-3 italic">+{predecesoras.length - 8} más...</div>
@@ -725,21 +1033,23 @@ function GanttDetailsPanel({
           </Section>
         )}
 
-        {/* Sucesoras */}
+        {/* Sucesoras · click navega */}
         {sucesoras.length > 0 && (
           <Section title={`Sucesoras (${sucesoras.length})`}>
             <div className="space-y-1.5">
               {sucesoras.slice(0, 8).map((suc) => (
-                <div
+                <button
                   key={suc.id}
-                  className="rounded border border-line bg-bg-sunken/40 px-2 py-1.5 flex items-center gap-2"
+                  type="button"
+                  onClick={() => onNavigate(suc.codigo)}
+                  className="w-full rounded border border-line bg-bg-sunken/40 px-2 py-1.5 flex items-center gap-2 hover:border-primary hover:bg-bg-sunken/80 transition-colors text-left"
                 >
                   <span className="chip text-[8.5px]">FS</span>
                   <span className="font-mono text-[9.5px] text-ink-3 shrink-0">{suc.codigo}</span>
                   <span className="text-[10.5px] truncate flex-1" title={suc.nombre}>
                     {suc.nombre}
                   </span>
-                </div>
+                </button>
               ))}
               {sucesoras.length > 8 && (
                 <div className="text-[10px] text-ink-3 italic">+{sucesoras.length - 8} más...</div>
