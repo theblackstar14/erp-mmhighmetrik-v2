@@ -7,3 +7,9 @@ export type {
   ValMonomioIu,
   ValPartida,
 } from './importers/valorizacion-s10.js';
+export { parseCronogramaValorizado } from './importers/cronograma-valorizado.js';
+export type {
+  CvParseResult,
+  CvParsedPartida,
+  CvParsedMes,
+} from './importers/cronograma-valorizado.js';

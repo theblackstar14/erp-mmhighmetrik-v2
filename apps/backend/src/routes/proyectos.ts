@@ -1,4 +1,4 @@
-import { db, parseValorizacionXlsx, schema } from '@erp/db';
+import { db, parseCronogramaValorizado, parseValorizacionXlsx, schema } from '@erp/db';
 import { proyectoCreateSchema } from '@erp/shared';
 import { and, asc, desc, eq, inArray, isNull } from 'drizzle-orm';
 import { Router } from 'express';
@@ -121,6 +121,200 @@ router.post('/', async (req, res) => {
     })
     .returning();
   res.status(201).json({ proyecto });
+});
+
+// POST /api/proyectos/preview-xlsx · parse + return preview (no DB write)
+router.post('/preview-xlsx', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    const filename = req.file.originalname.toLowerCase();
+    if (!filename.endsWith('.xlsx') && !filename.endsWith('.xls')) {
+      return res.status(400).json({ error: 'Solo .xlsx/.xls soportados' });
+    }
+    const parsed = parseCronogramaValorizado(req.file.buffer);
+    if (parsed.errors.length) {
+      return res.status(400).json({ error: parsed.errors.join(' · '), parsed });
+    }
+    // Sugerir código PG####
+    const list = await db
+      .select({ codigo: schema.proyectos.codigo })
+      .from(schema.proyectos)
+      .where(isNull(schema.proyectos.deletedAt));
+    const nums = list
+      .map((p) => {
+        const m = p.codigo.match(/^PG(\d+)$/i);
+        return m ? Number.parseInt(m[1]!, 10) : 0;
+      })
+      .filter((n) => n > 0);
+    const next = nums.length > 0 ? Math.max(...nums) + 1 : 1;
+    const sugCodigo = `PG${String(next).padStart(4, '0')}`;
+    res.json({
+      ok: true,
+      sugerencia: { codigo: sugCodigo },
+      header: {
+        obra: parsed.obra,
+        ubicacion: parsed.ubicacion,
+        cliente: parsed.cliente,
+        costoBase: parsed.costoBase,
+        fechaBase: parsed.fechaBase,
+        diasPlazo: parsed.diasPlazo,
+      },
+      meses: parsed.meses,
+      totales: {
+        costoDirecto: parsed.costoDirecto,
+        pctGg: parsed.pctGg,
+        montoGg: parsed.montoGg,
+        pctUtilidad: parsed.pctUtilidad,
+        montoUtilidad: parsed.montoUtilidad,
+        subTotal: parsed.subTotal,
+        mobiliario: parsed.mobiliario,
+        pctIgv: parsed.pctIgv,
+        montoIgv: parsed.montoIgv,
+        presupuestoTotal: parsed.presupuestoTotal,
+        supervision: parsed.supervision,
+        valorReferencial: parsed.valorReferencial,
+      },
+      stats: {
+        totalPartidas: parsed.partidas.length,
+        totalHojas: parsed.totalPartidasHoja,
+        totalTitulos: parsed.totalTitulos,
+        sumaParcialesHoja: parsed.sumaParcialesHoja,
+        cuadre: parsed.cuadre,
+        diferenciaCuadre: parsed.diferenciaCuadre,
+      },
+      warnings: parsed.warnings,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : 'Error parseando XLSX' });
+  }
+});
+
+// POST /api/proyectos/import-xlsx · crear proyecto + partidas desde Cronograma Valorizado
+router.post('/import-xlsx', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    const filename = req.file.originalname.toLowerCase();
+    if (!filename.endsWith('.xlsx') && !filename.endsWith('.xls')) {
+      return res.status(400).json({ error: 'Solo .xlsx/.xls soportados' });
+    }
+    const parsed = parseCronogramaValorizado(req.file.buffer);
+    if (parsed.errors.length) {
+      return res.status(400).json({ error: parsed.errors.join(' · '), parsed });
+    }
+
+    const body = req.body as Record<string, string | undefined>;
+    const codigo = (body.codigo ?? '').trim();
+    const nombreOverride = (body.nombre ?? '').trim();
+    const tipoEntidad = (body.tipoEntidad ?? 'gobierno_regional').trim();
+    if (!codigo) return res.status(400).json({ error: 'codigo es obligatorio (ej: PG0010)' });
+
+    const existingCodigo = await db
+      .select({ id: schema.proyectos.id })
+      .from(schema.proyectos)
+      .where(eq(schema.proyectos.codigo, codigo))
+      .limit(1);
+    if (existingCodigo.length) return res.status(409).json({ error: `Código ${codigo} ya existe` });
+
+    // Auto-crear o reutilizar cliente por razón social
+    let clienteId: string | null = null;
+    if (parsed.cliente) {
+      const razonClean = parsed.cliente.replace(/^:\s*/, '').trim().toUpperCase();
+      const [foundCliente] = await db
+        .select()
+        .from(schema.clientes)
+        .where(eq(schema.clientes.razonSocial, razonClean))
+        .limit(1);
+      if (foundCliente) {
+        clienteId = foundCliente.id;
+      } else {
+        const [created] = await db
+          .insert(schema.clientes)
+          .values({
+            razonSocial: razonClean,
+            tipo: 'publico',
+            tipoEntidad,
+          })
+          .returning();
+        clienteId = created!.id;
+      }
+    }
+
+    const lastMes = parsed.meses.at(-1);
+    const fechaFin = lastMes?.fechaFin ?? null;
+    const fechaInicio = parsed.fechaBase ?? parsed.meses[0]?.fechaInicio ?? null;
+
+    const proyectoId = await db.transaction(async (tx) => {
+      const [proyecto] = await tx
+        .insert(schema.proyectos)
+        .values({
+          codigo,
+          nombre: nombreOverride || parsed.obra || codigo,
+          clienteId,
+          ubicacion: parsed.ubicacion,
+          tipo: 'Edificación',
+          modalidad: 'suma_alzada',
+          status: 'adjudicado',
+          costoDirecto: parsed.costoDirecto?.toString() ?? '0',
+          costoDirectoSinIgv: parsed.costoDirecto?.toString() ?? '0',
+          igvEnXml: false,
+          pctGg: (parsed.pctGg ?? 0.15).toString(),
+          pctUtilidad: (parsed.pctUtilidad ?? 0.15).toString(),
+          pctIgv: (parsed.pctIgv ?? 0.18).toString(),
+          montoSubtotal: parsed.subTotal?.toString() ?? '0',
+          montoIgv: parsed.montoIgv?.toString() ?? '0',
+          montoReferencial: parsed.valorReferencial?.toString() ?? '0',
+          montoContractual: parsed.presupuestoTotal?.toString() ?? '0',
+          montoVigente: parsed.presupuestoTotal?.toString() ?? '0',
+          fechaInicio,
+          fechaFin,
+          diasPlazo: parsed.diasPlazo,
+          managerId: req.user!.id,
+        })
+        .returning();
+
+      const proyId = proyecto!.id;
+
+      const partidaRows = parsed.partidas.map((p) => ({
+        proyectoId: proyId,
+        codigo: p.codigo,
+        parentCodigo: p.parentCodigo,
+        nivel: p.nivel,
+        nombre: p.descripcion,
+        unidad: p.unidad,
+        cantidad: p.metrado?.toString(),
+        precioUnitario: p.precioUnitario?.toString(),
+        precioUnitarioReferencial: p.precioUnitario?.toString(),
+        precioUnitarioContractual: p.precioUnitario?.toString(),
+        presupuesto: p.parcial.toString(),
+        presupuestoContractual: p.parcial.toString(),
+        fechaInicio: p.fechaInicio,
+        fechaFin: p.fechaFin,
+        isSummary: p.isSummary,
+        orden: p.orden,
+      }));
+
+      const CHUNK = 100;
+      for (let i = 0; i < partidaRows.length; i += CHUNK) {
+        await tx.insert(schema.partidas).values(partidaRows.slice(i, i + CHUNK));
+      }
+
+      return proyId;
+    });
+
+    res.status(201).json({
+      ok: true,
+      proyectoId,
+      stats: {
+        partidas: parsed.partidas.length,
+        hojas: parsed.totalPartidasHoja,
+        titulos: parsed.totalTitulos,
+        meses: parsed.meses.length,
+        valorReferencial: parsed.valorReferencial,
+      },
+    });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : 'Error importando XLSX' });
+  }
 });
 
 // PATCH /api/proyectos/:id

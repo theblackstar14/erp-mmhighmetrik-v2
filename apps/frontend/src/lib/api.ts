@@ -62,6 +62,41 @@ export const api = {
       return res.json();
     },
 
+    previewXlsx: async (file: File): Promise<CvPreviewResponse> => {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await fetch(`${API_BASE}/api/proyectos/preview-xlsx`, {
+        method: 'POST',
+        credentials: 'include',
+        body: fd,
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new ApiError(res.status, body.error ?? res.statusText, body);
+      }
+      return res.json();
+    },
+    importXlsx: async (
+      file: File,
+      meta: { codigo: string; nombre?: string; tipoEntidad?: string },
+    ): Promise<{ ok: boolean; proyectoId: string; stats: { partidas: number; hojas: number; titulos: number; meses: number; valorReferencial: number | null } }> => {
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('codigo', meta.codigo);
+      if (meta.nombre) fd.append('nombre', meta.nombre);
+      if (meta.tipoEntidad) fd.append('tipoEntidad', meta.tipoEntidad);
+      const res = await fetch(`${API_BASE}/api/proyectos/import-xlsx`, {
+        method: 'POST',
+        credentials: 'include',
+        body: fd,
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new ApiError(res.status, body.error ?? res.statusText, body);
+      }
+      return res.json();
+    },
+
     listPartidas: (id: string) => req<{ partidas: Partida[] }>(`/api/proyectos/${id}/partidas`),
     getAvances: (id: string) => req<AvancesResponse>(`/api/proyectos/${id}/avances`),
     getCurvaS: (id: string) => req<{ data: CurvaSData | null }>(`/api/proyectos/${id}/curva-s`),
@@ -704,6 +739,51 @@ export type UploadValResponse = {
   valorizacion: Valorizacion;
   partidasInsertadas: number;
   partidasSinMatch: number;
+  warnings: string[];
+};
+
+export type CvPreviewResponse = {
+  ok: boolean;
+  sugerencia: { codigo: string };
+  header: {
+    obra: string | null;
+    ubicacion: string | null;
+    cliente: string | null;
+    costoBase: string | null;
+    fechaBase: string | null;
+    diasPlazo: number | null;
+  };
+  meses: Array<{
+    idx: number;
+    year: number;
+    month: number;
+    diasDuracion: number;
+    fechaInicio: string;
+    fechaFin: string;
+    label: string;
+  }>;
+  totales: {
+    costoDirecto: number | null;
+    pctGg: number | null;
+    montoGg: number | null;
+    pctUtilidad: number | null;
+    montoUtilidad: number | null;
+    subTotal: number | null;
+    mobiliario: number | null;
+    pctIgv: number | null;
+    montoIgv: number | null;
+    presupuestoTotal: number | null;
+    supervision: number | null;
+    valorReferencial: number | null;
+  };
+  stats: {
+    totalPartidas: number;
+    totalHojas: number;
+    totalTitulos: number;
+    sumaParcialesHoja: number;
+    cuadre: boolean;
+    diferenciaCuadre: number;
+  };
   warnings: string[];
 };
 
