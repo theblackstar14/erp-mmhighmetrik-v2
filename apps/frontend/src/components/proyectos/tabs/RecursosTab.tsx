@@ -24,6 +24,10 @@ export function RecursosTab({ proyectoId }: { proyectoId: string }) {
   const [filtroIu, setFiltroIu] = useState<FiltroIu>('todos');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState<string>('');
+  const [creatingIu, setCreatingIu] = useState<string | null>(null); // recursoId que está creando IU
+  const [newIuCodigo, setNewIuCodigo] = useState('');
+  const [newIuDesc, setNewIuDesc] = useState('');
+  const [createError, setCreateError] = useState<string | null>(null);
 
   const updateMut = useMutation({
     mutationFn: ({ recursoId, iuCodigo }: { recursoId: string; iuCodigo: string | null }) =>
@@ -32,6 +36,22 @@ export function RecursosTab({ proyectoId }: { proyectoId: string }) {
       qc.invalidateQueries({ queryKey: ['recursos', proyectoId] });
       setEditingId(null);
     },
+  });
+
+  const createIuMut = useMutation({
+    mutationFn: (data: { codigo: string; descripcion: string }) => api.proyectos.createIu(data),
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ['ius-catalogo'] });
+      // Auto-asignar al recurso que abrió creación
+      if (creatingIu) {
+        updateMut.mutate({ recursoId: creatingIu, iuCodigo: r.iu.codigo });
+      }
+      setCreatingIu(null);
+      setNewIuCodigo('');
+      setNewIuDesc('');
+      setCreateError(null);
+    },
+    onError: (e: Error) => setCreateError(e.message),
   });
 
   const ius = iusCatQ.data?.ius ?? [];
@@ -272,12 +292,75 @@ export function RecursosTab({ proyectoId }: { proyectoId: string }) {
                   <td className="px-2 py-1.5 text-right font-mono text-[11px] font-medium tabular-nums">
                     {fmtPEN(total)}
                   </td>
-                  <td className="px-2 py-1.5 text-center min-w-[110px]">
-                    {editingId === r.id ? (
+                  <td className="px-2 py-1.5 text-center min-w-[120px]">
+                    {creatingIu === r.id ? (
+                      <div className="flex flex-col gap-1 items-center">
+                        <input
+                          value={newIuCodigo}
+                          onChange={(e) => setNewIuCodigo(e.target.value.toUpperCase().slice(0, 3))}
+                          placeholder="cód"
+                          autoFocus
+                          className="h-6 w-14 px-1 rounded border border-primary bg-bg-elev text-[10px] font-mono outline-none text-center"
+                        />
+                        <input
+                          value={newIuDesc}
+                          onChange={(e) => setNewIuDesc(e.target.value)}
+                          placeholder="descripción"
+                          className="h-6 w-32 px-1 rounded border border-primary bg-bg-elev text-[10px] outline-none"
+                        />
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (!newIuCodigo.trim() || !newIuDesc.trim()) {
+                                setCreateError('código y descripción obligatorios');
+                                return;
+                              }
+                              createIuMut.mutate({
+                                codigo: newIuCodigo.trim(),
+                                descripcion: newIuDesc.trim(),
+                              });
+                            }}
+                            disabled={createIuMut.isPending}
+                            className="text-emerald-600 hover:text-emerald-700 disabled:opacity-50"
+                          >
+                            {createIuMut.isPending ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <Check className="h-3 w-3" />
+                            )}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCreatingIu(null);
+                              setNewIuCodigo('');
+                              setNewIuDesc('');
+                              setCreateError(null);
+                            }}
+                            className="text-ink-3 hover:text-foreground"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </div>
+                        {createError && (
+                          <span className="text-[9px] text-destructive">{createError}</span>
+                        )}
+                      </div>
+                    ) : editingId === r.id ? (
                       <div className="flex items-center gap-1 justify-center">
                         <select
                           value={editValue}
-                          onChange={(e) => setEditValue(e.target.value)}
+                          onChange={(e) => {
+                            if (e.target.value === '__create__') {
+                              setEditingId(null);
+                              setCreatingIu(r.id);
+                              setNewIuCodigo('');
+                              setNewIuDesc(r.descripcion.slice(0, 50));
+                            } else {
+                              setEditValue(e.target.value);
+                            }
+                          }}
                           autoFocus
                           className="h-6 px-1 rounded border border-primary bg-bg-elev text-[10px] font-mono outline-none min-w-[80px]"
                         >
@@ -287,6 +370,7 @@ export function RecursosTab({ proyectoId }: { proyectoId: string }) {
                               {iu.codigo} · {iu.descripcion.slice(0, 24)}
                             </option>
                           ))}
+                          <option value="__create__">+ Crear IU nuevo...</option>
                         </select>
                         <button
                           type="button"

@@ -67,6 +67,11 @@ export const api = {
     getCurvaS: (id: string) => req<{ data: CurvaSData | null }>(`/api/proyectos/${id}/curva-s`),
     getRecursos: (id: string) => req<RecursosResponse>(`/api/proyectos/${id}/recursos`),
     getIusCatalogo: () => req<{ ius: IndiceUnificado[] }>(`/api/proyectos/_ius/catalogo`),
+    createIu: (data: { codigo: string; descripcion: string; categoria?: string }) =>
+      req<{ iu: IndiceUnificado }>(`/api/proyectos/_ius`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
     updateRecurso: (proyectoId: string, recursoId: string, data: { iuCodigo?: string | null; categoria?: string | null }) =>
       req<{ recurso: Recurso }>(`/api/proyectos/${proyectoId}/recursos/${recursoId}`, {
         method: 'PATCH',

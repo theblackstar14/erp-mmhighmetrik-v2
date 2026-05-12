@@ -35,6 +35,41 @@ router.get('/_ius/catalogo', async (_req, res) => {
   res.json({ ius: list });
 });
 
+// POST /api/proyectos/_ius · crear IU custom (códigos > 80 o letras)
+router.post('/_ius', async (req, res) => {
+  const { codigo, descripcion, categoria } = req.body as {
+    codigo?: string;
+    descripcion?: string;
+    categoria?: string;
+  };
+  if (!codigo || !descripcion) {
+    return res.status(400).json({ error: 'codigo y descripcion son obligatorios' });
+  }
+  const cod = String(codigo).trim().toUpperCase().slice(0, 3);
+  if (cod.length < 1) return res.status(400).json({ error: 'codigo inválido' });
+
+  // Check existe
+  const existing = await db
+    .select()
+    .from(schema.indicesUnificados)
+    .where(eq(schema.indicesUnificados.codigo, cod))
+    .limit(1);
+  if (existing.length) {
+    return res.status(409).json({ error: `IU ${cod} ya existe`, iu: existing[0] });
+  }
+
+  const [created] = await db
+    .insert(schema.indicesUnificados)
+    .values({
+      codigo: cod,
+      descripcion: String(descripcion).trim().toUpperCase().slice(0, 255),
+      categoria: categoria ?? 'Custom',
+      vigente: true,
+    })
+    .returning();
+  res.status(201).json({ iu: created });
+});
+
 // GET /api/proyectos/:id
 router.get('/:id', async (req, res) => {
   const [proyecto] = await db
