@@ -394,10 +394,21 @@ export function parseValorizacionXlsx(buffer: Buffer): ValParseResult {
         pctEjecAcum,
       });
     }
+
+    // Override mesPeriodo · usar último mes con pctEjecMes > 0 en curvaS
+    // (RES.VALO R7 a veces tiene fecha stale del template)
+    const ultEjec = [...result.curvaS]
+      .filter((c) => c.label !== 'INICIO' && c.pctEjecMes > 0.01)
+      .pop();
+    if (ultEjec && ultEjec.label.match(/^\d{4}-\d{2}$/)) {
+      result.mesPeriodo = ultEjec.label;
+      result.fechaDesde = ultEjec.fecha ?? `${ultEjec.label}-01`;
+    }
   }
 
   // ─── 5. VALO N (partidas detalle) ───────────────────────────
-  const valoSheetName = wb.SheetNames.find((n) => /^VALO\s*\d+$/i.test(n));
+  // Hoja VALO · puede ser "VALO 1", "VALO 3", o solo "VALO"
+  const valoSheetName = wb.SheetNames.find((n) => /^VALO(\s*\d+)?$/i.test(n.trim()));
   if (valoSheetName) {
     const sV = wb.Sheets[valoSheetName]!;
     const a = XLSX.utils.sheet_to_json<unknown[]>(sV, { header: 1, defval: null, raw: true });

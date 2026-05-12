@@ -129,14 +129,20 @@ export function ValorizacionesTab({ proyectoId }: { proyectoId: string }) {
     const fuente = conCurva[0];
     if (!fuente) return [];
     const base = ((fuente.snapshot as { curvaS?: CurvaSPunto[] }).curvaS ?? []).map((c) => ({ ...c }));
-    // Sobrescribir % ejecutado con datos REALES de todas las valorizaciones cargadas
+    // Sobrescribir con datos REALES si la valorización está en DB
+    // Si NO está en DB pero curvaS del Excel tiene ejec > 0 · usar Excel (inferido)
     let acumEjec = 0;
     for (const punto of base) {
       const vMes = valorizaciones.find((v) => v.mesPeriodo === punto.label);
       if (vMes) {
+        // Mes con valorización en DB · usar dato exacto
         const pct = baseRef > 0 ? (Number(vMes.montoCd) / baseRef) * 100 : 0;
         punto.pctEjecMes = pct;
         acumEjec += pct;
+        punto.pctEjecAcum = acumEjec;
+      } else if (punto.label !== 'INICIO' && punto.pctEjecMes > 0) {
+        // Mes sin val en DB pero Excel reporta avance · usar valor Excel (inferido)
+        acumEjec += punto.pctEjecMes;
         punto.pctEjecAcum = acumEjec;
       } else if (punto.label !== 'INICIO') {
         punto.pctEjecMes = 0;
