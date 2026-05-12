@@ -66,6 +66,12 @@ export const api = {
     getAvances: (id: string) => req<AvancesResponse>(`/api/proyectos/${id}/avances`),
     getCurvaS: (id: string) => req<{ data: CurvaSData | null }>(`/api/proyectos/${id}/curva-s`),
     getRecursos: (id: string) => req<RecursosResponse>(`/api/proyectos/${id}/recursos`),
+    getIusCatalogo: () => req<{ ius: IndiceUnificado[] }>(`/api/proyectos/_ius/catalogo`),
+    updateRecurso: (proyectoId: string, recursoId: string, data: { iuCodigo?: string | null; categoria?: string | null }) =>
+      req<{ recurso: Recurso }>(`/api/proyectos/${proyectoId}/recursos/${recursoId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }),
     getValorizaciones: (id: string) => req<ValorizacionesResponse>(`/api/proyectos/${id}/valorizaciones`),
     uploadValorizacion: async (id: string, file: File): Promise<UploadValResponse> => {
       const fd = new FormData();
@@ -276,6 +282,15 @@ export type CurvaSData = {
     EAC: number;
     pctCompletado: number;
   };
+};
+
+export type IndiceUnificado = {
+  codigo: string;
+  descripcion: string;
+  categoria: string | null;
+  unidadMedida: string | null;
+  vigente: boolean | null;
+  baseLegal: string | null;
 };
 
 export type Recurso = {

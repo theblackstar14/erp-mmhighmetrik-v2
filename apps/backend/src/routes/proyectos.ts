@@ -26,6 +26,15 @@ router.get('/', async (req, res) => {
   res.json({ proyectos: list });
 });
 
+// GET /api/proyectos/_ius/catalogo · catálogo INEI completo (antes de /:id)
+router.get('/_ius/catalogo', async (_req, res) => {
+  const list = await db
+    .select()
+    .from(schema.indicesUnificados)
+    .orderBy(asc(schema.indicesUnificados.codigo));
+  res.json({ ius: list });
+});
+
 // GET /api/proyectos/:id
 router.get('/:id', async (req, res) => {
   const [proyecto] = await db
@@ -253,6 +262,29 @@ router.get('/:id/partidas', async (req, res) => {
   });
 
   res.json({ partidas: enriched });
+});
+
+// PATCH /api/proyectos/:id/recursos/:recursoId · actualizar IU
+router.patch('/:id/recursos/:recursoId', async (req, res) => {
+  const recursoId = req.params.recursoId!;
+  const { iuCodigo, categoria } = req.body as { iuCodigo?: string | null; categoria?: string | null };
+  const updates: Record<string, unknown> = {};
+  if (iuCodigo !== undefined) {
+    updates.iuCodigo = iuCodigo;
+    updates.iuClasificacionOrigen = iuCodigo ? 'manual' : null;
+    updates.iuConfianza = iuCodigo ? '1.00' : null;
+  }
+  if (categoria !== undefined) updates.categoria = categoria;
+  if (Object.keys(updates).length === 0) {
+    return res.status(400).json({ error: 'No hay campos para actualizar' });
+  }
+  const [updated] = await db
+    .update(schema.recursos)
+    .set(updates)
+    .where(eq(schema.recursos.id, recursoId))
+    .returning();
+  if (!updated) return res.status(404).json({ error: 'Recurso no encontrado' });
+  res.json({ recurso: updated });
 });
 
 // GET /api/proyectos/:id/recursos · catálogo + cronograma adquisiciones
