@@ -89,7 +89,7 @@ export function ValorizacionesTab({ proyectoId }: { proyectoId: string }) {
     return map;
   }, [reajustes]);
 
-  // Curva acumulada · ejecutado + programado
+  // Curva acumulada por valorización (para tabla)
   const curvaAcum = useMemo(() => {
     let acumEjec = 0;
     let acumProg = 0;
@@ -108,6 +108,41 @@ export function ValorizacionesTab({ proyectoId }: { proyectoId: string }) {
         k: Number(v.factorReajusteK ?? 1),
       };
     });
+  }, [valorizaciones, baseRef]);
+
+  // Curva S completa · usar de última valorización · INICIO → fin proyecto
+  type CurvaSPunto = {
+    label: string;
+    fecha: string | null;
+    pctProgMes: number;
+    pctProgAcum: number;
+    pctEjecMes: number;
+    pctEjecAcum: number;
+  };
+  const curvaSCompleta = useMemo<CurvaSPunto[]>(() => {
+    if (valorizaciones.length === 0) return [];
+    // Tomar la última val con curvaS · ejecutado se acumula desde múltiples vals
+    const conCurva = [...valorizaciones]
+      .filter((v) => (v.snapshot as { curvaS?: CurvaSPunto[] } | null)?.curvaS?.length)
+      .sort((a, b) => b.numero - a.numero);
+    const fuente = conCurva[0];
+    if (!fuente) return [];
+    const base = ((fuente.snapshot as { curvaS?: CurvaSPunto[] }).curvaS ?? []).map((c) => ({ ...c }));
+    // Sobrescribir % ejecutado con datos REALES de todas las valorizaciones cargadas
+    let acumEjec = 0;
+    for (const punto of base) {
+      const vMes = valorizaciones.find((v) => v.mesPeriodo === punto.label);
+      if (vMes) {
+        const pct = baseRef > 0 ? (Number(vMes.montoCd) / baseRef) * 100 : 0;
+        punto.pctEjecMes = pct;
+        acumEjec += pct;
+        punto.pctEjecAcum = acumEjec;
+      } else if (punto.label !== 'INICIO') {
+        punto.pctEjecMes = 0;
+        punto.pctEjecAcum = 0;
+      }
+    }
+    return base;
   }, [valorizaciones, baseRef]);
 
   if (isLoading) {
@@ -131,28 +166,32 @@ export function ValorizacionesTab({ proyectoId }: { proyectoId: string }) {
   const innerW = chartW - padL - padR;
   const innerH = chartH - padT - padB;
 
-  // En modo % usamos base = 100% · 0.5 step grid; en modo S/ usamos max acumulado
-  const valAt = (c: { acumEjec: number; acumProg: number; pctEjec: number; pctProg: number }, who: 'e' | 'p') =>
-    modo === 'pen' ? (who === 'e' ? c.acumEjec : c.acumProg) : who === 'e' ? c.pctEjec : c.pctProg;
-  const maxVal =
-    curvaAcum.length === 0
-      ? 1
-      : modo === 'pen'
-        ? Math.max(...curvaAcum.flatMap((c) => [c.acumEjec, c.acumProg, baseRef]))
-        : 100;
-  const xStep = curvaAcum.length > 1 ? innerW / (curvaAcum.length - 1) : innerW;
-  const pointsEjec = curvaAcum.map((c, i) => ({
+  // Convertir % a S/ multiplicando por baseRef/100
+  const pctToVal = (pct: number) => (modo === 'pen' ? (pct / 100) * baseRef : pct);
+  const maxVal = modo === 'pen' ? Math.max(baseRef, 1) : 120; // 120% cap visual en modo %
+  const xStep = curvaSCompleta.length > 1 ? innerW / (curvaSCompleta.length - 1) : innerW;
+  const pointsProg = curvaSCompleta.map((c, i) => ({
     x: padL + i * xStep,
-    y: padT + innerH - (valAt(c, 'e') / maxVal) * innerH,
+    y: padT + innerH - (pctToVal(c.pctProgAcum) / maxVal) * innerH,
+    val: pctToVal(c.pctProgAcum),
     label: c.label,
-    val: valAt(c, 'e'),
-    num: c.num,
+    showLabel: c.pctProgAcum > 0,
   }));
-  const pointsProg = curvaAcum.map((c, i) => ({
+  // Ejecutado: solo dibujar hasta el último mes con datos (incluye INICIO=0,0)
+  const lastEjecIdx = (() => {
+    let idx = -1;
+    for (let i = 0; i < curvaSCompleta.length; i++) {
+      const p = curvaSCompleta[i]!;
+      if (p.label === 'INICIO' || p.pctEjecAcum > 0) idx = i;
+    }
+    return idx;
+  })();
+  const pointsEjec = curvaSCompleta.slice(0, lastEjecIdx + 1).map((c, i) => ({
     x: padL + i * xStep,
-    y: padT + innerH - (valAt(c, 'p') / maxVal) * innerH,
-    val: valAt(c, 'p'),
-    num: c.num,
+    y: padT + innerH - (pctToVal(c.pctEjecAcum) / maxVal) * innerH,
+    val: pctToVal(c.pctEjecAcum),
+    label: c.label,
+    showLabel: c.label === 'INICIO' || c.pctEjecAcum > 0,
   }));
   const fmtAxis = (n: number) => (modo === 'pen' ? fmtCompact(n) : `${n.toFixed(0)}%`);
 
@@ -328,53 +367,59 @@ export function ValorizacionesTab({ proyectoId }: { proyectoId: string }) {
               </text>
             </g>
           ))}
-          {/* Línea programada · azul */}
+          {/* Línea programada · azul · curva completa */}
           <polyline
             fill="none"
             stroke="rgb(59 130 246)"
             strokeWidth="2"
-            strokeDasharray="4 3"
             points={pointsProg.map((p) => `${p.x},${p.y}`).join(' ')}
           />
-          {pointsProg.map((p) => (
-            <g key={`p-${p.num}`}>
+          {pointsProg.map((p, i) => (
+            <g key={`p-${i}`}>
               <circle cx={p.x} cy={p.y} r="3" fill="rgb(59 130 246)" />
-              <text
-                x={p.x}
-                y={p.y - 6}
-                textAnchor="middle"
-                className="fill-blue-600 dark:fill-blue-400 text-[9px] font-medium"
-              >
-                {modo === 'pen' ? fmtCompact(p.val) : `${p.val.toFixed(1)}%`}
-              </text>
-            </g>
-          ))}
-          {/* Línea ejecutada · rojo */}
-          <polyline
-            fill="none"
-            stroke="hsl(var(--destructive))"
-            strokeWidth="2.5"
-            points={pointsEjec.map((p) => `${p.x},${p.y}`).join(' ')}
-          />
-          {pointsEjec.map((p) => (
-            <g key={`e-${p.num}`}>
-              <circle cx={p.x} cy={p.y} r="3.5" fill="hsl(var(--destructive))" />
-              <text
-                x={p.x}
-                y={p.y + 14}
-                textAnchor="middle"
-                className="fill-[hsl(var(--destructive))] text-[9px] font-semibold"
-              >
-                {modo === 'pen' ? fmtCompact(p.val) : `${p.val.toFixed(2)}%`}
-              </text>
+              {p.showLabel && (
+                <text
+                  x={p.x}
+                  y={p.y - 6}
+                  textAnchor="middle"
+                  className="fill-blue-600 dark:fill-blue-400 text-[9px] font-medium"
+                >
+                  {modo === 'pen' ? fmtCompact(p.val) : `${p.val.toFixed(2)}%`}
+                </text>
+              )}
+              {/* Eje X labels · todos los meses */}
               <text
                 x={p.x}
                 y={chartH - 8}
                 textAnchor="middle"
                 className="fill-ink-3 text-[9px]"
               >
-                {p.label}
+                {p.label === 'INICIO' ? 'INICIO' : p.label}
               </text>
+            </g>
+          ))}
+          {/* Línea ejecutada · rojo · solo hasta último mes con datos */}
+          {pointsEjec.length > 1 && (
+            <polyline
+              fill="none"
+              stroke="hsl(var(--destructive))"
+              strokeWidth="2.5"
+              points={pointsEjec.map((p) => `${p.x},${p.y}`).join(' ')}
+            />
+          )}
+          {pointsEjec.map((p, i) => (
+            <g key={`e-${i}`}>
+              <rect x={p.x - 3} y={p.y - 3} width="6" height="6" fill="hsl(var(--destructive))" />
+              {p.showLabel && p.val > 0 && (
+                <text
+                  x={p.x}
+                  y={p.y - 8}
+                  textAnchor="middle"
+                  className="fill-[hsl(var(--destructive))] text-[9px] font-semibold"
+                >
+                  {modo === 'pen' ? fmtCompact(p.val) : `${p.val.toFixed(2)}%`}
+                </text>
+              )}
             </g>
           ))}
         </svg>

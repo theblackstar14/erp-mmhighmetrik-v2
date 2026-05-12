@@ -366,6 +366,7 @@ router.post('/:id/valorizaciones', upload.single('file'), async (req, res) => {
           pptoContratado: parsed.pptoContratado,
           fechaPresupuestoBase: parsed.fechaPresupuestoBase,
           monomios: parsed.monomios,
+          curvaS: parsed.curvaS,
           warnings: parsed.warnings,
         },
         observaciones: `Importado desde ${req.file.originalname}`,

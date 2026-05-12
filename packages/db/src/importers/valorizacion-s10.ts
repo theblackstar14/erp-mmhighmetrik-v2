@@ -34,6 +34,15 @@ export interface ValMonomio {
   ius: ValMonomioIu[];
 }
 
+export interface ValCurvaPunto {
+  label: string; // 'INICIO' o '2025-10'
+  fecha: string | null; // ISO date
+  pctProgMes: number; // porcentaje (0-100)
+  pctProgAcum: number;
+  pctEjecMes: number;
+  pctEjecAcum: number;
+}
+
 export interface ValPartida {
   codigo: string;
   descripcion: string;
@@ -91,6 +100,8 @@ export interface ValParseResult {
   monomios: ValMonomio[];
   // Partidas
   partidas: ValPartida[];
+  // Curva S
+  curvaS: ValCurvaPunto[];
   // Metadata
   obra: string | null;
   asNumero: string | null;
@@ -157,6 +168,7 @@ export function parseValorizacionXlsx(buffer: Buffer): ValParseResult {
     kCalculado: null,
     monomios: [],
     partidas: [],
+    curvaS: [],
     obra: null,
     asNumero: null,
     entidad: null,
@@ -346,7 +358,45 @@ export function parseValorizacionXlsx(buffer: Buffer): ValParseResult {
     result.warnings.push('Hoja "Reajuste" no encontrada');
   }
 
-  // ─── 4. VALO N (partidas detalle) ───────────────────────────
+  // ─── 4. CURVA S (programado + ejecutado mensual) ───────────
+  const sCS = wb.Sheets['CURVA S'];
+  if (sCS) {
+    const a = XLSX.utils.sheet_to_json<unknown[]>(sCS, { header: 1, defval: null, raw: true });
+    // Buscar fila INICIO en col 3
+    for (let i = 0; i < a.length; i++) {
+      const row = a[i] ?? [];
+      const lbl = String(row[3] ?? '').trim();
+      if (lbl !== 'INICIO' && !(row[3] instanceof Date)) continue;
+
+      const pctProgMes = toNum(row[4]) * 100;
+      const pctProgAcum = toNum(row[5]) * 100;
+      const pctEjecMes = toNum(row[6]) * 100;
+      const pctEjecAcum = toNum(row[7]) * 100;
+
+      let label = lbl;
+      let fecha: string | null = null;
+      if (row[3] instanceof Date) {
+        const d = row[3] as Date;
+        fecha = d.toISOString().slice(0, 10);
+        label = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      }
+
+      // Evitar duplicados (la hoja tiene 2 secciones idénticas: principal + gráfico de barras)
+      const exists = result.curvaS.some((c) => c.label === label);
+      if (exists) continue;
+
+      result.curvaS.push({
+        label,
+        fecha,
+        pctProgMes,
+        pctProgAcum,
+        pctEjecMes,
+        pctEjecAcum,
+      });
+    }
+  }
+
+  // ─── 5. VALO N (partidas detalle) ───────────────────────────
   const valoSheetName = wb.SheetNames.find((n) => /^VALO\s*\d+$/i.test(n));
   if (valoSheetName) {
     const sV = wb.Sheets[valoSheetName]!;
