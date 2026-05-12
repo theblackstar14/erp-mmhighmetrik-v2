@@ -7,21 +7,33 @@ export function ResumenTab({ proyecto }: { proyecto: Proyecto }) {
     queryKey: ['avances-proyecto', proyecto.id],
     queryFn: () => api.proyectos.getAvances(proyecto.id),
   });
+  const valoresQ = useQuery({
+    queryKey: ['valorizaciones', proyecto.id],
+    queryFn: () => api.proyectos.getValorizaciones(proyecto.id),
+  });
 
   const contrato = Number.parseFloat(proyecto.montoContractual ?? '0');
-  const cdReferencial = Number.parseFloat(proyecto.costoDirecto ?? '0');
+  // costoDirecto en DB YA es contractual (CD real empresa) · NO multiplicar otra vez
+  const cdContractual = Number.parseFloat(proyecto.costoDirecto ?? '0');
   const factorOferta = Number.parseFloat(proyecto.factorOferta ?? '1');
-  const cdContractual = cdReferencial * factorOferta;
   const montoVigente = Number.parseFloat(
     proyecto.montoVigente ?? proyecto.montoContractual ?? '0',
   );
+  const subtotalContratado = Number.parseFloat(proyecto.montoSubtotal ?? '0');
   const pctGg = Number.parseFloat(proyecto.pctGg ?? '0.10');
   const pctUtilidad = Number.parseFloat(proyecto.pctUtilidad ?? '0.07');
 
   const k = avancesQ.data?.kpis;
-  const totalReal = k?.totalReal ?? 0;
-  const avanceFisico = k?.avanceFisicoPct ?? 0;
-  const avanceFinanciero = k?.avanceFinancieroPct ?? 0;
+  const valStats = valoresQ.data?.stats;
+  // Prioridad: valorizaciones (oficial S10) sobre avances manuales
+  const totalRealVal = valStats?.sumCd ?? 0;
+  const totalReal = totalRealVal > 0 ? totalRealVal : k?.totalReal ?? 0;
+  const avanceFisico = totalRealVal > 0 && subtotalContratado > 0
+    ? (totalRealVal / subtotalContratado) * 100
+    : (k?.avanceFisicoPct ?? 0);
+  const avanceFinanciero = totalRealVal > 0 && subtotalContratado > 0
+    ? (totalRealVal / subtotalContratado) * 100
+    : (k?.avanceFinancieroPct ?? 0);
 
   // Días restantes · fix TZ + soporte vencido
   const diasRestantes = (() => {
@@ -58,7 +70,7 @@ export function ResumenTab({ proyecto }: { proyecto: Proyecto }) {
     {
       lbl: 'Costo Directo',
       val: fmtPEN(cdContractual),
-      sub: `Referencial: ${fmtPEN(cdReferencial)} · factor ${factorOferta.toFixed(2)}`,
+      sub: `Contractual · factor oferta ${factorOferta.toFixed(4)}`,
       full: true,
     },
     {
