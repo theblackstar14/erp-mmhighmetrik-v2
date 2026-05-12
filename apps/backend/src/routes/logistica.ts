@@ -229,8 +229,8 @@ router.post('/recursos/auto-clasificar', async (req, res) => {
       .orderBy(asc(schema.indicesUnificados.codigo));
 
     // 3. Llamar Gemini batch · chunks paralelos
-    const CHUNK = 30;
-    const PARALLEL = 4; // 4 calls concurrentes max · evita rate limits
+    const CHUNK = 25;
+    const PARALLEL = 6; // 6 calls concurrentes · Gemini 60 RPM permite
     const iusSimple = ius.map((iu) => ({
       codigo: iu.codigo,
       descripcion: iu.descripcion,

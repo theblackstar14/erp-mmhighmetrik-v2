@@ -21,13 +21,18 @@ export function AutoClasificarModal({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [aplicados, setAplicados] = useState(0);
+  const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
+    const startedAt = Date.now();
+    const interval = setInterval(() => {
+      if (stage === 'loading') setElapsed(Math.floor((Date.now() - startedAt) / 1000));
+    }, 1000);
+
     api.logistica
       .autoClasificarPreview()
       .then((r) => {
         setData(r);
-        // Auto-seleccionar las de alta confianza (>= 0.85)
         const initSel = new Set(
           r.sugerencias.filter((s) => s.iuCodigo && s.confianza >= 0.85).map((s) => s.recursoId),
         );
@@ -37,8 +42,11 @@ export function AutoClasificarModal({ onClose }: { onClose: () => void }) {
       .catch((e: Error) => {
         setError(e.message);
         setStage('error');
-      });
-  }, []);
+      })
+      .finally(() => clearInterval(interval));
+
+    return () => clearInterval(interval);
+  }, [stage]);
 
   const aplicarMut = useMutation({
     mutationFn: (sugs: Sugerencia[]) =>
@@ -114,9 +122,18 @@ export function AutoClasificarModal({ onClose }: { onClose: () => void }) {
           <div className="flex-1 flex flex-col items-center justify-center p-12 text-center">
             <Loader2 className="h-8 w-8 text-primary animate-spin mb-4" />
             <h3 className="text-[14px] font-semibold mb-1">Analizando recursos con Gemini IA...</h3>
-            <p className="text-[12px] text-ink-3 max-w-md">
-              Puede tardar 30-60s · procesa en lotes de 80 recursos
+            <p className="text-[12px] text-ink-3 max-w-md mb-3">
+              Procesa en lotes de 25 recursos · 6 calls paralelas
             </p>
+            <div className="font-mono text-[11px] text-ink-3 tabular-nums">
+              ⏱ Transcurrido: <span className="text-foreground font-semibold">{Math.floor(elapsed / 60)}m {elapsed % 60}s</span>
+            </div>
+            <div className="text-[10.5px] text-ink-4 mt-2 max-w-md">
+              {elapsed < 30 && '...calentando · primer batch en proceso...'}
+              {elapsed >= 30 && elapsed < 90 && '...buena velocidad · procesando chunks paralelos...'}
+              {elapsed >= 90 && elapsed < 180 && '...casi terminando · catálogo grande tarda más...'}
+              {elapsed >= 180 && '...todavía vivo · Gemini puede ser lento con prompts grandes · espera'}
+            </div>
           </div>
         )}
 
