@@ -19,7 +19,10 @@ export function PartidasTab({ proyectoId }: { proyectoId: string }) {
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [editing, setEditing] = useState<Partida | null>(null);
 
-  const partidas = partidasQ.data?.partidas ?? [];
+  // Filtrar hitos · pertenecen al cronograma, no al presupuesto
+  const partidas = (partidasQ.data?.partidas ?? []).filter(
+    (p) => !p.isMilestone && !p.codigo.startsWith('00.HITO'),
+  );
   const avances = avancesQ.data?.avances ?? {};
 
   // Siempre vista contractual (lo que se cobra · MPP cronograma)
