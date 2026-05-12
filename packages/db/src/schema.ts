@@ -24,6 +24,13 @@ export const trabajadorEstadoEnum = pgEnum('trabajador_estado', ['Activo', 'Perm
 export const valorizacionStatusEnum = pgEnum('valorizacion_status', ['borrador', 'emitida', 'aprobada', 'cobrada', 'rechazada']);
 export const asientoStatusEnum = pgEnum('asiento_status', ['borrador', 'registrado', 'cerrado', 'anulado']);
 
+// F3 · Compras / Logística
+export const reqUrgenciaEnum = pgEnum('req_urgencia', ['baja', 'media', 'alta', 'urgente']);
+export const reqEstadoEnum = pgEnum('req_estado', ['borrador', 'pendiente_aprobacion', 'aprobado', 'cotizando', 'oc_emitida', 'rechazado']);
+export const ocEstadoEnum = pgEnum('oc_estado', ['borrador', 'pendiente_aprobacion', 'aprobada', 'emitida', 'en_transito', 'entregada', 'anulada', 'rechazada']);
+export const ocConceptoEnum = pgEnum('oc_concepto', ['BIEN', 'SERVICIO']);
+export const ocMonedaEnum = pgEnum('oc_moneda', ['PEN', 'USD']);
+
 // ─── Auth · Users + Sessions ─────────────────────────────────
 export const users = pgTable('users', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -890,6 +897,202 @@ export const cronogramaAdquisiciones = pgTable(
   }),
 );
 
+// ═══════════════════════════════════════════════════════════════
+// F3 · COMPRAS / LOGÍSTICA
+// ═══════════════════════════════════════════════════════════════
+
+// ─── Proveedores ──────────────────────────────────────────────
+export const proveedores = pgTable(
+  'proveedores',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    ruc: varchar('ruc', { length: 11 }).notNull().unique(),
+    razonSocial: varchar('razon_social', { length: 255 }).notNull(),
+    nombreComercial: varchar('nombre_comercial', { length: 255 }),
+    categoria: varchar('categoria', { length: 100 }), // 'Cemento', 'Acero', 'Maquinaria', etc
+    domicilio: text('domicilio'),
+    distrito: varchar('distrito', { length: 100 }),
+    departamento: varchar('departamento', { length: 100 }),
+    email: varchar('email', { length: 255 }),
+    telefono: varchar('telefono', { length: 50 }),
+    contacto: varchar('contacto', { length: 255 }), // nombre persona contacto
+    contactoCargo: varchar('contacto_cargo', { length: 100 }),
+    estadoSunat: varchar('estado_sunat', { length: 30 }), // 'ACTIVO','SUSPENDIDO','BAJA'
+    condicionSunat: varchar('condicion_sunat', { length: 30 }), // 'HABIDO','NO HABIDO','NO HALLADO'
+    tipoContribuyente: varchar('tipo_contribuyente', { length: 100 }), // 'PJ - SAC', 'PN', etc
+    rating: decimal('rating', { precision: 3, scale: 1 }), // 0.0 - 5.0
+    leadTimeDias: integer('lead_time_dias'),
+    cuentaBancaria: varchar('cuenta_bancaria', { length: 50 }),
+    cuentaCci: varchar('cuenta_cci', { length: 20 }),
+    cuentaDetraccionesBn: varchar('cuenta_detracciones_bn', { length: 30 }),
+    notas: text('notas'),
+    activo: boolean('activo').notNull().default(true),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+    updatedAt: timestamp('updated_at').notNull().defaultNow(),
+  },
+  (t) => ({
+    rucIdx: index('proveedores_ruc_idx').on(t.ruc),
+    razonSocialIdx: index('proveedores_razon_idx').on(t.razonSocial),
+    categoriaIdx: index('proveedores_cat_idx').on(t.categoria),
+  }),
+);
+
+// ─── Requerimientos (RQ) · pipeline pre-OC ───────────────────
+export const requerimientos = pgTable(
+  'requerimientos',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    numero: varchar('numero', { length: 20 }).notNull().unique(), // REQ-2026-0001
+    correlativo: integer('correlativo').notNull(),
+    proyectoId: uuid('proyecto_id').notNull().references(() => proyectos.id, { onDelete: 'cascade' }),
+    solicitanteId: uuid('solicitante_id').references(() => users.id, { onDelete: 'set null' }),
+    solicitanteNombre: varchar('solicitante_nombre', { length: 255 }),
+    fecha: date('fecha').notNull(),
+    fechaNecesaria: date('fecha_necesaria'),
+    urgencia: reqUrgenciaEnum('urgencia').notNull().default('media'),
+    descripcion: text('descripcion').notNull(),
+    justificacion: text('justificacion'),
+    estado: reqEstadoEnum('estado').notNull().default('borrador'),
+    aprobadoPorId: uuid('aprobado_por_id').references(() => users.id, { onDelete: 'set null' }),
+    aprobadoEn: timestamp('aprobado_en'),
+    rechazadoMotivo: text('rechazado_motivo'),
+    montoEstimado: decimal('monto_estimado', { precision: 14, scale: 2 }),
+    notas: text('notas'),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+    updatedAt: timestamp('updated_at').notNull().defaultNow(),
+  },
+  (t) => ({
+    proyectoIdx: index('req_proyecto_idx').on(t.proyectoId),
+    estadoIdx: index('req_estado_idx').on(t.estado),
+    numeroIdx: index('req_numero_idx').on(t.numero),
+  }),
+);
+
+// ─── Requerimiento líneas ─────────────────────────────────────
+export const requerimientosLineas = pgTable(
+  'requerimientos_lineas',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    requerimientoId: uuid('requerimiento_id').notNull().references(() => requerimientos.id, { onDelete: 'cascade' }),
+    numero: integer('numero').notNull(), // 1, 2, 3...
+    recursoId: uuid('recurso_id').references(() => recursos.id, { onDelete: 'set null' }),
+    descripcion: text('descripcion').notNull(),
+    unidad: varchar('unidad', { length: 10 }).notNull(),
+    cantidad: decimal('cantidad', { precision: 14, scale: 4 }).notNull(),
+    precioReferencial: decimal('precio_referencial', { precision: 14, scale: 4 }),
+    notas: text('notas'),
+  },
+  (t) => ({
+    requerimientoIdx: index('req_lineas_req_idx').on(t.requerimientoId),
+  }),
+);
+
+// ─── Órdenes de Compra (OC) ──────────────────────────────────
+export const ordenesCompra = pgTable(
+  'ordenes_compra',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    numero: varchar('numero', { length: 20 }).notNull().unique(), // OC-2026-0001
+    correlativo: integer('correlativo').notNull(),
+    anio: integer('anio').notNull(), // 2026
+    proyectoId: uuid('proyecto_id').notNull().references(() => proyectos.id, { onDelete: 'cascade' }),
+    proveedorId: uuid('proveedor_id').notNull().references(() => proveedores.id, { onDelete: 'restrict' }),
+    requerimientoId: uuid('requerimiento_id').references(() => requerimientos.id, { onDelete: 'set null' }),
+    // Fechas
+    fechaEmision: date('fecha_emision').notNull(),
+    fechaEntrega: date('fecha_entrega'),
+    lugarEntrega: text('lugar_entrega'),
+    // Comercial
+    moneda: ocMonedaEnum('moneda').notNull().default('PEN'),
+    tipoCambio: decimal('tipo_cambio', { precision: 8, scale: 4 }), // si USD
+    concepto: ocConceptoEnum('concepto').notNull().default('BIEN'),
+    medioPago: varchar('medio_pago', { length: 50 }), // 'Transferencia Bancaria','Cheque','Efectivo'
+    formaPago: varchar('forma_pago', { length: 50 }), // 'Al contado','Crédito 30 días', etc
+    cotizacion: varchar('cotizacion', { length: 100 }),
+    // Montos · IGV configurable
+    pctIgv: decimal('pct_igv', { precision: 5, scale: 2 }).notNull().default('18.00'),
+    incluyeIgv: boolean('incluye_igv').notNull().default(true), // si PUs ya tienen IGV
+    subtotalSinIgv: decimal('subtotal_sin_igv', { precision: 14, scale: 2 }).notNull().default('0'),
+    igv: decimal('igv', { precision: 14, scale: 2 }).notNull().default('0'),
+    total: decimal('total', { precision: 14, scale: 2 }).notNull().default('0'),
+    // Detracción
+    aplicaDetraccion: boolean('aplica_detraccion').notNull().default(false),
+    pctDetraccion: decimal('pct_detraccion', { precision: 5, scale: 2 }), // 4, 10, 12
+    montoDetraccion: decimal('monto_detraccion', { precision: 14, scale: 2 }).default('0'),
+    montoNetoPagar: decimal('monto_neto_pagar', { precision: 14, scale: 2 }), // total - detracción
+    // Workflow
+    estado: ocEstadoEnum('estado').notNull().default('borrador'),
+    creadoPorId: uuid('creado_por_id').references(() => users.id, { onDelete: 'set null' }),
+    creadoPorEmail: varchar('creado_por_email', { length: 255 }),
+    gestorEmail: varchar('gestor_email', { length: 255 }),
+    gestorNombre: varchar('gestor_nombre', { length: 255 }),
+    aprobadoPorId: uuid('aprobado_por_id').references(() => users.id, { onDelete: 'set null' }),
+    aprobadoEn: timestamp('aprobado_en'),
+    emitidaEn: timestamp('emitida_en'),
+    entregadaEn: timestamp('entregada_en'),
+    canceladaMotivo: text('cancelada_motivo'),
+    // Documentos
+    terminos: text('terminos'),
+    pdfNasPath: varchar('pdf_nas_path', { length: 500 }),
+    notas: text('notas'),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+    updatedAt: timestamp('updated_at').notNull().defaultNow(),
+  },
+  (t) => ({
+    proyectoIdx: index('oc_proyecto_idx').on(t.proyectoId),
+    proveedorIdx: index('oc_proveedor_idx').on(t.proveedorId),
+    estadoIdx: index('oc_estado_idx').on(t.estado),
+    numeroIdx: index('oc_numero_idx').on(t.numero),
+    anioCorrelativoIdx: index('oc_anio_corr_idx').on(t.anio, t.correlativo),
+  }),
+);
+
+// ─── OC líneas (items) ────────────────────────────────────────
+export const ocLineas = pgTable(
+  'oc_lineas',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    ordenCompraId: uuid('orden_compra_id').notNull().references(() => ordenesCompra.id, { onDelete: 'cascade' }),
+    numero: integer('numero').notNull(), // 1, 2, 3...
+    partidaId: uuid('partida_id').references(() => partidas.id, { onDelete: 'set null' }),
+    recursoId: uuid('recurso_id').references(() => recursos.id, { onDelete: 'set null' }),
+    descripcion: text('descripcion').notNull(),
+    unidad: varchar('unidad', { length: 10 }).notNull(),
+    cantidad: decimal('cantidad', { precision: 14, scale: 4 }).notNull(),
+    precioUnitario: decimal('precio_unitario', { precision: 14, scale: 5 }).notNull(), // 5 decimales v1
+    subtotal: decimal('subtotal', { precision: 14, scale: 2 }).notNull(),
+    notas: text('notas'),
+  },
+  (t) => ({
+    ocIdx: index('oc_lineas_oc_idx').on(t.ordenCompraId),
+  }),
+);
+
+// ─── OC aprobaciones log ──────────────────────────────────────
+export const ocAprobaciones = pgTable(
+  'oc_aprobaciones',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    ordenCompraId: uuid('orden_compra_id').notNull().references(() => ordenesCompra.id, { onDelete: 'cascade' }),
+    estadoFrom: varchar('estado_from', { length: 30 }),
+    estadoTo: varchar('estado_to', { length: 30 }).notNull(),
+    userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
+    userNombre: varchar('user_nombre', { length: 255 }),
+    comentario: text('comentario'),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+  },
+  (t) => ({
+    ocIdx: index('oc_aprob_oc_idx').on(t.ordenCompraId),
+  }),
+);
+
+// ─── Correlativos globales (OC, RQ por año) ──────────────────
+export const correlativos = pgTable('correlativos', {
+  clave: varchar('clave', { length: 50 }).primaryKey(), // 'OC-2026', 'REQ-2026'
+  ultimoNumero: integer('ultimo_numero').notNull().default(0),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+});
+
 // ─── Imports S10 (registro histórico) ─────────────────────────
 export const importsS10 = pgTable(
   'imports_s10',
@@ -992,4 +1195,18 @@ export type FormulaPolinomica = typeof formulasPolinomicas.$inferSelect;
 export type FormulaMonomio = typeof formulasMonomios.$inferSelect;
 export type FormulaMonomioIu = typeof formulasMonomiosIus.$inferSelect;
 export type CronogramaAdquisicion = typeof cronogramaAdquisiciones.$inferSelect;
+
+// F3 · Compras / Logística
+export type Proveedor = typeof proveedores.$inferSelect;
+export type NewProveedor = typeof proveedores.$inferInsert;
+export type Requerimiento = typeof requerimientos.$inferSelect;
+export type NewRequerimiento = typeof requerimientos.$inferInsert;
+export type RequerimientoLinea = typeof requerimientosLineas.$inferSelect;
+export type NewRequerimientoLinea = typeof requerimientosLineas.$inferInsert;
+export type OrdenCompra = typeof ordenesCompra.$inferSelect;
+export type NewOrdenCompra = typeof ordenesCompra.$inferInsert;
+export type OcLinea = typeof ocLineas.$inferSelect;
+export type NewOcLinea = typeof ocLineas.$inferInsert;
+export type OcAprobacion = typeof ocAprobaciones.$inferSelect;
+export type NewOcAprobacion = typeof ocAprobaciones.$inferInsert;
 export type ImportS10 = typeof importsS10.$inferSelect;

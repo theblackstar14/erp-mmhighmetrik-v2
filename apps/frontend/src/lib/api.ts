@@ -181,6 +181,99 @@ export const api = {
           body: JSON.stringify({ sugerencias }),
         },
       ),
+    // F3 · Proveedores
+    listProveedores: () =>
+      req<{
+        proveedores: Array<Proveedor & { ocCount: number; volumenAnual: number }>;
+        stats: { total: number; conRating: number; categorias: string[] };
+      }>(`/api/logistica/proveedores`),
+    getProveedor: (id: string) =>
+      req<{ proveedor: Proveedor; ocs: OrdenCompra[] }>(`/api/logistica/proveedores/${id}`),
+    createProveedor: (data: Partial<Proveedor>) =>
+      req<{ proveedor: Proveedor }>(`/api/logistica/proveedores`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    updateProveedor: (id: string, data: Partial<Proveedor>) =>
+      req<{ proveedor: Proveedor }>(`/api/logistica/proveedores/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }),
+    deleteProveedor: (id: string) =>
+      req<{ ok: boolean; soft: boolean }>(`/api/logistica/proveedores/${id}`, { method: 'DELETE' }),
+
+    // F3 · Requerimientos
+    listRequerimientos: (proyectoId?: string) =>
+      req<{ requerimientos: Requerimiento[] }>(
+        `/api/logistica/requerimientos${proyectoId ? `?proyectoId=${proyectoId}` : ''}`,
+      ),
+    getRequerimiento: (id: string) =>
+      req<{ requerimiento: Requerimiento; lineas: RequerimientoLinea[] }>(
+        `/api/logistica/requerimientos/${id}`,
+      ),
+    createRequerimiento: (data: Partial<Requerimiento> & { lineas?: Partial<RequerimientoLinea>[] }) =>
+      req<{ requerimiento: Requerimiento }>(`/api/logistica/requerimientos`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    updateRequerimiento: (id: string, data: Partial<Requerimiento> & { rechazadoMotivo?: string }) =>
+      req<{ requerimiento: Requerimiento }>(`/api/logistica/requerimientos/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }),
+
+    // F3 · Órdenes de Compra
+    listOcs: (filters?: { proyectoId?: string; proveedorId?: string; estado?: string }) => {
+      const qs = new URLSearchParams();
+      if (filters?.proyectoId) qs.set('proyectoId', filters.proyectoId);
+      if (filters?.proveedorId) qs.set('proveedorId', filters.proveedorId);
+      if (filters?.estado) qs.set('estado', filters.estado);
+      return req<{
+        ordenes: Array<
+          OrdenCompra & {
+            proveedor: { id: string; razonSocial: string; ruc: string } | null;
+            proyecto: { id: string; codigo: string; nombre: string } | null;
+          }
+        >;
+        stats: {
+          total: number;
+          porEstado: Record<string, number>;
+          montoTotal: number;
+          montoEmitidas: number;
+        };
+      }>(`/api/logistica/ordenes-compra${qs.toString() ? `?${qs}` : ''}`);
+    },
+    getOc: (id: string) =>
+      req<{
+        oc: OrdenCompra;
+        lineas: OcLinea[];
+        aprobaciones: OcAprobacion[];
+        proveedor: Proveedor | null;
+        proyecto: Proyecto | null;
+      }>(`/api/logistica/ordenes-compra/${id}`),
+    createOc: (data: Partial<OrdenCompra> & { lineas: Array<Partial<OcLinea>> }) =>
+      req<{ oc: OrdenCompra }>(`/api/logistica/ordenes-compra`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    aprobarOc: (id: string, data: { userId?: string; userNombre?: string; comentario?: string }) =>
+      req<{ oc: OrdenCompra }>(`/api/logistica/ordenes-compra/${id}/aprobar`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    emitirOc: (id: string, data: { userId?: string; userNombre?: string }) =>
+      req<{ oc: OrdenCompra }>(`/api/logistica/ordenes-compra/${id}/emitir`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    cambiarEstadoOc: (
+      id: string,
+      data: { estado: string; comentario?: string; userId?: string; userNombre?: string },
+    ) =>
+      req<{ oc: OrdenCompra }>(`/api/logistica/ordenes-compra/${id}/cambiar-estado`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
   },
 
   // Avances
@@ -376,6 +469,150 @@ export type CurvaSData = {
     EAC: number;
     pctCompletado: number;
   };
+};
+
+// F3 · Compras
+export type Proveedor = {
+  id: string;
+  ruc: string;
+  razonSocial: string;
+  nombreComercial: string | null;
+  categoria: string | null;
+  domicilio: string | null;
+  distrito: string | null;
+  departamento: string | null;
+  email: string | null;
+  telefono: string | null;
+  contacto: string | null;
+  contactoCargo: string | null;
+  estadoSunat: string | null;
+  condicionSunat: string | null;
+  tipoContribuyente: string | null;
+  rating: string | null;
+  leadTimeDias: number | null;
+  cuentaBancaria: string | null;
+  cuentaCci: string | null;
+  cuentaDetraccionesBn: string | null;
+  notas: string | null;
+  activo: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type Requerimiento = {
+  id: string;
+  numero: string;
+  correlativo: number;
+  proyectoId: string;
+  solicitanteId: string | null;
+  solicitanteNombre: string | null;
+  fecha: string;
+  fechaNecesaria: string | null;
+  urgencia: 'baja' | 'media' | 'alta' | 'urgente';
+  descripcion: string;
+  justificacion: string | null;
+  estado:
+    | 'borrador'
+    | 'pendiente_aprobacion'
+    | 'aprobado'
+    | 'cotizando'
+    | 'oc_emitida'
+    | 'rechazado';
+  aprobadoPorId: string | null;
+  aprobadoEn: string | null;
+  rechazadoMotivo: string | null;
+  montoEstimado: string | null;
+  notas: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type RequerimientoLinea = {
+  id: string;
+  requerimientoId: string;
+  numero: number;
+  recursoId: string | null;
+  descripcion: string;
+  unidad: string;
+  cantidad: string;
+  precioReferencial: string | null;
+  notas: string | null;
+};
+
+export type OrdenCompra = {
+  id: string;
+  numero: string;
+  correlativo: number;
+  anio: number;
+  proyectoId: string;
+  proveedorId: string;
+  requerimientoId: string | null;
+  fechaEmision: string;
+  fechaEntrega: string | null;
+  lugarEntrega: string | null;
+  moneda: 'PEN' | 'USD';
+  tipoCambio: string | null;
+  concepto: 'BIEN' | 'SERVICIO';
+  medioPago: string | null;
+  formaPago: string | null;
+  cotizacion: string | null;
+  pctIgv: string;
+  incluyeIgv: boolean;
+  subtotalSinIgv: string;
+  igv: string;
+  total: string;
+  aplicaDetraccion: boolean;
+  pctDetraccion: string | null;
+  montoDetraccion: string;
+  montoNetoPagar: string | null;
+  estado:
+    | 'borrador'
+    | 'pendiente_aprobacion'
+    | 'aprobada'
+    | 'emitida'
+    | 'en_transito'
+    | 'entregada'
+    | 'anulada'
+    | 'rechazada';
+  creadoPorId: string | null;
+  creadoPorEmail: string | null;
+  gestorEmail: string | null;
+  gestorNombre: string | null;
+  aprobadoPorId: string | null;
+  aprobadoEn: string | null;
+  emitidaEn: string | null;
+  entregadaEn: string | null;
+  canceladaMotivo: string | null;
+  terminos: string | null;
+  pdfNasPath: string | null;
+  notas: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type OcLinea = {
+  id: string;
+  ordenCompraId: string;
+  numero: number;
+  partidaId: string | null;
+  recursoId: string | null;
+  descripcion: string;
+  unidad: string;
+  cantidad: string;
+  precioUnitario: string;
+  subtotal: string;
+  notas: string | null;
+};
+
+export type OcAprobacion = {
+  id: string;
+  ordenCompraId: string;
+  estadoFrom: string | null;
+  estadoTo: string;
+  userId: string | null;
+  userNombre: string | null;
+  comentario: string | null;
+  createdAt: string;
 };
 
 export type IndiceUnificado = {

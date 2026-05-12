@@ -1,5 +1,5 @@
 import { db, schema } from '@erp/db';
-import { asc, eq, inArray, isNull } from 'drizzle-orm';
+import { asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { Router } from 'express';
 import { classifyRecursosWithGemini } from '../lib/gemini.js';
 import { requireAuth } from '../middleware/auth.js';
@@ -406,6 +406,599 @@ router.post('/recursos/aplicar-sugerencias', async (req, res) => {
     console.error('aplicar-sugerencias error:', err);
     res.status(500).json({ error: String(err) });
   }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// F3 · PROVEEDORES · CRUD
+// ═══════════════════════════════════════════════════════════════
+
+// GET /api/logistica/proveedores · lista + stats
+router.get('/proveedores', async (_req, res) => {
+  const list = await db
+    .select()
+    .from(schema.proveedores)
+    .where(eq(schema.proveedores.activo, true))
+    .orderBy(asc(schema.proveedores.razonSocial));
+
+  // Stats: OCs por proveedor
+  const ocsAll = await db.select().from(schema.ordenesCompra);
+  const conteoOC = new Map<string, { count: number; volumen: number }>();
+  for (const oc of ocsAll) {
+    const cur = conteoOC.get(oc.proveedorId) ?? { count: 0, volumen: 0 };
+    cur.count += 1;
+    cur.volumen += Number(oc.total);
+    conteoOC.set(oc.proveedorId, cur);
+  }
+  const enriched = list.map((p) => ({
+    ...p,
+    ocCount: conteoOC.get(p.id)?.count ?? 0,
+    volumenAnual: conteoOC.get(p.id)?.volumen ?? 0,
+  }));
+
+  res.json({
+    proveedores: enriched,
+    stats: {
+      total: list.length,
+      conRating: list.filter((p) => Number(p.rating ?? 0) >= 4).length,
+      categorias: [...new Set(list.map((p) => p.categoria).filter(Boolean))],
+    },
+  });
+});
+
+// GET /api/logistica/proveedores/:id
+router.get('/proveedores/:id', async (req, res) => {
+  const [p] = await db
+    .select()
+    .from(schema.proveedores)
+    .where(eq(schema.proveedores.id, req.params.id!))
+    .limit(1);
+  if (!p) return res.status(404).json({ error: 'No encontrado' });
+  // Histórico OCs
+  const ocs = await db
+    .select()
+    .from(schema.ordenesCompra)
+    .where(eq(schema.ordenesCompra.proveedorId, p.id))
+    .orderBy(desc(schema.ordenesCompra.fechaEmision))
+    .limit(50);
+  res.json({ proveedor: p, ocs });
+});
+
+// POST /api/logistica/proveedores
+router.post('/proveedores', async (req, res) => {
+  const data = req.body as Record<string, unknown>;
+  if (!data.ruc || !data.razonSocial) {
+    return res.status(400).json({ error: 'ruc y razonSocial obligatorios' });
+  }
+  const ruc = String(data.ruc).trim();
+  if (!/^\d{11}$/.test(ruc)) return res.status(400).json({ error: 'RUC debe ser 11 dígitos' });
+
+  // Check existe
+  const existing = await db
+    .select()
+    .from(schema.proveedores)
+    .where(eq(schema.proveedores.ruc, ruc))
+    .limit(1);
+  if (existing.length) {
+    return res.status(409).json({ error: `RUC ${ruc} ya existe`, proveedor: existing[0] });
+  }
+
+  const [created] = await db
+    .insert(schema.proveedores)
+    .values({
+      ruc,
+      razonSocial: String(data.razonSocial).trim(),
+      nombreComercial: data.nombreComercial as string | undefined,
+      categoria: data.categoria as string | undefined,
+      domicilio: data.domicilio as string | undefined,
+      distrito: data.distrito as string | undefined,
+      departamento: data.departamento as string | undefined,
+      email: data.email as string | undefined,
+      telefono: data.telefono as string | undefined,
+      contacto: data.contacto as string | undefined,
+      contactoCargo: data.contactoCargo as string | undefined,
+      estadoSunat: data.estadoSunat as string | undefined,
+      condicionSunat: data.condicionSunat as string | undefined,
+      tipoContribuyente: data.tipoContribuyente as string | undefined,
+      rating: data.rating != null ? String(data.rating) : undefined,
+      leadTimeDias: data.leadTimeDias as number | undefined,
+      cuentaBancaria: data.cuentaBancaria as string | undefined,
+      cuentaCci: data.cuentaCci as string | undefined,
+      cuentaDetraccionesBn: data.cuentaDetraccionesBn as string | undefined,
+      notas: data.notas as string | undefined,
+    })
+    .returning();
+  res.status(201).json({ proveedor: created });
+});
+
+// PATCH /api/logistica/proveedores/:id
+router.patch('/proveedores/:id', async (req, res) => {
+  const data = req.body as Record<string, unknown>;
+  const updates: Record<string, unknown> = { updatedAt: new Date() };
+  const allowed = [
+    'razonSocial', 'nombreComercial', 'categoria', 'domicilio', 'distrito', 'departamento',
+    'email', 'telefono', 'contacto', 'contactoCargo', 'estadoSunat', 'condicionSunat',
+    'tipoContribuyente', 'leadTimeDias', 'cuentaBancaria', 'cuentaCci',
+    'cuentaDetraccionesBn', 'notas', 'activo',
+  ];
+  for (const k of allowed) {
+    if (data[k] !== undefined) updates[k] = data[k];
+  }
+  if (data.rating !== undefined) updates.rating = String(data.rating);
+  if (Object.keys(updates).length === 1) return res.status(400).json({ error: 'Sin campos' });
+  const [updated] = await db
+    .update(schema.proveedores)
+    .set(updates)
+    .where(eq(schema.proveedores.id, req.params.id!))
+    .returning();
+  if (!updated) return res.status(404).json({ error: 'No encontrado' });
+  res.json({ proveedor: updated });
+});
+
+// DELETE /api/logistica/proveedores/:id · soft delete (activo=false)
+router.delete('/proveedores/:id', async (req, res) => {
+  const ocs = await db
+    .select()
+    .from(schema.ordenesCompra)
+    .where(eq(schema.ordenesCompra.proveedorId, req.params.id!))
+    .limit(1);
+  if (ocs.length) {
+    // Soft delete · no hard delete si tiene OCs
+    const [updated] = await db
+      .update(schema.proveedores)
+      .set({ activo: false, updatedAt: new Date() })
+      .where(eq(schema.proveedores.id, req.params.id!))
+      .returning();
+    return res.json({ ok: true, soft: true, proveedor: updated });
+  }
+  await db.delete(schema.proveedores).where(eq(schema.proveedores.id, req.params.id!));
+  res.json({ ok: true, soft: false });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// F3 · REQUERIMIENTOS · CRUD + workflow
+// ═══════════════════════════════════════════════════════════════
+
+async function nextCorrelativo(clave: string): Promise<number> {
+  const [row] = await db
+    .insert(schema.correlativos)
+    .values({ clave, ultimoNumero: 1 })
+    .onConflictDoUpdate({
+      target: schema.correlativos.clave,
+      set: {
+        ultimoNumero: sql`${schema.correlativos.ultimoNumero} + 1`,
+        updatedAt: new Date(),
+      },
+    })
+    .returning();
+  return row!.ultimoNumero;
+}
+
+// GET /api/logistica/requerimientos
+router.get('/requerimientos', async (req, res) => {
+  const { proyectoId } = req.query;
+  const conditions = [];
+  if (proyectoId) conditions.push(eq(schema.requerimientos.proyectoId, String(proyectoId)));
+  const list = conditions.length
+    ? await db.select().from(schema.requerimientos).where(conditions[0]!).orderBy(desc(schema.requerimientos.fecha))
+    : await db.select().from(schema.requerimientos).orderBy(desc(schema.requerimientos.fecha));
+  res.json({ requerimientos: list });
+});
+
+// GET /api/logistica/requerimientos/:id (con líneas)
+router.get('/requerimientos/:id', async (req, res) => {
+  const [r] = await db
+    .select()
+    .from(schema.requerimientos)
+    .where(eq(schema.requerimientos.id, req.params.id!))
+    .limit(1);
+  if (!r) return res.status(404).json({ error: 'No encontrado' });
+  const lineas = await db
+    .select()
+    .from(schema.requerimientosLineas)
+    .where(eq(schema.requerimientosLineas.requerimientoId, r.id))
+    .orderBy(asc(schema.requerimientosLineas.numero));
+  res.json({ requerimiento: r, lineas });
+});
+
+// POST /api/logistica/requerimientos
+router.post('/requerimientos', async (req, res) => {
+  const data = req.body as Record<string, unknown> & { lineas?: Record<string, unknown>[] };
+  if (!data.proyectoId || !data.descripcion) {
+    return res.status(400).json({ error: 'proyectoId y descripcion obligatorios' });
+  }
+  const anio = new Date().getFullYear();
+  const correlativo = await nextCorrelativo(`REQ-${anio}`);
+  const numero = `REQ-${anio}-${String(correlativo).padStart(4, '0')}`;
+  const [created] = await db
+    .insert(schema.requerimientos)
+    .values({
+      numero,
+      correlativo,
+      proyectoId: String(data.proyectoId),
+      solicitanteId: data.solicitanteId as string | undefined,
+      solicitanteNombre: data.solicitanteNombre as string | undefined,
+      fecha: (data.fecha as string) ?? new Date().toISOString().slice(0, 10),
+      fechaNecesaria: data.fechaNecesaria as string | undefined,
+      urgencia: (data.urgencia as 'baja' | 'media' | 'alta' | 'urgente') ?? 'media',
+      descripcion: String(data.descripcion),
+      justificacion: data.justificacion as string | undefined,
+      estado: 'pendiente_aprobacion',
+      montoEstimado: data.montoEstimado != null ? String(data.montoEstimado) : undefined,
+      notas: data.notas as string | undefined,
+    })
+    .returning();
+  // Líneas
+  if (Array.isArray(data.lineas)) {
+    for (let i = 0; i < data.lineas.length; i++) {
+      const l = data.lineas[i] as Record<string, unknown>;
+      if (!l.descripcion) continue;
+      await db.insert(schema.requerimientosLineas).values({
+        requerimientoId: created!.id,
+        numero: i + 1,
+        recursoId: l.recursoId as string | undefined,
+        descripcion: String(l.descripcion),
+        unidad: String(l.unidad ?? 'UND'),
+        cantidad: String(l.cantidad ?? 0),
+        precioReferencial: l.precioReferencial != null ? String(l.precioReferencial) : undefined,
+        notas: l.notas as string | undefined,
+      });
+    }
+  }
+  res.status(201).json({ requerimiento: created });
+});
+
+// PATCH /api/logistica/requerimientos/:id · cambiar estado/aprobar/rechazar
+router.patch('/requerimientos/:id', async (req, res) => {
+  const data = req.body as Record<string, unknown>;
+  const updates: Record<string, unknown> = { updatedAt: new Date() };
+
+  if (data.estado) {
+    updates.estado = data.estado;
+    if (data.estado === 'aprobado') {
+      updates.aprobadoEn = new Date();
+      updates.aprobadoPorId = (data.aprobadoPorId as string) ?? null;
+    } else if (data.estado === 'rechazado') {
+      updates.rechazadoMotivo = (data.rechazadoMotivo as string) ?? '';
+    }
+  }
+  for (const k of ['descripcion', 'justificacion', 'urgencia', 'fechaNecesaria', 'notas', 'montoEstimado']) {
+    if (data[k] !== undefined) updates[k] = data[k];
+  }
+  const [updated] = await db
+    .update(schema.requerimientos)
+    .set(updates)
+    .where(eq(schema.requerimientos.id, req.params.id!))
+    .returning();
+  if (!updated) return res.status(404).json({ error: 'No encontrado' });
+  res.json({ requerimiento: updated });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// F3 · ÓRDENES DE COMPRA · CRUD + workflow + cálculos
+// ═══════════════════════════════════════════════════════════════
+
+function calcOcMontos(params: {
+  lineas: Array<{ cantidad: number; precioUnitario: number }>;
+  pctIgv: number;
+  incluyeIgv: boolean;
+  aplicaDetraccion: boolean;
+  pctDetraccion?: number;
+}): {
+  subtotalSinIgv: number;
+  igv: number;
+  total: number;
+  montoDetraccion: number;
+  montoNetoPagar: number;
+} {
+  const subtotalLineas = params.lineas.reduce(
+    (s, l) => s + l.cantidad * l.precioUnitario,
+    0,
+  );
+  let subtotalSinIgv: number;
+  let total: number;
+  let igv: number;
+  if (params.incluyeIgv) {
+    total = subtotalLineas;
+    subtotalSinIgv = total / (1 + params.pctIgv / 100);
+    igv = total - subtotalSinIgv;
+  } else {
+    subtotalSinIgv = subtotalLineas;
+    igv = subtotalSinIgv * (params.pctIgv / 100);
+    total = subtotalSinIgv + igv;
+  }
+  const montoDetraccion =
+    params.aplicaDetraccion && params.pctDetraccion
+      ? total * (params.pctDetraccion / 100)
+      : 0;
+  const montoNetoPagar = total - montoDetraccion;
+  return {
+    subtotalSinIgv: +subtotalSinIgv.toFixed(2),
+    igv: +igv.toFixed(2),
+    total: +total.toFixed(2),
+    montoDetraccion: +montoDetraccion.toFixed(2),
+    montoNetoPagar: +montoNetoPagar.toFixed(2),
+  };
+}
+
+// GET /api/logistica/ordenes-compra
+router.get('/ordenes-compra', async (req, res) => {
+  const { proyectoId, proveedorId, estado } = req.query;
+  let qb = db.select().from(schema.ordenesCompra).$dynamic();
+  const conds = [];
+  if (proyectoId) conds.push(eq(schema.ordenesCompra.proyectoId, String(proyectoId)));
+  if (proveedorId) conds.push(eq(schema.ordenesCompra.proveedorId, String(proveedorId)));
+  if (estado) {
+    conds.push(
+      eq(
+        schema.ordenesCompra.estado,
+        estado as 'borrador' | 'pendiente_aprobacion' | 'aprobada' | 'emitida' | 'en_transito' | 'entregada' | 'anulada' | 'rechazada',
+      ),
+    );
+  }
+  if (conds.length > 0) qb = qb.where(conds[0]!);
+  const list = await qb.orderBy(desc(schema.ordenesCompra.fechaEmision));
+
+  // Stats
+  const stats = {
+    total: list.length,
+    porEstado: list.reduce(
+      (acc, oc) => {
+        acc[oc.estado] = (acc[oc.estado] ?? 0) + 1;
+        return acc;
+      },
+      {} as Record<string, number>,
+    ),
+    montoTotal: list.reduce((s, oc) => s + Number(oc.total), 0),
+    montoEmitidas: list
+      .filter((oc) => ['emitida', 'en_transito', 'entregada'].includes(oc.estado))
+      .reduce((s, oc) => s + Number(oc.total), 0),
+  };
+
+  // Enriquecer con proveedor + proyecto info
+  const proveedoresAll = await db.select().from(schema.proveedores);
+  const proyectosAll = await db.select().from(schema.proyectos);
+  const provMap = new Map(proveedoresAll.map((p) => [p.id, p]));
+  const proyMap = new Map(proyectosAll.map((p) => [p.id, p]));
+  const enriched = list.map((oc) => ({
+    ...oc,
+    proveedor: provMap.get(oc.proveedorId)
+      ? {
+          id: provMap.get(oc.proveedorId)!.id,
+          razonSocial: provMap.get(oc.proveedorId)!.razonSocial,
+          ruc: provMap.get(oc.proveedorId)!.ruc,
+        }
+      : null,
+    proyecto: proyMap.get(oc.proyectoId)
+      ? {
+          id: proyMap.get(oc.proyectoId)!.id,
+          codigo: proyMap.get(oc.proyectoId)!.codigo,
+          nombre: proyMap.get(oc.proyectoId)!.nombre,
+        }
+      : null,
+  }));
+
+  res.json({ ordenes: enriched, stats });
+});
+
+// GET /api/logistica/ordenes-compra/:id (con líneas + aprobaciones)
+router.get('/ordenes-compra/:id', async (req, res) => {
+  const [oc] = await db
+    .select()
+    .from(schema.ordenesCompra)
+    .where(eq(schema.ordenesCompra.id, req.params.id!))
+    .limit(1);
+  if (!oc) return res.status(404).json({ error: 'No encontrado' });
+  const lineas = await db
+    .select()
+    .from(schema.ocLineas)
+    .where(eq(schema.ocLineas.ordenCompraId, oc.id))
+    .orderBy(asc(schema.ocLineas.numero));
+  const aprobaciones = await db
+    .select()
+    .from(schema.ocAprobaciones)
+    .where(eq(schema.ocAprobaciones.ordenCompraId, oc.id))
+    .orderBy(asc(schema.ocAprobaciones.createdAt));
+  const [proveedor] = await db
+    .select()
+    .from(schema.proveedores)
+    .where(eq(schema.proveedores.id, oc.proveedorId))
+    .limit(1);
+  const [proyecto] = await db
+    .select()
+    .from(schema.proyectos)
+    .where(eq(schema.proyectos.id, oc.proyectoId))
+    .limit(1);
+  res.json({ oc, lineas, aprobaciones, proveedor, proyecto });
+});
+
+// POST /api/logistica/ordenes-compra
+router.post('/ordenes-compra', async (req, res) => {
+  const data = req.body as Record<string, unknown> & {
+    lineas?: Array<Record<string, unknown>>;
+  };
+  if (!data.proyectoId || !data.proveedorId || !Array.isArray(data.lineas) || data.lineas.length === 0) {
+    return res.status(400).json({ error: 'proyectoId, proveedorId y al menos 1 línea obligatorios' });
+  }
+  const anio = new Date().getFullYear();
+  const correlativo = await nextCorrelativo(`OC-${anio}`);
+  const numero = `OC-${anio}-${String(correlativo).padStart(4, '0')}`;
+
+  // Calcular totales
+  const lineasParsed = data.lineas.map((l) => ({
+    cantidad: Number(l.cantidad ?? 0),
+    precioUnitario: Number(l.precioUnitario ?? 0),
+    descripcion: String(l.descripcion ?? ''),
+    unidad: String(l.unidad ?? 'UND'),
+    partidaId: l.partidaId as string | undefined,
+    recursoId: l.recursoId as string | undefined,
+    notas: l.notas as string | undefined,
+  }));
+  const pctIgv = Number(data.pctIgv ?? 18);
+  const incluyeIgv = data.incluyeIgv !== false;
+  const aplicaDetraccion = Boolean(data.aplicaDetraccion);
+  const pctDetraccion = Number(data.pctDetraccion ?? 0);
+
+  const montos = calcOcMontos({
+    lineas: lineasParsed,
+    pctIgv,
+    incluyeIgv,
+    aplicaDetraccion,
+    pctDetraccion,
+  });
+
+  const [created] = await db
+    .insert(schema.ordenesCompra)
+    .values({
+      numero,
+      correlativo,
+      anio,
+      proyectoId: String(data.proyectoId),
+      proveedorId: String(data.proveedorId),
+      requerimientoId: data.requerimientoId as string | undefined,
+      fechaEmision: (data.fechaEmision as string) ?? new Date().toISOString().slice(0, 10),
+      fechaEntrega: data.fechaEntrega as string | undefined,
+      lugarEntrega: data.lugarEntrega as string | undefined,
+      moneda: (data.moneda as 'PEN' | 'USD') ?? 'PEN',
+      tipoCambio: data.tipoCambio != null ? String(data.tipoCambio) : undefined,
+      concepto: (data.concepto as 'BIEN' | 'SERVICIO') ?? 'BIEN',
+      medioPago: data.medioPago as string | undefined,
+      formaPago: data.formaPago as string | undefined,
+      cotizacion: data.cotizacion as string | undefined,
+      pctIgv: String(pctIgv),
+      incluyeIgv,
+      subtotalSinIgv: String(montos.subtotalSinIgv),
+      igv: String(montos.igv),
+      total: String(montos.total),
+      aplicaDetraccion,
+      pctDetraccion: pctDetraccion > 0 ? String(pctDetraccion) : undefined,
+      montoDetraccion: String(montos.montoDetraccion),
+      montoNetoPagar: String(montos.montoNetoPagar),
+      estado: (data.estado as 'borrador' | 'pendiente_aprobacion') ?? 'borrador',
+      creadoPorId: data.creadoPorId as string | undefined,
+      creadoPorEmail: data.creadoPorEmail as string | undefined,
+      gestorEmail: data.gestorEmail as string | undefined,
+      gestorNombre: data.gestorNombre as string | undefined,
+      terminos: data.terminos as string | undefined,
+      notas: data.notas as string | undefined,
+    })
+    .returning();
+
+  // Insertar líneas
+  for (let i = 0; i < lineasParsed.length; i++) {
+    const l = lineasParsed[i]!;
+    await db.insert(schema.ocLineas).values({
+      ordenCompraId: created!.id,
+      numero: i + 1,
+      partidaId: l.partidaId,
+      recursoId: l.recursoId,
+      descripcion: l.descripcion,
+      unidad: l.unidad,
+      cantidad: String(l.cantidad),
+      precioUnitario: String(l.precioUnitario),
+      subtotal: String((l.cantidad * l.precioUnitario).toFixed(2)),
+      notas: l.notas,
+    });
+  }
+
+  res.status(201).json({ oc: created });
+});
+
+// POST /api/logistica/ordenes-compra/:id/aprobar
+router.post('/ordenes-compra/:id/aprobar', async (req, res) => {
+  const ocId = req.params.id!;
+  const { userId, userNombre, comentario } = req.body as Record<string, unknown>;
+  const [oc] = await db
+    .select()
+    .from(schema.ordenesCompra)
+    .where(eq(schema.ordenesCompra.id, ocId))
+    .limit(1);
+  if (!oc) return res.status(404).json({ error: 'No encontrado' });
+  if (!['borrador', 'pendiente_aprobacion'].includes(oc.estado)) {
+    return res.status(400).json({ error: `No se puede aprobar desde estado ${oc.estado}` });
+  }
+  const estadoFrom = oc.estado;
+  await db.insert(schema.ocAprobaciones).values({
+    ordenCompraId: ocId,
+    estadoFrom,
+    estadoTo: 'aprobada',
+    userId: userId as string | undefined,
+    userNombre: userNombre as string | undefined,
+    comentario: comentario as string | undefined,
+  });
+  const [updated] = await db
+    .update(schema.ordenesCompra)
+    .set({
+      estado: 'aprobada',
+      aprobadoPorId: userId as string | undefined,
+      aprobadoEn: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(eq(schema.ordenesCompra.id, ocId))
+    .returning();
+  res.json({ oc: updated });
+});
+
+// POST /api/logistica/ordenes-compra/:id/emitir · marca emitida
+router.post('/ordenes-compra/:id/emitir', async (req, res) => {
+  const ocId = req.params.id!;
+  const { userId, userNombre } = req.body as Record<string, unknown>;
+  const [oc] = await db
+    .select()
+    .from(schema.ordenesCompra)
+    .where(eq(schema.ordenesCompra.id, ocId))
+    .limit(1);
+  if (!oc) return res.status(404).json({ error: 'No encontrado' });
+  if (oc.estado !== 'aprobada') {
+    return res.status(400).json({ error: 'Solo OC aprobadas pueden emitirse' });
+  }
+  await db.insert(schema.ocAprobaciones).values({
+    ordenCompraId: ocId,
+    estadoFrom: 'aprobada',
+    estadoTo: 'emitida',
+    userId: userId as string | undefined,
+    userNombre: userNombre as string | undefined,
+    comentario: 'Emisión',
+  });
+  const [updated] = await db
+    .update(schema.ordenesCompra)
+    .set({ estado: 'emitida', emitidaEn: new Date(), updatedAt: new Date() })
+    .where(eq(schema.ordenesCompra.id, ocId))
+    .returning();
+  res.json({ oc: updated });
+});
+
+// POST /api/logistica/ordenes-compra/:id/cambiar-estado
+router.post('/ordenes-compra/:id/cambiar-estado', async (req, res) => {
+  const ocId = req.params.id!;
+  const { estado, comentario, userId, userNombre } = req.body as Record<string, unknown>;
+  if (!estado) return res.status(400).json({ error: 'estado obligatorio' });
+  const [oc] = await db
+    .select()
+    .from(schema.ordenesCompra)
+    .where(eq(schema.ordenesCompra.id, ocId))
+    .limit(1);
+  if (!oc) return res.status(404).json({ error: 'No encontrado' });
+  await db.insert(schema.ocAprobaciones).values({
+    ordenCompraId: ocId,
+    estadoFrom: oc.estado,
+    estadoTo: String(estado),
+    userId: userId as string | undefined,
+    userNombre: userNombre as string | undefined,
+    comentario: comentario as string | undefined,
+  });
+  const extra: Record<string, unknown> = {};
+  if (estado === 'entregada') extra.entregadaEn = new Date();
+  if (estado === 'anulada') extra.canceladaMotivo = (comentario as string) ?? '';
+  const [updated] = await db
+    .update(schema.ordenesCompra)
+    .set({
+      estado: String(estado) as 'borrador' | 'pendiente_aprobacion' | 'aprobada' | 'emitida' | 'en_transito' | 'entregada' | 'anulada' | 'rechazada',
+      ...extra,
+      updatedAt: new Date(),
+    })
+    .where(eq(schema.ordenesCompra.id, ocId))
+    .returning();
+  res.json({ oc: updated });
 });
 
 void isNull; // suppress unused

@@ -1,16 +1,20 @@
 import { Boxes, FileText, Receipt, ShoppingCart, Tags, Truck } from 'lucide-react';
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
 import { LogisticaIusPage } from '@/components/logistica/LogisticaIusPage.js';
+import { LogisticaOrdenesPage } from '@/components/logistica/LogisticaOrdenesPage.js';
+import { LogisticaProveedoresPage } from '@/components/logistica/LogisticaProveedoresPage.js';
 import { LogisticaRecursosPage } from '@/components/logistica/LogisticaRecursosPage.js';
+import { LogisticaRequerimientosPage } from '@/components/logistica/LogisticaRequerimientosPage.js';
 import { EmptyModulePage } from './EmptyModulePage.js';
 import { cn } from '@/lib/utils.js';
 
 const TABS = [
-  { key: 'recursos', label: 'Recursos', icon: Boxes },
-  { key: 'ius', label: 'IUs INEI', icon: Tags },
   { key: 'proveedores', label: 'Proveedores', icon: Truck },
+  { key: 'requerimientos', label: 'Requerimientos', icon: FileText },
   { key: 'ordenes', label: 'Órdenes Compra', icon: ShoppingCart },
   { key: 'comprobantes', label: 'Comprobantes', icon: Receipt },
+  { key: 'recursos', label: 'Recursos', icon: Boxes },
+  { key: 'ius', label: 'IUs INEI', icon: Tags },
 ];
 
 export function LogisticaPage() {
@@ -55,22 +59,17 @@ export function LogisticaPage() {
 
       {/* Sub-routes */}
       <Routes>
-        <Route index element={<Navigate to="recursos" replace />} />
-        <Route path="recursos" element={<LogisticaRecursosPage />} />
-        <Route path="ius" element={<LogisticaIusPage />} />
-        <Route
-          path="proveedores"
-          element={<EmptyModulePage title="Proveedores" description="RUC · razón social · contactos · histórico OC" />}
-        />
-        <Route
-          path="ordenes"
-          element={<EmptyModulePage title="Órdenes de Compra" description="OC/OS · proveedor · líneas vinculadas a partidas" />}
-        />
+        <Route index element={<Navigate to="proveedores" replace />} />
+        <Route path="proveedores" element={<LogisticaProveedoresPage />} />
+        <Route path="requerimientos" element={<LogisticaRequerimientosPage />} />
+        <Route path="ordenes" element={<LogisticaOrdenesPage />} />
         <Route
           path="comprobantes"
-          element={<EmptyModulePage title="Comprobantes Recibidos" description="Facturas XML SUNAT · boletas · RH · NC/ND" />}
+          element={<EmptyModulePage title="Comprobantes Recibidos" description="Facturas XML SUNAT · boletas · RH · NC/ND · esperar F4" />}
         />
-        <Route path="*" element={<Navigate to="recursos" replace />} />
+        <Route path="recursos" element={<LogisticaRecursosPage />} />
+        <Route path="ius" element={<LogisticaIusPage />} />
+        <Route path="*" element={<Navigate to="proveedores" replace />} />
       </Routes>
     </div>
   );
