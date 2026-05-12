@@ -906,7 +906,7 @@ export const proveedores = pgTable(
   'proveedores',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    ruc: varchar('ruc', { length: 11 }).notNull().unique(),
+    ruc: varchar('ruc', { length: 11 }).unique(), // nullable · permite proveedores informales sin RUC
     razonSocial: varchar('razon_social', { length: 255 }).notNull(),
     nombreComercial: varchar('nombre_comercial', { length: 255 }),
     categoria: varchar('categoria', { length: 100 }), // 'Cemento', 'Acero', 'Maquinaria', etc

@@ -815,9 +815,66 @@ router.get('/ordenes-compra/:id', async (req, res) => {
 router.post('/ordenes-compra', async (req, res) => {
   const data = req.body as Record<string, unknown> & {
     lineas?: Array<Record<string, unknown>>;
+    // Auto-crear proveedor desde form
+    proveedorRazonSocial?: string;
+    proveedorDireccion?: string;
+    ruc?: string;
+    sinRuc?: boolean;
   };
-  if (!data.proyectoId || !data.proveedorId || !Array.isArray(data.lineas) || data.lineas.length === 0) {
-    return res.status(400).json({ error: 'proyectoId, proveedorId y al menos 1 línea obligatorios' });
+  if (!data.proyectoId || !Array.isArray(data.lineas) || data.lineas.length === 0) {
+    return res.status(400).json({ error: 'proyectoId y al menos 1 línea obligatorios' });
+  }
+
+  // ─── Auto-crear o resolver proveedor ───
+  let proveedorId: string | null = (data.proveedorId as string) || null;
+  if (!proveedorId) {
+    // Buscar por RUC si trae
+    const rucClean = data.ruc ? String(data.ruc).replace(/\D/g, '').slice(0, 11) : '';
+    if (rucClean.length === 11 && !data.sinRuc) {
+      const [existing] = await db
+        .select()
+        .from(schema.proveedores)
+        .where(eq(schema.proveedores.ruc, rucClean))
+        .limit(1);
+      if (existing) {
+        proveedorId = existing.id;
+      } else {
+        // Crear proveedor nuevo desde form
+        if (!data.proveedorRazonSocial) {
+          return res.status(400).json({ error: 'razón social obligatoria para crear proveedor' });
+        }
+        const [created] = await db
+          .insert(schema.proveedores)
+          .values({
+            ruc: rucClean,
+            razonSocial: String(data.proveedorRazonSocial).trim().toUpperCase(),
+            domicilio: data.proveedorDireccion ? String(data.proveedorDireccion) : null,
+            activo: true,
+          })
+          .returning();
+        proveedorId = created!.id;
+      }
+    } else if (data.sinRuc && data.proveedorRazonSocial) {
+      // Sin RUC · crear proveedor informal
+      const [created] = await db
+        .insert(schema.proveedores)
+        .values({
+          ruc: null,
+          razonSocial: String(data.proveedorRazonSocial).trim().toUpperCase(),
+          domicilio: data.proveedorDireccion ? String(data.proveedorDireccion) : null,
+          categoria: 'Informal',
+          activo: true,
+        })
+        .returning();
+      proveedorId = created!.id;
+    } else {
+      return res.status(400).json({
+        error: 'Necesita proveedorId, o RUC + razón social, o sinRuc=true + razón social',
+      });
+    }
+  }
+  if (!proveedorId) {
+    return res.status(400).json({ error: 'No se pudo resolver el proveedor' });
   }
   const anio = new Date().getFullYear();
   const correlativo = await nextCorrelativo(`OC-${anio}`);
@@ -853,7 +910,7 @@ router.post('/ordenes-compra', async (req, res) => {
       correlativo,
       anio,
       proyectoId: String(data.proyectoId),
-      proveedorId: String(data.proveedorId),
+      proveedorId,
       requerimientoId: data.requerimientoId as string | undefined,
       fechaEmision: (data.fechaEmision as string) ?? new Date().toISOString().slice(0, 10),
       fechaEntrega: data.fechaEntrega as string | undefined,

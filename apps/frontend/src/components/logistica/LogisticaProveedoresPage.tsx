@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Loader2, Pencil, Plus, Search, Star, Trash2, Truck, X } from 'lucide-react';
+import { Check, Loader2, Pencil, Search, Star, Trash2, Truck, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { type Proveedor, api } from '@/lib/api.js';
 import { cn, fmtPEN } from '@/lib/utils.js';
@@ -100,12 +100,6 @@ export function LogisticaProveedoresPage() {
     setEditing(null);
     setForm(EMPTY_FORM);
     setError(null);
-  };
-
-  const openCreate = () => {
-    setEditing(null);
-    setForm(EMPTY_FORM);
-    setShowForm(true);
   };
 
   const openEdit = (p: Proveedor) => {
@@ -219,14 +213,9 @@ export function LogisticaProveedoresPage() {
             ))}
           </select>
         </div>
-        <button
-          type="button"
-          onClick={openCreate}
-          className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md bg-primary text-primary-foreground text-[12px] font-medium hover:opacity-90"
-        >
-          <Plus className="h-3.5 w-3.5" />
-          Nuevo proveedor
-        </button>
+        <div className="text-[10.5px] text-ink-3 italic">
+          Los proveedores se crean automáticamente al emitir una OC con RUC válido
+        </div>
       </div>
 
       {/* Cards grid */}
@@ -234,19 +223,11 @@ export function LogisticaProveedoresPage() {
         <div className="rounded-md border border-line bg-bg-elev p-12 text-center">
           <Truck className="mx-auto mb-3 h-8 w-8 text-ink-4" />
           <h3 className="text-[14px] font-semibold mb-1">Sin proveedores</h3>
-          <p className="text-[11.5px] text-ink-3 mb-4">
-            {proveedores.length === 0 ? 'Crea tu primer proveedor para empezar' : 'Ningún match con los filtros'}
+          <p className="text-[11.5px] text-ink-3">
+            {proveedores.length === 0
+              ? 'Aún no hay proveedores · se crearán automáticamente al emitir tu primera OC'
+              : 'Ningún match con los filtros'}
           </p>
-          {proveedores.length === 0 && (
-            <button
-              type="button"
-              onClick={openCreate}
-              className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md bg-primary text-primary-foreground text-[12px] font-medium hover:opacity-90"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              Crear primero
-            </button>
-          )}
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">

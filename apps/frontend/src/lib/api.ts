@@ -251,7 +251,15 @@ export const api = {
         proveedor: Proveedor | null;
         proyecto: Proyecto | null;
       }>(`/api/logistica/ordenes-compra/${id}`),
-    createOc: (data: Partial<OrdenCompra> & { lineas: Array<Partial<OcLinea>> }) =>
+    createOc: (
+      data: Partial<OrdenCompra> & {
+        lineas: Array<Partial<OcLinea>>;
+        proveedorRazonSocial?: string;
+        proveedorDireccion?: string;
+        ruc?: string;
+        sinRuc?: boolean;
+      },
+    ) =>
       req<{ oc: OrdenCompra }>(`/api/logistica/ordenes-compra`, {
         method: 'POST',
         body: JSON.stringify(data),
