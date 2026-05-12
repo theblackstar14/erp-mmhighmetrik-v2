@@ -179,8 +179,8 @@ export function GanttViewer({ partidas, height = 700 }: Props) {
   };
   const cpm = useMemo(() => {
     const result = new Map<string, CpmData>();
-    if (validPartidas.length === 0 || !dateRange) return result;
-    const minMs = dateRange.min.getTime();
+    if (validPartidas.length === 0 || !dateRangeReal) return result;
+    const minMs = dateRangeReal.min.getTime();
     const projectFinish = validPartidas.reduce((m, p) => {
       const f = p.fechaFin ? new Date(`${p.fechaFin.slice(0, 10)}T00:00:00Z`).getTime() : 0;
       return Math.max(m, f);
@@ -223,7 +223,7 @@ export function GanttViewer({ partidas, height = 700 }: Props) {
       });
     }
     return result;
-  }, [validPartidas, dateRange]);
+  }, [validPartidas, dateRangeReal]);
 
   // Virtualizer
   const rowVirtualizer = useVirtualizer({
