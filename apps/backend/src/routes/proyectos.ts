@@ -317,6 +317,73 @@ router.post('/import-xlsx', upload.single('file'), async (req, res) => {
   }
 });
 
+// POST /api/proyectos/:id/rebuild-rollup · recalcula presupuesto + fechas para summaries
+router.post('/:id/rebuild-rollup', async (req, res) => {
+  try {
+    const proyectoId = req.params.id!;
+    const partidas = await db
+      .select()
+      .from(schema.partidas)
+      .where(eq(schema.partidas.proyectoId, proyectoId));
+    if (partidas.length === 0) return res.status(404).json({ error: 'Proyecto sin partidas' });
+
+    const byCodigo = new Map(partidas.map((p) => [p.codigo, p]));
+    const childrenByParent = new Map<string, typeof partidas>();
+    for (const p of partidas) {
+      if (p.parentCodigo) {
+        const arr = childrenByParent.get(p.parentCodigo);
+        if (arr) arr.push(p);
+        else childrenByParent.set(p.parentCodigo, [p]);
+      }
+    }
+    void byCodigo;
+
+    // Bottom-up: nivel mayor → menor
+    const niveles = [...new Set(partidas.map((p) => p.nivel))].sort((a, b) => b - a);
+    let updates = 0;
+    await db.transaction(async (tx) => {
+      for (const lvl of niveles) {
+        for (const p of partidas.filter((x) => x.nivel === lvl && x.isSummary)) {
+          const hijos = childrenByParent.get(p.codigo);
+          if (!hijos || hijos.length === 0) continue;
+
+          let sumPresup = 0;
+          let sumPresupCon = 0;
+          let minIni: string | null = null;
+          let maxFin: string | null = null;
+          for (const h of hijos) {
+            sumPresup += Number(h.presupuesto ?? 0);
+            sumPresupCon += Number(h.presupuestoContractual ?? 0);
+            if (h.fechaInicio && (!minIni || h.fechaInicio < minIni)) minIni = h.fechaInicio;
+            if (h.fechaFin && (!maxFin || h.fechaFin > maxFin)) maxFin = h.fechaFin;
+          }
+
+          // Mutar in-memory para que niveles más bajos vean valores nuevos
+          p.presupuesto = sumPresup.toFixed(2);
+          p.presupuestoContractual = sumPresupCon.toFixed(2);
+          if (minIni) p.fechaInicio = minIni;
+          if (maxFin) p.fechaFin = maxFin;
+
+          await tx
+            .update(schema.partidas)
+            .set({
+              presupuesto: sumPresup.toFixed(2),
+              presupuestoContractual: sumPresupCon.toFixed(2),
+              fechaInicio: minIni ?? p.fechaInicio,
+              fechaFin: maxFin ?? p.fechaFin,
+            })
+            .where(eq(schema.partidas.id, p.id));
+          updates++;
+        }
+      }
+    });
+
+    res.json({ ok: true, updates });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : 'Error rebuild rollup' });
+  }
+});
+
 // PATCH /api/proyectos/:id
 router.patch('/:id', async (req, res) => {
   const parse = proyectoCreateSchema.partial().safeParse(req.body);

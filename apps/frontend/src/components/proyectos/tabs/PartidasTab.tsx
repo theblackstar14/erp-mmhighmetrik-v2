@@ -1,11 +1,12 @@
-import { useQuery } from '@tanstack/react-query';
-import { ChevronDown, ChevronRight, FileText, Search } from 'lucide-react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { ChevronDown, ChevronRight, FileText, RefreshCw, Search } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { EditAvanceModal } from '@/components/proyectos/avance/EditAvanceModal.js';
 import { type Partida, api } from '@/lib/api.js';
 import { cn, fmtPEN, partidaPrecioUnitario, partidaPresupuesto } from '@/lib/utils.js';
 
 export function PartidasTab({ proyectoId }: { proyectoId: string }) {
+  const qc = useQueryClient();
   const partidasQ = useQuery({
     queryKey: ['partidas', proyectoId],
     queryFn: () => api.proyectos.listPartidas(proyectoId),
@@ -13,6 +14,14 @@ export function PartidasTab({ proyectoId }: { proyectoId: string }) {
   const avancesQ = useQuery({
     queryKey: ['avances-proyecto', proyectoId],
     queryFn: () => api.proyectos.getAvances(proyectoId),
+  });
+  const rebuildMut = useMutation({
+    mutationFn: () => api.proyectos.rebuildRollup(proyectoId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['partidas', proyectoId] });
+      qc.invalidateQueries({ queryKey: ['proyecto', proyectoId] });
+      qc.invalidateQueries({ queryKey: ['curva-s', proyectoId] });
+    },
   });
 
   const [search, setSearch] = useState('');
@@ -82,6 +91,11 @@ export function PartidasTab({ proyectoId }: { proyectoId: string }) {
     setExpanded(new Set(partidas.filter((p) => p.nivel === 1).map((p) => p.codigo)));
 
   const totalCD = partidas.filter((p) => p.nivel === 1).reduce((s, p) => s + getBudget(p), 0);
+  // Detectar summaries con presupuesto 0 (rollup pendiente)
+  const summariesSinRollup = partidas.filter(
+    (p) => p.isSummary && getBudget(p) === 0 && partidas.some((c) => c.parentCodigo === p.codigo),
+  );
+  const necesitaRollup = summariesSinRollup.length > 0;
   // Total real = suma valorizado de hojas + fallback manual avance solo si NO hay valorización
   const totalReal = partidas.reduce((s, p) => {
     if (p.valorizado) return s + Number(p.valorizado.montoAcumulado);
@@ -163,6 +177,30 @@ export function PartidasTab({ proyectoId }: { proyectoId: string }) {
 
   return (
     <div className="space-y-4">
+      {/* Banner rollup */}
+      {necesitaRollup && (
+        <div className="flex items-center justify-between gap-3 rounded-md border border-warn/30 bg-warn-soft px-3 py-2.5">
+          <div className="flex-1 min-w-0">
+            <p className="text-[12px] font-semibold text-warn-ink">
+              {summariesSinRollup.length} capítulos/sub-capítulos sin presupuesto agregado
+            </p>
+            <p className="text-[11px] text-warn-ink/80 mt-0.5">
+              Los rubros padre (01, 01.01, etc.) muestran S/ 0 porque el Excel no los agrega.
+              Click para calcular bottom-up (suma de hijos).
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => rebuildMut.mutate()}
+            disabled={rebuildMut.isPending}
+            className="flex items-center gap-1.5 h-8 px-3 rounded-md bg-warn text-white text-[11.5px] font-medium hover:opacity-90 disabled:opacity-50 shrink-0"
+          >
+            <RefreshCw className={cn('h-3 w-3', rebuildMut.isPending && 'animate-spin')} />
+            {rebuildMut.isPending ? 'Calculando...' : 'Calcular rollup'}
+          </button>
+        </div>
+      )}
+
       {/* Stats */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <Stat lbl="Total partidas" val={String(partidas.length)} />

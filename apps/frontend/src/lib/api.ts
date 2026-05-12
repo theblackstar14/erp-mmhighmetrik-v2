@@ -76,6 +76,10 @@ export const api = {
       }
       return res.json();
     },
+    rebuildRollup: (id: string) =>
+      req<{ ok: boolean; updates: number }>(`/api/proyectos/${id}/rebuild-rollup`, {
+        method: 'POST',
+      }),
     importXlsx: async (
       file: File,
       meta: { codigo: string; nombre?: string; tipoEntidad?: string },

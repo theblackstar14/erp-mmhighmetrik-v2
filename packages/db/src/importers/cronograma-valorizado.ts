@@ -334,6 +334,47 @@ export function parseCronogramaValorizado(buffer: Buffer): CvParseResult {
 
   result.sumaParcialesHoja = sumaHoja.toDecimalPlaces(2).toNumber();
 
+  // ─── Rollup bottom-up para summary rows ────────────────────
+  // Parents agregan sum(parcial), sum(distribucionMensual[k]),
+  // fechaInicio = min hijos, fechaFin = max hijos
+  const N = result.meses.length;
+  const byCodigo = new Map(result.partidas.map((p) => [p.codigo, p]));
+  const childrenByParent = new Map<string, CvParsedPartida[]>();
+  for (const p of result.partidas) {
+    if (p.parentCodigo) {
+      const arr = childrenByParent.get(p.parentCodigo);
+      if (arr) arr.push(p);
+      else childrenByParent.set(p.parentCodigo, [p]);
+    }
+  }
+  // Procesar de mayor nivel a menor (hojas ya tienen datos)
+  const nivelesDesc = [...new Set(result.partidas.map((p) => p.nivel))].sort((a, b) => b - a);
+  for (const lvl of nivelesDesc) {
+    for (const p of result.partidas.filter((x) => x.nivel === lvl)) {
+      if (!p.isSummary) continue;
+      const hijos = childrenByParent.get(p.codigo);
+      if (!hijos || hijos.length === 0) continue;
+      // Sum parcial
+      let sumParcial = new Decimal(0);
+      const sumMensual: Decimal[] = Array.from({ length: N }, () => new Decimal(0));
+      let minIni: string | null = null;
+      let maxFin: string | null = null;
+      for (const h of hijos) {
+        sumParcial = sumParcial.plus(h.parcial);
+        for (let k = 0; k < N; k++) {
+          sumMensual[k] = sumMensual[k]!.plus(h.distribucionMensual[k] ?? 0);
+        }
+        if (h.fechaInicio && (!minIni || h.fechaInicio < minIni)) minIni = h.fechaInicio;
+        if (h.fechaFin && (!maxFin || h.fechaFin > maxFin)) maxFin = h.fechaFin;
+      }
+      p.parcial = sumParcial.toDecimalPlaces(2).toNumber();
+      p.distribucionMensual = sumMensual.map((d) => d.toDecimalPlaces(2).toNumber());
+      p.fechaInicio = minIni;
+      p.fechaFin = maxFin;
+    }
+  }
+  void byCodigo; // map ya construido para extensiones futuras
+
   // ─── Totales bottom ─────────────────────────────────────────
   const findTotal = (kw: string): unknown[] | null => findRowByDesc(rows, kw);
 
