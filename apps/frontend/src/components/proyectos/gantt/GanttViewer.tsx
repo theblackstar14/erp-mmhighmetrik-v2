@@ -27,11 +27,17 @@ export function GanttViewer({ partidas, height = 700 }: Props) {
   });
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Solo partidas con fechas válidas
-  const validPartidas = useMemo(
-    () => partidas.filter((p) => p.fechaInicio && p.fechaFin),
-    [partidas],
-  );
+  // Solo partidas con fechas válidas · hitos al tope ordenados por fecha
+  const validPartidas = useMemo(() => {
+    const filtered = partidas.filter((p) => p.fechaInicio && p.fechaFin);
+    const hitos = filtered
+      .filter((p) => p.isMilestone || p.codigo.startsWith('00.HITO'))
+      .sort((a, b) => (a.fechaInicio ?? '').localeCompare(b.fechaInicio ?? ''));
+    const noHitos = filtered.filter(
+      (p) => !p.isMilestone && !p.codigo.startsWith('00.HITO'),
+    );
+    return [...hitos, ...noHitos];
+  }, [partidas]);
 
   // Aplicar collapse + filtros
   const visiblePartidas = useMemo(() => {
