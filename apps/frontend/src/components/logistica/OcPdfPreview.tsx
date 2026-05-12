@@ -3,16 +3,19 @@ import { Download, Loader2, Printer, X } from 'lucide-react';
 import { useRef } from 'react';
 import { api } from '@/lib/api.js';
 
-// Empresa emisora · MM HIGH METRIK
+// Emisor real · MM HIGH METRIK ENGINEERS (de v1 data.js)
 const EMISOR = {
   razonSocial: 'MM HIGH METRIK ENGINEERS S.A.C.',
-  ruc: '20603456789',
-  direccion: 'Av. La Marina 2355, Of. 502',
-  distrito: 'San Miguel',
+  nombreComercial: 'MM HIGH METRIK ENGINEERS',
+  ruc: '20610639764',
+  direccion: 'Av. Republica de Colombia 625 Of. 501',
+  distrito: 'San Isidro',
+  provincia: 'Lima',
   departamento: 'Lima',
-  telefono: '+51 1 555 1234',
-  telefono2: '987 654 321',
-  email: 'contabilidad@mmhighmetrik.com',
+  email: 'mmhighmetrik@gmail.com',
+  telefono: '(+51) 955 137 140',
+  telefono2: '989010329',
+  logoUrl: '/logo-mm.png',
 };
 
 export function OcPdfPreview({ ocId, onClose }: { ocId: string; onClose: () => void }) {
@@ -27,6 +30,9 @@ export function OcPdfPreview({ ocId, onClose }: { ocId: string; onClose: () => v
     if (!sheet) return;
     const printWindow = window.open('', '_blank');
     if (!printWindow) return;
+    // Convertir img relative path a absolute para iframe nuevo
+    const logoAbs = `${window.location.origin}${EMISOR.logoUrl}`;
+    const html = sheet.outerHTML.replace(/src="\/logo-mm\.png"/g, `src="${logoAbs}"`);
     printWindow.document.write(`
       <!DOCTYPE html>
       <html>
@@ -35,78 +41,71 @@ export function OcPdfPreview({ ocId, onClose }: { ocId: string; onClose: () => v
           <title>${data?.oc.numero ?? 'OC'}</title>
           <style>${PRINT_STYLES}</style>
         </head>
-        <body>${sheet.outerHTML}</body>
+        <body>${html}</body>
       </html>
     `);
     printWindow.document.close();
     printWindow.focus();
-    setTimeout(() => printWindow.print(), 300);
+    // Wait for image load before print
+    setTimeout(() => printWindow.print(), 500);
   };
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-stretch justify-center bg-black/60 p-0"
+      className="fixed inset-0 z-50 flex flex-col bg-black/60"
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
-      <div className="w-full h-full flex flex-col">
-        {/* Toolbar */}
-        <div className="flex items-center justify-between border-b border-line px-5 py-2.5 bg-bg-elev shadow-sm shrink-0">
-          <div>
-            <h2 className="text-[13px] font-semibold">
-              Vista previa OC · {data?.oc.numero ?? '...'}
-            </h2>
-            <p className="text-[10.5px] text-ink-3 mt-0.5">
-              {data ? `${data.proveedor?.razonSocial ?? '—'} · ${data.proyecto?.codigo ?? '—'}` : 'Cargando...'}
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={printPdf}
-              disabled={isLoading}
-              className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-line text-[11.5px] text-ink-2 hover:bg-bg-sunken disabled:opacity-50"
-            >
-              <Printer className="h-3.5 w-3.5" />
-              Imprimir
-            </button>
-            <button
-              type="button"
-              onClick={printPdf}
-              disabled={isLoading}
-              className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md bg-primary text-primary-foreground text-[11.5px] font-medium hover:opacity-90 disabled:opacity-50"
-            >
-              <Download className="h-3.5 w-3.5" />
-              Guardar PDF
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex h-8 w-8 items-center justify-center rounded text-ink-3 hover:bg-bg-sunken"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
+      {/* Toolbar */}
+      <div className="flex items-center justify-between border-b border-line px-5 py-2.5 bg-bg-elev shadow-sm shrink-0">
+        <div>
+          <h2 className="text-[13px] font-semibold">
+            Vista previa OC · {data?.oc.numero ?? '...'}
+          </h2>
+          <p className="text-[10.5px] text-ink-3 mt-0.5">
+            {data ? `${data.proveedor?.razonSocial ?? '—'} · ${data.proyecto?.codigo ?? '—'}` : 'Cargando...'}
+          </p>
         </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={printPdf}
+            disabled={isLoading}
+            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-line text-[11.5px] text-ink-2 hover:bg-bg-sunken disabled:opacity-50"
+          >
+            <Printer className="h-3.5 w-3.5" />
+            Imprimir
+          </button>
+          <button
+            type="button"
+            onClick={printPdf}
+            disabled={isLoading}
+            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md bg-primary text-primary-foreground text-[11.5px] font-medium hover:opacity-90 disabled:opacity-50"
+          >
+            <Download className="h-3.5 w-3.5" />
+            Guardar PDF
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex h-8 w-8 items-center justify-center rounded text-ink-3 hover:bg-bg-sunken"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
 
-        {/* Scroll viewport · sheet centered with padding */}
-        <div className="flex-1 overflow-auto bg-neutral-300 dark:bg-neutral-900">
-          <div className="min-h-full flex items-start justify-center py-8 px-4">
-            {isLoading || !data ? (
-              <div className="flex items-center justify-center py-20">
-                <Loader2 className="h-6 w-6 animate-spin text-primary" />
-              </div>
-            ) : (
-              <div
-                ref={sheetRef}
-                className="oc-print-sheet bg-white shadow-2xl"
-                style={{ width: '210mm', minHeight: '297mm' }}
-              >
-                <style>{PRINT_STYLES}</style>
-                <OcSheet data={data} />
-              </div>
-            )}
+      {/* Scroll viewport · sheet centrada · fondo gris claro v1 */}
+      <div className="oc-preview-scroll flex-1">
+        {isLoading || !data ? (
+          <div className="flex items-center justify-center py-20 w-full">
+            <Loader2 className="h-6 w-6 animate-spin text-primary" />
           </div>
-        </div>
+        ) : (
+          <div ref={sheetRef} className="oc-print-sheet">
+            <style>{PRINT_STYLES}</style>
+            <OcSheet data={data} />
+          </div>
+        )}
       </div>
     </div>
   );
@@ -119,13 +118,13 @@ function OcSheet({ data }: { data: NonNullable<Awaited<ReturnType<typeof api.log
 
   return (
     <div className="oc-content">
-      {/* Header · logo izq + fecha emisión der · línea roja */}
+      {/* Header · logo + fecha emisión */}
       <div className="oc-header">
         <div className="oc-logo-wrap">
-          <div className="oc-logo-mm">MM</div>
-          <div className="oc-logo-sub">
-            <span className="oc-logo-hm">HIGH METRIK</span>
-            <span className="oc-logo-eng">ENGINEERS</span>
+          <img src={EMISOR.logoUrl} alt={EMISOR.nombreComercial} className="oc-logo" />
+          <div className="oc-logo-fallback">
+            <div className="oc-logo-mm">MM</div>
+            <div className="oc-logo-sub">HIGH METRIK ENGINEERS</div>
           </div>
         </div>
         <div className="oc-header-right">
@@ -135,9 +134,8 @@ function OcSheet({ data }: { data: NonNullable<Awaited<ReturnType<typeof api.log
           </div>
         </div>
       </div>
-      <div className="oc-header-line" />
 
-      {/* Título principal */}
+      {/* Título */}
       <div className="oc-title">ORDEN DE COMPRA N° {oc.numero}</div>
 
       {/* Facturar a */}
@@ -147,55 +145,57 @@ function OcSheet({ data }: { data: NonNullable<Awaited<ReturnType<typeof api.log
           <tbody>
             <tr>
               <td className="oc-kv-label">Nombre de</td>
-              <td className="oc-kv-colon">:</td>
+              <td>:</td>
               <td>{EMISOR.razonSocial}</td>
             </tr>
             <tr>
               <td className="oc-kv-label">Direccion</td>
-              <td className="oc-kv-colon">:</td>
+              <td>:</td>
               <td>
                 {EMISOR.direccion.toUpperCase()}, {EMISOR.distrito.toUpperCase()} - {EMISOR.departamento.toUpperCase()}
               </td>
             </tr>
             <tr>
               <td className="oc-kv-label">RUC</td>
-              <td className="oc-kv-colon">:</td>
+              <td>:</td>
               <td>{EMISOR.ruc}</td>
             </tr>
             <tr>
               <td className="oc-kv-label">Telefono</td>
-              <td className="oc-kv-colon">:</td>
+              <td>:</td>
               <td>{EMISOR.telefono2}</td>
             </tr>
           </tbody>
         </table>
-        <table className="oc-kv oc-kv-right">
+        <table className="oc-kv">
           <tbody>
             <tr>
               <td className="oc-kv-label-bold">Moneda</td>
-              <td className="oc-kv-colon">:</td>
+              <td>:</td>
               <td>{oc.moneda === 'PEN' ? 'Soles' : 'Dólares'}</td>
             </tr>
             <tr>
               <td className="oc-kv-label-bold">Medio de pago</td>
-              <td className="oc-kv-colon">:</td>
+              <td>:</td>
               <td>{oc.medioPago ?? '—'}</td>
             </tr>
             <tr>
               <td className="oc-kv-label-bold">Forma de pago</td>
-              <td className="oc-kv-colon">:</td>
+              <td>:</td>
               <td>{oc.formaPago ?? '—'}</td>
             </tr>
             {oc.cotizacion && (
               <tr>
                 <td className="oc-kv-label-bold">Cotización</td>
-                <td className="oc-kv-colon">:</td>
+                <td>:</td>
                 <td>{oc.cotizacion}</td>
               </tr>
             )}
           </tbody>
         </table>
       </div>
+
+      <div className="oc-hr" />
 
       {/* Proveedor */}
       <div className="oc-section-title">Proveedor</div>
@@ -204,26 +204,26 @@ function OcSheet({ data }: { data: NonNullable<Awaited<ReturnType<typeof api.log
           <tbody>
             <tr>
               <td className="oc-kv-label">Nombre</td>
-              <td className="oc-kv-colon">:</td>
+              <td>:</td>
               <td>{proveedor?.razonSocial ?? '—'}</td>
             </tr>
             <tr>
               <td className="oc-kv-label">Direccion</td>
-              <td className="oc-kv-colon">:</td>
+              <td>:</td>
               <td>{proveedor?.domicilio ?? '—'}</td>
             </tr>
             <tr>
               <td className="oc-kv-label">RUC</td>
-              <td className="oc-kv-colon">:</td>
-              <td>{proveedor?.ruc ?? '—'}</td>
+              <td>:</td>
+              <td>{proveedor?.ruc ?? 'S/ RUC'}</td>
             </tr>
           </tbody>
         </table>
-        <table className="oc-kv oc-kv-right">
+        <table className="oc-kv">
           <tbody>
             <tr>
               <td className="oc-kv-label-bold">Lugar de entrega</td>
-              <td className="oc-kv-colon">:</td>
+              <td>:</td>
               <td>{oc.lugarEntrega ?? '—'}</td>
             </tr>
           </tbody>
@@ -241,12 +241,12 @@ function OcSheet({ data }: { data: NonNullable<Awaited<ReturnType<typeof api.log
       <table className="oc-items-table">
         <thead>
           <tr>
-            <th style={{ width: 42 }}>Item</th>
+            <th style={{ width: '14mm' }}>Item</th>
             <th>Descripción</th>
-            <th style={{ width: 50 }}>Unid.</th>
-            <th style={{ width: 56 }}>Cant.</th>
-            <th style={{ width: 90 }}>Precio Unitario</th>
-            <th style={{ width: 90 }}>Total</th>
+            <th style={{ width: '16mm' }}>Unid.</th>
+            <th style={{ width: '18mm' }}>Cant.</th>
+            <th style={{ width: '28mm' }}>Precio Unitario</th>
+            <th style={{ width: '30mm' }}>Total</th>
           </tr>
         </thead>
         <tbody>
@@ -256,16 +256,16 @@ function OcSheet({ data }: { data: NonNullable<Awaited<ReturnType<typeof api.log
             const tot = cant * pu;
             return (
               <tr key={l.id}>
-                <td className="oc-cell-center mono">{l.numero.toFixed(2).padStart(4, '0')}</td>
+                <td className="oc-cell-center">{l.numero.toFixed(2).padStart(4, '0')}</td>
                 <td className="oc-cell-desc">{l.descripcion}</td>
-                <td className="oc-cell-center mono">{l.unidad}</td>
-                <td className="oc-cell-right mono">
+                <td className="oc-cell-center">{l.unidad}</td>
+                <td className="oc-cell-right">
                   {cant.toLocaleString('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </td>
-                <td className="oc-cell-right mono">
+                <td className="oc-cell-right">
                   {monedaSym}&nbsp;{pu.toLocaleString('es-PE', { minimumFractionDigits: 5, maximumFractionDigits: 5 })}
                 </td>
-                <td className="oc-cell-right mono">
+                <td className="oc-cell-right">
                   {monedaSym}&nbsp;{tot.toLocaleString('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </td>
               </tr>
@@ -274,15 +274,17 @@ function OcSheet({ data }: { data: NonNullable<Awaited<ReturnType<typeof api.log
         </tbody>
       </table>
 
-      {/* Total · proyecto + total inc igv */}
-      <table className="oc-total-table">
+      {/* Total table separada · evita repetición multi-página */}
+      <table className="oc-items-total-table">
         <tbody>
           <tr>
-            <td className="oc-cell-proyecto">
+            <td className="oc-cell-label" colSpan={4}>
               PROYECTO: <b>{data.proyecto?.codigo ?? '—'}</b>
             </td>
-            <td className="oc-cell-total-label">TOTAL (INC. IGV)</td>
-            <td className="oc-cell-total-val mono">
+            <td className="oc-cell-right oc-cell-label" style={{ width: '28mm' }}>
+              <b>TOTAL (INC. IGV)</b>
+            </td>
+            <td className="oc-cell-right oc-cell-total" style={{ width: '30mm' }}>
               {monedaSym}&nbsp;
               {total.toLocaleString('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </td>
@@ -290,19 +292,23 @@ function OcSheet({ data }: { data: NonNullable<Awaited<ReturnType<typeof api.log
           {oc.aplicaDetraccion && Number(oc.montoDetraccion) > 0 && (
             <>
               <tr>
-                <td className="oc-cell-proyecto">Detracción SUNAT ({oc.pctDetraccion}%)</td>
-                <td className="oc-cell-total-label">DETRACCIÓN</td>
-                <td className="oc-cell-total-val mono" style={{ color: '#b45309' }}>
+                <td className="oc-cell-label" colSpan={4}>
+                  Detracción SUNAT ({oc.pctDetraccion}%)
+                </td>
+                <td className="oc-cell-right oc-cell-label">
+                  <b>DETRACCIÓN</b>
+                </td>
+                <td className="oc-cell-right" style={{ color: '#B45309' }}>
                   - {monedaSym}&nbsp;
                   {Number(oc.montoDetraccion).toLocaleString('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </td>
               </tr>
               <tr>
-                <td className="oc-cell-proyecto" />
-                <td className="oc-cell-total-label">
+                <td className="oc-cell-label" colSpan={4} />
+                <td className="oc-cell-right oc-cell-label">
                   <b>NETO A PAGAR</b>
                 </td>
-                <td className="oc-cell-total-val mono" style={{ fontSize: '11pt' }}>
+                <td className="oc-cell-right oc-cell-total">
                   {monedaSym}&nbsp;
                   {Number(oc.montoNetoPagar ?? oc.total).toLocaleString('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </td>
@@ -313,9 +319,11 @@ function OcSheet({ data }: { data: NonNullable<Awaited<ReturnType<typeof api.log
       </table>
 
       {/* Generales + Firma */}
-      <div className="oc-section-title oc-section-mt">Generales</div>
       <div className="oc-generales-block">
-        <div className="oc-generales-body">{oc.terminos ?? ''}</div>
+        <div>
+          <div className="oc-generales-title">Generales</div>
+          <div className="oc-generales-body">{oc.terminos ?? ''}</div>
+        </div>
         <div className="oc-firma-wrap">
           <div className="oc-firma-box">
             <span className="oc-firma-label">FIRMA</span>
@@ -332,18 +340,18 @@ function OcSheet({ data }: { data: NonNullable<Awaited<ReturnType<typeof api.log
 
       {/* Legal */}
       <div className="oc-legal">
-        Estimado proveedor no olvidar adjuntar los sustentos necesarios (orden de servicio/compra debidamente firmada y guía de remisión)
-        para poder presentar su factura en nuestra oficina {EMISOR.direccion}, {EMISOR.distrito} - {EMISOR.departamento} y no estar
-        sujetos a demora en su pago. Una vez confirmada la recepción de la Orden de Compra se dará por aceptada la misma si no recibimos
-        ninguna observación luego de 24 horas. Si la cantidad o especificaciones del producto no corresponde a lo solicitado, el producto
-        no será recibido y/o será devuelto al proveedor sin cargo alguno para la empresa. Al entregar la mercadería, indicar en las Guías
-        de Remisión el número de Orden de Compra correspondiente. El proveedor es responsable de entregar la factura en Mesa de Partes de
-        caso contrario no se procederá a registrar la factura para el respectivo pago. Si la venta del producto o prestación del servicio
-        se encuentra afecta a detracción, deberá indicarse el importe afecto a esta y los datos de la cuenta corriente bancaria donde se
-        debe realizar el depósito.
+        Estimado proveedor no olvidar adjuntar los sustentos necesarios (orden de servicio/compra debidamente firmada y guía de
+        remisión) para poder presentar su factura en nuestra oficina {EMISOR.direccion}, {EMISOR.distrito} - {EMISOR.departamento} y
+        no estar sujetos a demora en su pago. Una vez confirmada la recepción de la Orden de Compra se dará por aceptada la misma
+        sino recibimos ninguna observación luego de 24 horas. Si la cantidad o especificaciones del producto no corresponde a lo
+        solicitado, el producto no será recibido y/o será devuelto al proveedor sin cargo alguno para la empresa. Al entregar la
+        mercadería, indicar en las Guías de Remisión el número de Orden de Compra correspondiente. El proveedor es responsable de
+        entregar la factura en Mesa de Partes de caso contrario no se procederá a registrar la factura para el respectivo pago. Si
+        la venta del producto o prestación del servicio se encuentra afecta a detracción, deberá indicarse el importe afecto a
+        esta y los datos de la cuenta corriente bancaria donde se debe realizar el depósito.
       </div>
 
-      {/* Bottom · creado por + footer empresa */}
+      {/* Creado por + Gestión */}
       <div className="oc-bottom-group">
         <div className="oc-creado-row">
           <div className="oc-creado-block">
@@ -351,12 +359,13 @@ function OcSheet({ data }: { data: NonNullable<Awaited<ReturnType<typeof api.log
             <span className="oc-creado-val oc-creado-email">{oc.creadoPorEmail ?? EMISOR.email}</span>
           </div>
           <div className="oc-creado-block oc-creado-block-right">
-            <span className="oc-creado-lbl">Gestión:</span>
+            <span className="oc-creado-lbl">Gestion:</span>
             <span className="oc-creado-val">{oc.gestorNombre ?? 'Mario A. García Calderón'}</span>
           </div>
         </div>
+
         <div className="oc-footer-empresa">
-          {EMISOR.direccion} - {EMISOR.distrito} - {EMISOR.departamento}
+          {EMISOR.direccion} · {EMISOR.distrito} - {EMISOR.departamento}
           <br />
           Telf. {EMISOR.telefono}
           <br />
@@ -372,305 +381,286 @@ function formatDateEs(d: string): string {
   return `${Number(day)}/${Number(m)}/${y}`;
 }
 
+// ─── CSS portado de v1 styles.css ─────────────────────────────
 const PRINT_STYLES = `
+.oc-preview-scroll {
+  overflow: auto;
+  background: #EEEEE9;
+  padding: 24px;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+}
 .oc-print-sheet {
   width: 210mm;
   min-height: 297mm;
-  padding: 14mm 16mm 12mm;
-  background: white;
-  color: #1a1a1a;
-  font-family: 'Helvetica', 'Arial', sans-serif;
-  font-size: 9.5pt;
-  line-height: 1.4;
+  margin: 0 auto;
+  padding: 12mm 16mm 10mm;
+  background: #FFFFFF;
+  color: #000000;
+  font-family: 'Calibri', 'Segoe UI', 'Inter', sans-serif;
+  font-size: 10pt;
+  line-height: 1.35;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.12);
   box-sizing: border-box;
+  flex-shrink: 0;
 }
-.oc-content { display: flex; flex-direction: column; }
 
-/* Header · logo izq + fecha der */
 .oc-header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
-  padding-bottom: 5pt;
+  align-items: flex-start;
+  margin-bottom: 4mm;
 }
 .oc-logo-wrap {
+  position: relative;
+  width: 60mm;
+  height: 20mm;
   display: flex;
   align-items: center;
-  gap: 8pt;
+}
+.oc-logo {
+  max-height: 20mm;
+  max-width: 60mm;
+  object-fit: contain;
+}
+.oc-logo-fallback {
+  display: none;
+  flex-direction: column;
+  gap: 2px;
 }
 .oc-logo-mm {
   font-size: 30pt;
   font-weight: 900;
+  color: #1C1C1C;
   letter-spacing: -2pt;
-  color: #b91c1c;
-  line-height: 0.85;
-  background: #b91c1c;
-  color: white;
-  padding: 4pt 8pt;
-  border-radius: 1pt;
+  line-height: 0.9;
 }
 .oc-logo-sub {
-  display: flex;
-  flex-direction: column;
-  gap: 1pt;
-}
-.oc-logo-hm {
-  font-size: 11pt;
-  font-weight: 800;
-  letter-spacing: 1.5pt;
-  color: #1a1a1a;
-}
-.oc-logo-eng {
-  font-size: 8pt;
-  font-weight: 600;
-  letter-spacing: 4pt;
-  color: #4a5568;
-}
-.oc-header-right { text-align: right; }
-.oc-header-row { display: flex; gap: 12pt; align-items: baseline; }
-.oc-header-lbl {
-  font-size: 9pt;
-  color: #4a5568;
-  font-weight: 400;
-}
-.oc-header-val {
-  font-size: 10.5pt;
+  font-size: 6.5pt;
   font-weight: 700;
-  color: #1a1a1a;
-}
-.oc-header-line {
-  height: 2pt;
-  background: #b91c1c;
-  margin-bottom: 8pt;
+  color: #3D3D3A;
+  letter-spacing: 2pt;
+  text-transform: uppercase;
 }
 
-/* Título */
+.oc-header-right { text-align: right; font-size: 10pt; }
+.oc-header-row { display: flex; gap: 10mm; justify-content: flex-end; }
+.oc-header-lbl { font-weight: 700; }
+.oc-header-val { min-width: 24mm; text-align: right; }
+
 .oc-title {
-  font-size: 14pt;
-  font-weight: 800;
   text-align: center;
-  margin: 6pt 0 12pt;
-  letter-spacing: 0.5pt;
-  color: #1a1a1a;
-}
-
-/* Section title con barra azul izq */
-.oc-section-title {
-  font-size: 9.5pt;
   font-weight: 700;
-  color: #1a1a1a;
-  padding: 4pt 8pt;
-  margin-top: 6pt;
-  margin-bottom: 4pt;
-  background: #f1f5f9;
-  border-left: 3pt solid #1d4ed8;
+  font-size: 11pt;
+  letter-spacing: 0.5pt;
+  border-bottom: 1.2pt solid #000;
+  padding: 2mm 0;
+  margin-bottom: 3mm;
 }
-.oc-section-mt { margin-top: 12pt; }
 
-/* Tablas KV */
-.oc-two-col {
-  display: flex;
-  gap: 14pt;
-  margin-bottom: 2pt;
+.oc-section-title {
+  font-weight: 700;
+  font-size: 10pt;
+  margin: 3mm 0 1mm 0;
 }
+
+.oc-two-col {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: 8mm;
+  margin-bottom: 2mm;
+}
+
 .oc-kv {
-  font-size: 9pt;
-  flex: 1;
   border-collapse: collapse;
+  font-size: 9pt;
+  width: 100%;
 }
 .oc-kv td {
-  padding: 1.5pt 4pt;
+  padding: 0.5mm 0;
   vertical-align: top;
-  line-height: 1.35;
 }
 .oc-kv-label {
-  color: #4a5568;
-  white-space: nowrap;
-  font-weight: 500;
-  width: 70pt;
+  width: 24mm;
+  color: #1C1C1C;
+  padding-right: 2mm;
 }
 .oc-kv-label-bold {
-  color: #1a1a1a;
-  white-space: nowrap;
+  width: 32mm;
   font-weight: 700;
-  width: 80pt;
+  color: #1C1C1C;
+  padding-right: 2mm;
 }
-.oc-kv-colon { width: 6pt; color: #4a5568; }
-.oc-kv-right { padding-left: 8pt; }
+.oc-kv td:nth-child(2) {
+  width: 4mm;
+  padding-right: 2mm;
+  color: #1C1C1C;
+}
 
-/* Concepto */
+.oc-hr {
+  border-top: 0.5pt solid #D8D8D2;
+  margin: 3mm 0;
+}
+
 .oc-concepto-row {
   display: flex;
-  gap: 4pt;
-  align-items: baseline;
-  margin: 6pt 0 4pt;
-  padding: 0 8pt;
+  gap: 3mm;
+  align-items: center;
+  margin: 3mm 0 1.5mm 0;
+  font-size: 9.5pt;
 }
-.oc-concepto-lbl {
-  font-weight: 700;
-  font-size: 9pt;
-  color: #1a1a1a;
-}
-.oc-concepto-colon { color: #4a5568; }
-.oc-concepto-val { font-weight: 600; font-size: 9pt; }
+.oc-concepto-lbl { font-weight: 700; width: 22mm; }
+.oc-concepto-colon { color: #1C1C1C; }
+.oc-concepto-val { font-weight: 500; }
 
-/* Tabla ítems */
 .oc-items-table {
   width: 100%;
   border-collapse: collapse;
-  margin-top: 6pt;
-  font-size: 8.5pt;
-  border: 0.5pt solid #94a3b8;
+  border: 1pt solid #000;
+  font-size: 9pt;
+  margin-bottom: 3mm;
 }
-.oc-items-table thead { background: #f8fafc; }
-.oc-items-table thead th {
-  padding: 4pt 5pt;
-  text-align: left;
+.oc-items-table th {
+  background: #FFFFFF;
+  border: 0.5pt solid #000;
+  padding: 1.5mm 2mm;
   font-weight: 700;
-  font-size: 8.5pt;
-  color: #1a1a1a;
-  border-bottom: 0.5pt solid #94a3b8;
-  border-right: 0.5pt solid #cbd5e1;
+  text-align: center;
+  font-size: 9pt;
+  color: #000;
 }
-.oc-items-table thead th:last-child { border-right: none; }
-.oc-items-table tbody td {
-  padding: 3pt 5pt;
-  border-bottom: 0.25pt solid #e2e8f0;
-  border-right: 0.25pt solid #e2e8f0;
-  vertical-align: top;
-  line-height: 1.35;
+.oc-items-table td {
+  border: 0.5pt solid #000;
+  padding: 1.5mm 2mm;
+  vertical-align: middle;
+  color: #000;
 }
-.oc-items-table tbody td:last-child { border-right: none; }
-.oc-items-table tbody tr:last-child td { border-bottom: 0.5pt solid #94a3b8; }
 .oc-cell-center { text-align: center; }
 .oc-cell-right { text-align: right; }
-.oc-cell-desc { color: #1a1a1a; }
-.mono { font-family: 'Courier New', monospace; }
+.oc-cell-desc { font-size: 8.5pt; line-height: 1.25; }
+.oc-cell-label { text-align: left; }
+.oc-cell-total { background: #F8F7F3 !important; font-size: 10pt; }
 
-/* Tabla total */
-.oc-total-table {
+.oc-items-total-table {
   width: 100%;
   border-collapse: collapse;
+  border-left: 1pt solid #000;
+  border-right: 1pt solid #000;
+  border-bottom: 1pt solid #000;
   font-size: 9pt;
+  margin-bottom: 3mm;
+  page-break-before: avoid;
+  break-before: avoid;
+  page-break-inside: avoid;
+  break-inside: avoid;
 }
-.oc-total-table td {
-  padding: 4pt 6pt;
-  border: 0.5pt solid #94a3b8;
-}
-.oc-cell-proyecto {
-  background: #f8fafc;
-  font-weight: 500;
-}
-.oc-cell-total-label {
-  background: #fef3c7;
+.oc-items-total-table td {
+  border: 0.5pt solid #000;
+  padding: 1.5mm 2mm;
+  vertical-align: middle;
+  color: #000;
   font-weight: 700;
-  font-size: 9pt;
-  width: 110pt;
-  text-align: right;
-}
-.oc-cell-total-val {
-  background: #fef3c7;
-  font-weight: 800;
-  font-size: 10pt;
-  text-align: right;
-  width: 110pt;
+  background: #FAFAFA;
 }
 
-/* Generales + firma */
 .oc-generales-block {
-  display: flex;
-  gap: 14pt;
-  margin-top: 4pt;
-  padding: 0 8pt;
+  display: grid;
+  grid-template-columns: 1fr 60mm;
+  gap: 10mm;
+  margin: 2mm 0 2mm 0;
+  min-height: 26mm;
 }
+.oc-generales-title { font-weight: 700; font-size: 10pt; margin-bottom: 1mm; }
 .oc-generales-body {
-  flex: 1;
-  white-space: pre-wrap;
-  font-size: 8.5pt;
-  color: #2d3748;
-  line-height: 1.45;
+  font-size: 9pt;
+  white-space: pre-line;
+  line-height: 1.5;
 }
 .oc-firma-wrap {
-  width: 180pt;
-  text-align: center;
-  margin-top: 8pt;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2mm;
 }
 .oc-firma-box {
-  border-bottom: 0.75pt solid #1a1a1a;
-  height: 55pt;
+  width: 55mm;
+  height: 22mm;
+  border: 1pt dashed #6B6B68;
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: center;
-  padding: 4pt;
-  margin-bottom: 4pt;
-  background: #fafafa;
+  background: #FCFCFA;
 }
 .oc-firma-label {
-  font-size: 8pt;
-  color: #94a3b8;
+  font-size: 9pt;
+  color: #9A9A96;
   letter-spacing: 1pt;
-  font-weight: 600;
+  text-transform: uppercase;
+  font-weight: 500;
 }
 .oc-firma-caption {
-  font-size: 8pt;
-  line-height: 1.35;
-  color: #1a1a1a;
+  font-size: 7.5pt;
+  text-align: center;
+  line-height: 1.3;
+  color: #1C1C1C;
 }
 
-/* Legal */
 .oc-legal {
   font-size: 7pt;
-  color: #4a5568;
-  line-height: 1.5;
-  margin-top: 10pt;
+  line-height: 1.3;
   text-align: justify;
-  padding: 0 4pt;
+  color: #1C1C1C;
+  margin: 2mm 0 3mm 0;
 }
 
-/* Bottom · creado por + footer */
-.oc-bottom-group { margin-top: 8pt; }
 .oc-creado-row {
   display: flex;
   justify-content: space-between;
-  padding: 4pt 8pt;
-  border-top: 0.5pt solid #cbd5e1;
-}
-.oc-creado-block {
-  display: flex;
-  flex-direction: column;
-}
-.oc-creado-block-right { text-align: right; align-items: flex-end; }
-.oc-creado-lbl {
-  font-size: 7.5pt;
-  color: #4a5568;
-}
-.oc-creado-val {
+  align-items: flex-start;
+  margin: 2mm 0 3mm 0;
+  padding: 2mm 0;
+  border-top: 0.5pt solid #D8D8D2;
+  border-bottom: 0.5pt solid #D8D8D2;
   font-size: 9pt;
-  font-weight: 600;
 }
-.oc-creado-email {
-  font-family: 'Courier New', monospace;
-  font-size: 8pt;
-  color: #1d4ed8;
-}
+.oc-creado-block { display: flex; gap: 4mm; align-items: baseline; }
+.oc-creado-block-right { text-align: right; }
+.oc-creado-lbl { color: #3D3D3A; }
+.oc-creado-val { font-weight: 500; }
+.oc-creado-email { color: #2A44B8; text-decoration: underline; }
+
 .oc-footer-empresa {
-  font-size: 7.5pt;
-  color: #4a5568;
   text-align: center;
-  padding: 6pt 0 0;
-  border-top: 0.5pt solid #cbd5e1;
+  font-size: 8.5pt;
+  color: #1C1C1C;
   line-height: 1.45;
+  margin-top: 2mm;
 }
 
+/* Page breaks */
+.oc-items-table { page-break-inside: auto; break-inside: auto; }
+.oc-items-table thead { display: table-header-group; }
+.oc-items-table tr { page-break-inside: avoid; break-inside: avoid; }
+.oc-header,
+.oc-title,
+.oc-two-col,
+.oc-concepto-row,
+.oc-generales-block,
+.oc-creado-row,
+.oc-footer-empresa,
+.oc-bottom-group,
+.oc-firma-wrap { page-break-inside: avoid; break-inside: avoid; }
+.oc-legal { orphans: 3; widows: 3; }
+
 @media print {
-  body { margin: 0; padding: 0; background: white; }
-  .oc-print-sheet {
-    box-shadow: none !important;
+  html, body {
+    background: #FFFFFF !important;
     margin: 0;
-    padding: 14mm 16mm 12mm;
+    padding: 0;
   }
-  .oc-items-table { page-break-inside: auto; }
-  .oc-items-table tr { page-break-inside: avoid; page-break-after: auto; }
-  .oc-bottom-group, .oc-generales-block { page-break-inside: avoid; }
+  @page { size: A4; margin: 0; }
+  .oc-preview-scroll { background: white !important; padding: 0 !important; }
+  .oc-print-sheet { box-shadow: none !important; margin: 0; }
 }
 `;
