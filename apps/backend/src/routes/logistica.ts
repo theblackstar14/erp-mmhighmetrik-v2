@@ -228,44 +228,94 @@ router.post('/recursos/auto-clasificar', async (req, res) => {
       .where(eq(schema.indicesUnificados.vigente, true))
       .orderBy(asc(schema.indicesUnificados.codigo));
 
-    // 3. Llamar Gemini batch · chunks paralelos
-    const CHUNK = 25;
-    const PARALLEL = 6; // 6 calls concurrentes · Gemini 60 RPM permite
-    const iusSimple = ius.map((iu) => ({
+    // 3. Pre-filtrar IUs por tipo de recurso · reduce prompt + mejora precisión
+    const iusFull = ius.map((iu) => ({
       codigo: iu.codigo,
       descripcion: iu.descripcion,
       categoria: iu.categoria,
     }));
-    const chunks: typeof recursos[] = [];
-    for (let i = 0; i < recursos.length; i += CHUNK) {
-      chunks.push(recursos.slice(i, i + CHUNK));
+    const filterIusByTipo = (tipo: string): typeof iusFull => {
+      switch (tipo) {
+        case 'mano_obra':
+          return iusFull.filter((iu) =>
+            ['47', '37', '38'].includes(iu.codigo) ||
+            iu.categoria?.toLowerCase().includes('mano de obra'),
+          );
+        case 'equipo':
+        case 'herramienta':
+          return iusFull.filter((iu) =>
+            ['35', '45', '46', '48', '49'].includes(iu.codigo) ||
+            iu.categoria?.toLowerCase().includes('equipo') ||
+            iu.categoria?.toLowerCase().includes('herramienta'),
+          );
+        case 'material':
+        case 'subcontrato':
+        default:
+          // Excluir MO y financieros · materiales y misc
+          return iusFull.filter(
+            (iu) => !['47', '38', '30', '31'].includes(iu.codigo) &&
+                    !iu.categoria?.toLowerCase().includes('mano de obra'),
+          );
+      }
+    };
+
+    // Agrupar recursos por tipo
+    const porTipo = new Map<string, typeof recursos>();
+    for (const r of recursos) {
+      const arr = porTipo.get(r.tipo) ?? [];
+      arr.push(r);
+      porTipo.set(r.tipo, arr);
     }
-    console.log(`[auto-clasificar] ${recursos.length} recursos · ${chunks.length} chunks × ${CHUNK} · ${PARALLEL} paralelos`);
+
+    // Crear chunks por tipo (con su IU filtrado)
+    const CHUNK = 25;
+    const PARALLEL = 6;
+    type Tarea = {
+      recursos: typeof recursos;
+      iusFiltrados: typeof iusFull;
+      tipo: string;
+    };
+    const tareas: Tarea[] = [];
+    for (const [tipo, lista] of porTipo) {
+      const iusFiltrados = filterIusByTipo(tipo);
+      for (let i = 0; i < lista.length; i += CHUNK) {
+        tareas.push({
+          recursos: lista.slice(i, i + CHUNK),
+          iusFiltrados,
+          tipo,
+        });
+      }
+    }
+    console.log(
+      `[auto-clasificar] ${recursos.length} recursos · tipos: ${[...porTipo.keys()].map((t) => `${t}=${porTipo.get(t)?.length}`).join(' · ')} · ${tareas.length} chunks · ${PARALLEL} paralelos`,
+    );
 
     const allSugerencias: Awaited<ReturnType<typeof classifyRecursosWithGemini>> = [];
-    for (let i = 0; i < chunks.length; i += PARALLEL) {
-      const batch = chunks.slice(i, i + PARALLEL);
+    for (let i = 0; i < tareas.length; i += PARALLEL) {
+      const batch = tareas.slice(i, i + PARALLEL);
       const t0 = Date.now();
       // eslint-disable-next-line no-await-in-loop
       const results = await Promise.all(
-        batch.map((chunk) =>
+        batch.map((t) =>
           classifyRecursosWithGemini(
-            chunk.map((r) => ({
+            t.recursos.map((r) => ({
               id: r.id,
               codigo: r.codigo,
               descripcion: r.descripcion,
               unidad: r.unidad,
               tipo: r.tipo,
             })),
-            iusSimple,
+            t.iusFiltrados,
           ).catch((err) => {
-            console.error('[auto-clasificar] chunk error:', err);
+            console.error(`[auto-clasificar] chunk ${t.tipo} error:`, err);
             return [];
           }),
         ),
       );
       for (const r of results) allSugerencias.push(...r);
-      console.log(`  ✓ batch ${i / PARALLEL + 1}/${Math.ceil(chunks.length / PARALLEL)} · ${Date.now() - t0}ms`);
+      console.log(
+        `  ✓ batch ${i / PARALLEL + 1}/${Math.ceil(tareas.length / PARALLEL)} · ${Date.now() - t0}ms · tipos: ${batch.map((b) => `${b.tipo}(${b.recursos.length}, ${b.iusFiltrados.length}IU)`).join(', ')}`,
+      );
     }
     console.log(`[auto-clasificar] completado · ${allSugerencias.length} sugerencias`);
 
