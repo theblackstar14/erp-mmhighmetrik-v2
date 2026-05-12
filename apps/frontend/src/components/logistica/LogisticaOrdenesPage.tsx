@@ -146,7 +146,7 @@ export function LogisticaOrdenesPage() {
                     <div className="text-[11.5px] truncate max-w-[180px]" title={o.proveedor?.razonSocial}>
                       {o.proveedor?.razonSocial ?? '—'}
                     </div>
-                    <div className="font-mono text-[9.5px] text-ink-4">{o.proveedor?.ruc}</div>
+                    <div className="font-mono text-[9.5px] text-ink-4">{o.proveedor?.ruc ?? 'S/ RUC'}</div>
                   </td>
                   <td className="px-3 py-2 font-mono text-[10.5px] text-ink-3">{o.proyecto?.codigo ?? '—'}</td>
                   <td className="px-3 py-2 font-mono text-[10.5px] text-ink-3">{o.fechaEmision}</td>

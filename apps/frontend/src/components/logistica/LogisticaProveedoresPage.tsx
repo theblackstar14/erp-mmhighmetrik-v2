@@ -105,7 +105,7 @@ export function LogisticaProveedoresPage() {
   const openEdit = (p: Proveedor) => {
     setEditing(p);
     setForm({
-      ruc: p.ruc,
+      ruc: p.ruc ?? '',
       razonSocial: p.razonSocial,
       nombreComercial: p.nombreComercial ?? '',
       categoria: p.categoria ?? '',
@@ -169,7 +169,7 @@ export function LogisticaProveedoresPage() {
       if (!ql) return true;
       return (
         p.razonSocial.toLowerCase().includes(ql) ||
-        p.ruc.includes(ql) ||
+        (p.ruc?.includes(ql) ?? false) ||
         (p.nombreComercial?.toLowerCase().includes(ql) ?? false) ||
         (p.categoria?.toLowerCase().includes(ql) ?? false)
       );
@@ -448,7 +448,9 @@ function ProveedorCard({
           <h3 className="text-[13px] font-semibold leading-tight truncate" title={p.razonSocial}>
             {p.razonSocial}
           </h3>
-          <p className="font-mono text-[10px] text-ink-3 mt-0.5">RUC {p.ruc}</p>
+          <p className="font-mono text-[10px] text-ink-3 mt-0.5">
+            {p.ruc ? `RUC ${p.ruc}` : <span className="text-amber-600">⚠ Sin RUC (informal)</span>}
+          </p>
         </div>
         <div className="flex gap-1">
           <button type="button" onClick={onEdit} className="text-ink-3 hover:text-primary" title="Editar">

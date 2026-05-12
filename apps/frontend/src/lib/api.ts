@@ -231,7 +231,7 @@ export const api = {
       return req<{
         ordenes: Array<
           OrdenCompra & {
-            proveedor: { id: string; razonSocial: string; ruc: string } | null;
+            proveedor: { id: string; razonSocial: string; ruc: string | null } | null;
             proyecto: { id: string; codigo: string; nombre: string } | null;
           }
         >;
@@ -482,7 +482,7 @@ export type CurvaSData = {
 // F3 · Compras
 export type Proveedor = {
   id: string;
-  ruc: string;
+  ruc: string | null; // nullable · proveedores informales sin RUC
   razonSocial: string;
   nombreComercial: string | null;
   categoria: string | null;

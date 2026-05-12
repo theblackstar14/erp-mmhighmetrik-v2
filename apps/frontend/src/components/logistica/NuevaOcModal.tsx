@@ -184,7 +184,7 @@ export function NuevaOcModal({ onClose, onSuccess }: { onClose: () => void; onSu
     if (form.sinRuc || !form.proveedorRazonSocial.trim()) return [];
     const ql = form.proveedorRazonSocial.toLowerCase();
     return proveedores
-      .filter((p) => p.razonSocial.toLowerCase().includes(ql) || p.ruc.includes(ql))
+      .filter((p) => p.razonSocial.toLowerCase().includes(ql) || (p.ruc?.includes(ql) ?? false))
       .slice(0, 6);
   }, [form.proveedorRazonSocial, form.sinRuc, proveedores]);
 
@@ -194,7 +194,8 @@ export function NuevaOcModal({ onClose, onSuccess }: { onClose: () => void; onSu
     if (!p) return;
     setForm({
       ...form,
-      ruc: p.ruc,
+      ruc: p.ruc ?? '',
+      sinRuc: !p.ruc,
       proveedorRazonSocial: p.razonSocial,
       proveedorDireccion: p.domicilio ?? '',
     });
@@ -421,7 +422,7 @@ export function NuevaOcModal({ onClose, onSuccess }: { onClose: () => void; onSu
                           className="w-full text-left px-3 py-2 text-[11.5px] hover:bg-bg-sunken border-b border-line/40 last:border-b-0"
                         >
                           <div className="font-medium">{p.razonSocial}</div>
-                          <div className="font-mono text-[10px] text-ink-3 mt-0.5">RUC {p.ruc}</div>
+                          <div className="font-mono text-[10px] text-ink-3 mt-0.5">{p.ruc ? `RUC ${p.ruc}` : 'Sin RUC · informal'}</div>
                         </button>
                       ))}
                     </div>
