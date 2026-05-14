@@ -1,0 +1,53 @@
+{
+  "_descripcion": "Ground truth Cronograma Valorizado Pezantes · validado contra parser determinista cronograma-valorizado.ts",
+  "_archivo": "CRONOGRAMA VALORIZADO PEZANTES.xlsx",
+  "header": {
+    "obra": "I.E. N° 16647 HUMBERTO ALDAZ PEZANTES",
+    "ubicacion": "SAN JOSE DE LOURDES - SAN IGNACIO - CAJAMARCA",
+    "cliente": "GOBIERNO REGIONAL DE CAJAMARCA",
+    "costoBase": "Abr - 2026",
+    "diasPlazo": 360
+  },
+  "totales": {
+    "costoDirecto": 11071030.25,
+    "pctGg": 0.15,
+    "montoGg": 1660654.54,
+    "pctUtilidad": 0.15,
+    "montoUtilidad": 1660654.54,
+    "subTotal": 14392339.33,
+    "mobiliario": 638830.89,
+    "pctIgv": 0.18,
+    "montoIgv": 2705610.64,
+    "presupuestoTotal": 17736780.86,
+    "supervision": 1007449.15,
+    "valorReferencial": 19356808.63
+  },
+  "stats": {
+    "totalPartidas": 523,
+    "totalHojas": 392,
+    "totalTitulos": 131,
+    "totalMeses": 13
+  },
+  "meses": [
+    {"label": "Abr-26", "year": 2026, "month": 4, "diasDuracion": 16},
+    {"label": "May-26", "year": 2026, "month": 5, "diasDuracion": 31},
+    {"label": "Jun-26", "year": 2026, "month": 6, "diasDuracion": 30},
+    {"label": "Jul-26", "year": 2026, "month": 7, "diasDuracion": 31},
+    {"label": "Ago-26", "year": 2026, "month": 8, "diasDuracion": 31},
+    {"label": "Set-26", "year": 2026, "month": 9, "diasDuracion": 30},
+    {"label": "Oct-26", "year": 2026, "month": 10, "diasDuracion": 31},
+    {"label": "Nov-26", "year": 2026, "month": 11, "diasDuracion": 30},
+    {"label": "Dic-26", "year": 2026, "month": 12, "diasDuracion": 31},
+    {"label": "Ene-27", "year": 2027, "month": 1, "diasDuracion": 31},
+    {"label": "Feb-27", "year": 2027, "month": 2, "diasDuracion": 28},
+    {"label": "Mar-27", "year": 2027, "month": 3, "diasDuracion": 31},
+    {"label": "Abr-27", "year": 2027, "month": 4, "diasDuracion": 9}
+  ],
+  "partidas_muestra_top5_hojas": [
+    {"codigo": "01.01.01.01.01", "descripcion": "CAMPAMENTO DE OBRA C/TRIPLAY", "unidad": "Glb", "metrado": 1, "pu": 53887.6, "parcial": 53887.6},
+    {"codigo": "01.01.01.01.02", "descripcion": "CERCO PROVISIONAL C/MANTA POLIPROPILENO", "unidad": "m", "metrado": 339.37, "pu": 39.73, "parcial": 13483.17},
+    {"codigo": "01.01.01.01.03", "descripcion": "CARTEL DE OBRA", "unidad": "und", "metrado": 1, "pu": 2162.66, "parcial": 2162.66},
+    {"codigo": "01.01.01.01.04", "descripcion": "PLAN DE CONTINGENCIA SEDE CALABOZO", "unidad": "Glb", "metrado": 1, "pu": 246274.64, "parcial": 246274.64},
+    {"codigo": "01.01.01.02.01", "descripcion": "CONEXION A PUNTO DE AGUA", "unidad": "Glb", "metrado": 1, "pu": 1838.87, "parcial": 1838.87}
+  ]
+}

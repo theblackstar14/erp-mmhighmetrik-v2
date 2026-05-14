@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Check, FileSpreadsheet, FileText, Loader2, Sparkles, X } from 'lucide-react';
+import { AlertTriangle, Check, FileSpreadsheet, FileText, Loader2, ShieldCheck, Sparkles, X } from 'lucide-react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { type CvPreviewResponse, type ParsedContract, api } from '@/lib/api.js';
@@ -353,6 +353,7 @@ function ReviewXlsxStep({
   error: string;
 }) {
   const cuadre = preview.stats.cuadre;
+  const val = preview.validation;
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2 rounded-md bg-ok-soft px-3 py-2">
@@ -361,6 +362,42 @@ function ReviewXlsxStep({
           XLSX parseado · {preview.stats.totalPartidas} partidas ({preview.stats.totalHojas} hojas, {preview.stats.totalTitulos} títulos) · {preview.meses.length} meses · cuadre {cuadre ? '✓' : '✗ diff S/ ' + preview.stats.diferenciaCuadre.toFixed(2)}
         </span>
       </div>
+
+      {/* Validación cruzada LLM */}
+      {val && val.ok && (
+        <div className="flex items-center gap-2 rounded-md bg-primary-soft px-3 py-2">
+          <ShieldCheck className="h-3.5 w-3.5 text-primary" />
+          <span className="text-[11px] text-primary-ink font-medium">
+            ✓ Validación dual OK · {val.passed}/{val.totalChecks} cross-checks con IA · {preview.llmMeta?.modelUsed?.replace('claude-', '')} · {((preview.llmMeta?.latencyMs ?? 0) / 1000).toFixed(1)}s
+          </span>
+        </div>
+      )}
+      {val && !val.ok && (
+        <div className="rounded-md border border-warn/30 bg-warn-soft px-3 py-2.5 space-y-1.5">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="h-3.5 w-3.5 text-warn-ink shrink-0" />
+            <span className="text-[11.5px] font-semibold text-warn-ink">
+              {val.discrepancias.length} discrepancia(s) detectadas por IA validación cruzada
+            </span>
+          </div>
+          <div className="space-y-0.5 pl-5">
+            {val.discrepancias.map((d) => (
+              <div key={d.campo} className="text-[10.5px] text-warn-ink/90 font-mono tabular-nums">
+                <span className="font-semibold">{d.campo}</span>: deterministic={d.deterministic ?? 'null'} · IA={d.llm ?? 'null'}
+                {d.diff != null && d.diff > 0 && <span className="ml-2 text-warn-ink/70">diff {d.diff.toFixed(2)}</span>}
+              </div>
+            ))}
+          </div>
+          <p className="text-[10px] text-warn-ink/70 pl-5 mt-1">
+            Revisa Excel manualmente antes de importar · o continúa si confías en parser deterministic.
+          </p>
+        </div>
+      )}
+      {!val && preview.llmError && (
+        <div className="rounded-md border border-line bg-bg-sunken/30 px-3 py-2 text-[10.5px] text-ink-3">
+          <span className="font-medium">⊘ Validación IA no disponible:</span> {preview.llmError}
+        </div>
+      )}
 
       <Section title="Identificación">
         <div className="grid grid-cols-2 gap-3">

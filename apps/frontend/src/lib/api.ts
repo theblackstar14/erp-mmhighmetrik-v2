@@ -746,6 +746,19 @@ export type UploadValResponse = {
   warnings: string[];
 };
 
+export type CvValidation = {
+  ok: boolean;
+  totalChecks: number;
+  passed: number;
+  discrepancias: Array<{
+    campo: string;
+    deterministic: number | string | null;
+    llm: number | string | null;
+    diff: number | null;
+    tipo: 'numero' | 'texto';
+  }>;
+};
+
 export type CvPreviewResponse = {
   ok: boolean;
   sugerencia: { codigo: string };
@@ -789,6 +802,9 @@ export type CvPreviewResponse = {
     diferenciaCuadre: number;
   };
   warnings: string[];
+  validation: CvValidation | null;
+  llmMeta: { modelUsed: string; latencyMs: number; costUsd: number } | null;
+  llmError: string | null;
 };
 
 export type ValorizacionReajuste = {

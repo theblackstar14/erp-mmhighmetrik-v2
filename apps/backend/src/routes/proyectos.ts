@@ -3,6 +3,8 @@ import { proyectoCreateSchema } from '@erp/shared';
 import { and, asc, desc, eq, inArray, isNull } from 'drizzle-orm';
 import { Router } from 'express';
 import multer from 'multer';
+import { env } from '../env.js';
+import { crossValidate, parseLlmTotalesFromXlsx } from '../lib/llmTotales.js';
 import { parseMSProjectXML, tasksToPartidas } from '../lib/mppParser.js';
 import { convertMppToXml } from '../lib/mppToXml.js';
 import { requireAuth } from '../middleware/auth.js';
@@ -124,6 +126,7 @@ router.post('/', async (req, res) => {
 });
 
 // POST /api/proyectos/preview-xlsx · parse + return preview (no DB write)
+// Estrategia híbrida: deterministic + LLM totales en paralelo · cross-validation
 router.post('/preview-xlsx', upload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
@@ -131,10 +134,54 @@ router.post('/preview-xlsx', upload.single('file'), async (req, res) => {
     if (!filename.endsWith('.xlsx') && !filename.endsWith('.xls')) {
       return res.status(400).json({ error: 'Solo .xlsx/.xls soportados' });
     }
-    const parsed = parseCronogramaValorizado(req.file.buffer);
+
+    // Correr deterministic + LLM en paralelo
+    const buffer = req.file.buffer;
+    const llmEnabled = !!env.ANTHROPIC_API_KEY;
+    const [detResult, llmResult] = await Promise.allSettled([
+      Promise.resolve(parseCronogramaValorizado(buffer)),
+      llmEnabled
+        ? parseLlmTotalesFromXlsx(buffer)
+        : Promise.reject(new Error('ANTHROPIC_API_KEY no configurada')),
+    ]);
+
+    if (detResult.status === 'rejected') {
+      return res.status(500).json({ error: 'Error parser deterministic: ' + detResult.reason });
+    }
+    const parsed = detResult.value;
     if (parsed.errors.length) {
       return res.status(400).json({ error: parsed.errors.join(' · '), parsed });
     }
+
+    // Validación cruzada
+    let validation: ReturnType<typeof crossValidate> | null = null;
+    let llmMeta: { modelUsed: string; latencyMs: number; costUsd: number } | null = null;
+    if (llmResult.status === 'fulfilled') {
+      const llm = llmResult.value;
+      validation = crossValidate(
+        {
+          costoDirecto: parsed.costoDirecto,
+          pctGg: parsed.pctGg,
+          montoGg: parsed.montoGg,
+          pctUtilidad: parsed.pctUtilidad,
+          montoUtilidad: parsed.montoUtilidad,
+          subTotal: parsed.subTotal,
+          mobiliario: parsed.mobiliario,
+          pctIgv: parsed.pctIgv,
+          montoIgv: parsed.montoIgv,
+          presupuestoTotal: parsed.presupuestoTotal,
+          supervision: parsed.supervision,
+          valorReferencial: parsed.valorReferencial,
+        },
+        llm,
+      );
+      llmMeta = {
+        modelUsed: llm.modelUsed,
+        latencyMs: llm.latencyMs,
+        costUsd: llm.costUsd,
+      };
+    }
+
     // Sugerir código PG####
     const list = await db
       .select({ codigo: schema.proyectos.codigo })
@@ -183,6 +230,14 @@ router.post('/preview-xlsx', upload.single('file'), async (req, res) => {
         diferenciaCuadre: parsed.diferenciaCuadre,
       },
       warnings: parsed.warnings,
+      validation, // null si LLM no corrió · object si sí
+      llmMeta, // modelo · latencia · costo
+      llmError:
+        llmResult.status === 'rejected'
+          ? llmResult.reason instanceof Error
+            ? llmResult.reason.message
+            : String(llmResult.reason)
+          : null,
     });
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : 'Error parseando XLSX' });
