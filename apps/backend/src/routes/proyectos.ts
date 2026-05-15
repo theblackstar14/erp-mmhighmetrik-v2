@@ -7,6 +7,7 @@ import { env } from '../env.js';
 import { crossValidate, parseLlmTotalesFromXlsx } from '../lib/llmTotales.js';
 import { parseMSProjectXML, tasksToPartidas } from '../lib/mppParser.js';
 import { convertMppToXml } from '../lib/mppToXml.js';
+import { parseValorizacionLlm, validateValLlm } from '../lib/valorizacionLlm.js';
 import { requireAuth } from '../middleware/auth.js';
 
 const router = Router();
@@ -731,6 +732,8 @@ router.get('/:id/recursos', async (req, res) => {
 
 // ─── POST /api/proyectos/:id/valorizaciones · upload Excel S10 ────
 // Idempotente: si ya existe valorización con mismo número, se reemplaza.
+// Estrategia: LLM Claude Haiku 4.5 (maneja cualquier formato S10) + fallback
+// al parser determinista rico si falla cuadre o falta API key.
 router.post('/:id/valorizaciones', upload.single('file'), async (req, res) => {
   try {
     const proyectoId = req.params.id!;
@@ -739,9 +742,133 @@ router.post('/:id/valorizaciones', upload.single('file'), async (req, res) => {
     if (!filename.endsWith('.xlsx') && !filename.endsWith('.xls'))
       return res.status(400).json({ error: 'Solo .xlsx/.xls soportados' });
 
-    const parsed = parseValorizacionXlsx(req.file.buffer);
-    if (parsed.errors.length) {
-      return res.status(400).json({ error: 'Parse errors', detalles: parsed.errors, warnings: parsed.warnings });
+    // ─── Estrategia híbrida · LLM primero · fallback determinista ─
+    const useDeterministic = req.body?.forceDeterministic === 'true' || !env.ANTHROPIC_API_KEY;
+    let parsed: ReturnType<typeof parseValorizacionXlsx>;
+    let llmMeta: { modelUsed: string; latencyMs: number; costUsd: number; warnings: string[] } | null = null;
+
+    if (!useDeterministic) {
+      try {
+        const llm = await parseValorizacionLlm(req.file.buffer);
+        // Cross-validate codes con proyecto
+        const dbPartidasPre = await db
+          .select({ codigo: schema.partidas.codigo })
+          .from(schema.partidas)
+          .where(eq(schema.partidas.proyectoId, proyectoId));
+        const codesSet = new Set(dbPartidasPre.map((p) => p.codigo));
+        const validation = validateValLlm(llm, codesSet);
+        llmMeta = {
+          modelUsed: llm.modelUsed,
+          latencyMs: llm.latencyMs,
+          costUsd: llm.costUsd,
+          warnings: validation.warnings,
+        };
+
+        // Si cuadre OK y codes >= 80% match · usamos LLM
+        // Sino · fallback al S10 rico
+        if (validation.okCuadre && validation.codesMatchPct >= 80) {
+          // Adaptar shape LLM → shape ValParseResult (campos opcionales se llenan con defaults)
+          parsed = {
+            numero: llm.numero,
+            mesPeriodo: llm.mesPeriodo ?? '',
+            fechaDesde: llm.fechaDesde,
+            fechaHasta: llm.fechaHasta,
+            valorizacion: llm.montoCd,
+            reajustes: 0,
+            deducciones: 0,
+            valorizacionBruta: llm.montoCd,
+            amortizaciones: 0,
+            valorizacionNeta: llm.montoCd,
+            multa: 0,
+            montoPagarSinIgv: llm.montoCd,
+            igv: llm.montoIgv,
+            montoTotalConIgv: llm.montoCd + llm.montoIgv,
+            retencion: 0,
+            totalContratista: llm.montoCd + llm.montoIgv,
+            obra: llm.obra ?? '',
+            contratista: llm.contratista ?? '',
+            asNumero: '',
+            entidad: llm.entidad ?? '',
+            pptoBase: llm.valorReferencial ?? 0,
+            pptoContratado: llm.presupuestoTotal ?? 0,
+            fechaPresupuestoBase: llm.costoBase ?? '',
+            kCalculado: llm.kCalculado ?? null,
+            kMenosUno: llm.kCalculado != null ? llm.kCalculado - 1 : null,
+            vReal: llm.montoCd,
+            reajusteReal: null,
+            reajusteProgramado: null,
+            reajusteReconocido: null,
+            reajustePagado: null,
+            vProgramado: null,
+            vrConReajuste: null,
+            reajusteAcumAnterior: 0,
+            reajusteAcumActual: 0,
+            reajustePresente: llm.reajustePresente ?? 0,
+            condicion: null,
+            monomios: [],
+            curvaS: [],
+            partidas: llm.partidas.map((p) => ({
+              codigo: p.codigo,
+              descripcion: p.descripcion,
+              unidad: p.unidad,
+              metradoContractual: p.metradoContractual ?? 0,
+              precioUnitario: p.precioUnitario ?? 0,
+              subTotal: p.parcialContractual ?? 0,
+              metradoAnterior: p.metradoAnterior,
+              valorAnterior: p.parcialAnterior,
+              pctAnterior: p.pctAnterior > 1 ? p.pctAnterior / 100 : p.pctAnterior,
+              metradoActual: p.metradoActual,
+              valorActual: p.parcialActual,
+              pctActual: p.pctActual > 1 ? p.pctActual / 100 : p.pctActual,
+              metradoAcumulado: p.metradoAcumulado,
+              valorAcumulado: p.parcialAcumulado,
+              pctAcumulado: p.pctAcumulado > 1 ? p.pctAcumulado / 100 : p.pctAcumulado,
+              metradoSaldo: p.metradoSaldo ?? 0,
+              valorSaldo: p.parcialSaldo ?? 0,
+              pctSaldo: p.pctSaldo ?? 0,
+            })),
+            errors: [],
+            warnings: validation.warnings,
+          };
+        } else {
+          // LLM falló validación · intenta parser determinista
+          const detRes = parseValorizacionXlsx(req.file.buffer);
+          if (detRes.errors.length) {
+            return res.status(400).json({
+              error: 'Ambos parsers fallaron',
+              llm: { ...llmMeta, validation },
+              deterministic: { errors: detRes.errors, warnings: detRes.warnings },
+              hint: 'Revisa que el archivo corresponda al proyecto · que tenga estructura S10 reconocible',
+            });
+          }
+          parsed = detRes;
+          llmMeta.warnings.push('Fallback a parser determinista · LLM no cumplió validación');
+        }
+      } catch (e) {
+        // LLM threw · fallback determinista
+        const detRes = parseValorizacionXlsx(req.file.buffer);
+        if (detRes.errors.length) {
+          return res.status(400).json({
+            error: 'LLM error + parser determinista falló',
+            llmError: e instanceof Error ? e.message : String(e),
+            detalles: detRes.errors,
+            warnings: detRes.warnings,
+          });
+        }
+        parsed = detRes;
+        llmMeta = {
+          modelUsed: 'error',
+          latencyMs: 0,
+          costUsd: 0,
+          warnings: [`LLM falló: ${e instanceof Error ? e.message : String(e)} · usado parser determinista`],
+        };
+      }
+    } else {
+      // forceDeterministic o sin API key
+      parsed = parseValorizacionXlsx(req.file.buffer);
+      if (parsed.errors.length) {
+        return res.status(400).json({ error: 'Parse errors', detalles: parsed.errors, warnings: parsed.warnings });
+      }
     }
 
     // Verificar proyecto existe
@@ -912,6 +1039,8 @@ router.post('/:id/valorizaciones', upload.single('file'), async (req, res) => {
       partidasSinMatch,
       partidasSincronizadas,
       warnings: parsed.warnings,
+      llmMeta,
+      strategy: llmMeta ? 'llm' : 'deterministic',
     });
   } catch (err) {
     console.error('Error upload val:', err);
