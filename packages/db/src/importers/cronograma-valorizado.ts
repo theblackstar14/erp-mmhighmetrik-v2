@@ -38,6 +38,7 @@ export interface CvParsedPartida {
   fechaInicio: string | null; // ISO yyyy-mm-dd (primer día del primer mes con valor>0)
   fechaFin: string | null; // ISO yyyy-mm-dd (último día del último mes con valor>0)
   duracionDias: number | null; // calculado de fechaInicio..fechaFin inclusivo
+  predecessors: string[]; // códigos de predecesoras inferidas
 }
 
 function diasEntreFechas(ini: string | null, fin: string | null): number | null {
@@ -334,6 +335,7 @@ export function parseCronogramaValorizado(buffer: Buffer): CvParseResult {
       fechaInicio,
       fechaFin,
       duracionDias: diasEntreFechas(fechaInicio, fechaFin),
+      predecessors: [],
     });
 
     if (isSummary) {
@@ -450,6 +452,7 @@ export function parseCronogramaValorizado(buffer: Buffer): CvParseResult {
       fechaInicio: minProyIni,
       fechaFin: minProyIni,
       duracionDias: 0,
+      predecessors: [],
     });
     result.partidas.push({
       codigo: '00.HITO.FIN',
@@ -467,7 +470,46 @@ export function parseCronogramaValorizado(buffer: Buffer): CvParseResult {
       fechaInicio: maxProyFin,
       fechaFin: maxProyFin,
       duracionDias: 0,
+      predecessors: [],
     });
+  }
+
+  // ─── Inferir dependencias (predecessors) ──────────────────
+  // Cadena nivel 1: HITO INICIO → cap1 → cap2 → ... → capN → HITO FIN
+  // Cadena nivel 2 dentro de cada padre: sub1 → sub2 → ... (por orden codigo)
+  const hitoInicio = result.partidas.find((p) => p.codigo === '00.HITO.INICIO');
+  const hitoFin = result.partidas.find((p) => p.codigo === '00.HITO.FIN');
+  const sortByCodigo = (arr: CvParsedPartida[]) =>
+    arr.slice().sort((a, b) => a.codigo.localeCompare(b.codigo, undefined, { numeric: true }));
+
+  // Capítulos nivel 1 (excluyendo hitos)
+  const cap1 = sortByCodigo(result.partidas.filter((p) => p.nivel === 1 && !p.isMilestone));
+  if (cap1.length > 0) {
+    if (hitoInicio) cap1[0]!.predecessors = ['00.HITO.INICIO'];
+    for (let i = 1; i < cap1.length; i++) {
+      cap1[i]!.predecessors = [cap1[i - 1]!.codigo];
+    }
+    if (hitoFin) hitoFin.predecessors = [cap1[cap1.length - 1]!.codigo];
+  }
+
+  // Sub-capítulos · cada padre con 2+ hijos secuenciales por código
+  const childrenByParentAll = new Map<string, CvParsedPartida[]>();
+  for (const p of result.partidas) {
+    if (p.parentCodigo) {
+      const arr = childrenByParentAll.get(p.parentCodigo) ?? [];
+      arr.push(p);
+      childrenByParentAll.set(p.parentCodigo, arr);
+    }
+  }
+  for (const [, hijos] of childrenByParentAll) {
+    if (hijos.length < 2) continue;
+    const ordenados = sortByCodigo(hijos.filter((h) => !h.isMilestone));
+    for (let i = 1; i < ordenados.length; i++) {
+      // Solo agrega predecessor si no es nivel 1 (esos ya están encadenados arriba)
+      if (ordenados[i]!.nivel > 1) {
+        ordenados[i]!.predecessors = [ordenados[i - 1]!.codigo];
+      }
+    }
   }
 
   // Recomputar stats después de shift + hitos

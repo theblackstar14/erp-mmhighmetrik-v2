@@ -347,6 +347,7 @@ router.post('/import-xlsx', upload.single('file'), async (req, res) => {
         duracionDias: p.duracionDias,
         isSummary: p.isSummary,
         isMilestone: p.isMilestone,
+        predecessors: p.predecessors,
         orden: p.orden,
       }));
 
