@@ -1,0 +1,83 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1778126340729,
+      "tag": "0000_black_human_torch",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1778129750184,
+      "tag": "0001_sleepy_firestar",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1778134975165,
+      "tag": "0002_dazzling_steel_serpent",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1778298373367,
+      "tag": "0003_luxuriant_phantom_reporter",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1778305762003,
+      "tag": "0004_parallel_micromax",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1778370035761,
+      "tag": "0005_lame_the_spike",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1778552858068,
+      "tag": "0006_lethal_amphibian",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1778552965970,
+      "tag": "0007_mysterious_rocket_racer",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1778566946501,
+      "tag": "0008_panoramic_prodigy",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1778569773612,
+      "tag": "0009_rainy_dreadnoughts",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1778881596453,
+      "tag": "0010_thin_goblin_queen",
+      "breakpoints": true
+    }
+  ]
+}

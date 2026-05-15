@@ -330,27 +330,41 @@ router.post('/import-xlsx', upload.single('file'), async (req, res) => {
 
       const proyId = proyecto!.id;
 
-      const partidaRows = parsed.partidas.map((p) => ({
-        proyectoId: proyId,
-        codigo: p.codigo,
-        parentCodigo: p.parentCodigo,
-        nivel: p.nivel,
-        nombre: p.descripcion,
-        unidad: p.unidad,
-        cantidad: p.metrado?.toString(),
-        precioUnitario: p.precioUnitario?.toString(),
-        precioUnitarioReferencial: p.precioUnitario?.toString(),
-        precioUnitarioContractual: p.precioUnitario?.toString(),
-        presupuesto: p.parcial.toString(),
-        presupuestoContractual: p.parcial.toString(),
-        fechaInicio: p.fechaInicio,
-        fechaFin: p.fechaFin,
-        duracionDias: p.duracionDias,
-        isSummary: p.isSummary,
-        isMilestone: p.isMilestone,
-        predecessors: p.predecessors,
-        orden: p.orden,
-      }));
+      // Mapear distribución mensual: array números → [{ym: '2026-04', monto: X}]
+      // parsed.meses[k] tiene year/month → ym = 'YYYY-MM'
+      const mesYmMap = parsed.meses.map((m) => `${m.year}-${String(m.month).padStart(2, '0')}`);
+
+      const partidaRows = parsed.partidas.map((p) => {
+        const distrib: Array<{ ym: string; monto: number }> = [];
+        for (let k = 0; k < p.distribucionMensual.length; k++) {
+          const monto = p.distribucionMensual[k] ?? 0;
+          if (monto > 0 && mesYmMap[k]) {
+            distrib.push({ ym: mesYmMap[k]!, monto });
+          }
+        }
+        return {
+          proyectoId: proyId,
+          codigo: p.codigo,
+          parentCodigo: p.parentCodigo,
+          nivel: p.nivel,
+          nombre: p.descripcion,
+          unidad: p.unidad,
+          cantidad: p.metrado?.toString(),
+          precioUnitario: p.precioUnitario?.toString(),
+          precioUnitarioReferencial: p.precioUnitario?.toString(),
+          precioUnitarioContractual: p.precioUnitario?.toString(),
+          presupuesto: p.parcial.toString(),
+          presupuestoContractual: p.parcial.toString(),
+          fechaInicio: p.fechaInicio,
+          fechaFin: p.fechaFin,
+          duracionDias: p.duracionDias,
+          isSummary: p.isSummary,
+          isMilestone: p.isMilestone,
+          predecessors: p.predecessors,
+          distribucionMensual: distrib,
+          orden: p.orden,
+        };
+      });
 
       const CHUNK = 100;
       for (let i = 0; i < partidaRows.length; i += CHUNK) {
@@ -425,7 +439,7 @@ router.post('/:id/rebuild-rollup', async (req, res) => {
         }
       }
 
-      // Después: summaries bottom-up
+      // Después: summaries bottom-up · acumula presupuesto + fechas + distribución mensual
       for (const lvl of niveles) {
         for (const p of partidas.filter((x) => x.nivel === lvl && x.isSummary)) {
           const hijos = childrenByParent.get(p.codigo);
@@ -435,16 +449,25 @@ router.post('/:id/rebuild-rollup', async (req, res) => {
           let sumPresupCon = 0;
           let minIni: string | null = null;
           let maxFin: string | null = null;
+          // Acumular distribución mensual por ym
+          const distribMap = new Map<string, number>();
           for (const h of hijos) {
             sumPresup += Number(h.presupuesto ?? 0);
             sumPresupCon += Number(h.presupuestoContractual ?? 0);
             if (h.fechaInicio && (!minIni || h.fechaInicio < minIni)) minIni = h.fechaInicio;
             if (h.fechaFin && (!maxFin || h.fechaFin > maxFin)) maxFin = h.fechaFin;
+            const hDistrib = (h.distribucionMensual ?? []) as Array<{ ym: string; monto: number }>;
+            for (const d of hDistrib) {
+              distribMap.set(d.ym, (distribMap.get(d.ym) ?? 0) + d.monto);
+            }
           }
 
           const newIni = minIni ?? p.fechaInicio;
           const newFin = maxFin ?? p.fechaFin;
           const newDur = diasEntre(newIni, newFin);
+          const newDistrib = [...distribMap.entries()]
+            .map(([ym, monto]) => ({ ym, monto: Number(monto.toFixed(2)) }))
+            .sort((a, b) => a.ym.localeCompare(b.ym));
 
           // Mutar in-memory para que niveles más bajos vean valores nuevos
           p.presupuesto = sumPresup.toFixed(2);
@@ -452,6 +475,7 @@ router.post('/:id/rebuild-rollup', async (req, res) => {
           p.fechaInicio = newIni;
           p.fechaFin = newFin;
           p.duracionDias = newDur;
+          p.distribucionMensual = newDistrib;
 
           await tx
             .update(schema.partidas)
@@ -461,6 +485,7 @@ router.post('/:id/rebuild-rollup', async (req, res) => {
               fechaInicio: newIni,
               fechaFin: newFin,
               duracionDias: newDur,
+              distribucionMensual: newDistrib,
             })
             .where(eq(schema.partidas.id, p.id));
           updates++;

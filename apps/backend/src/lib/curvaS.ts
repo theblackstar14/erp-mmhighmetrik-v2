@@ -94,22 +94,39 @@ export function computeCurvaS(
     cursor.setMonth(cursor.getMonth() + 1);
   }
 
-  // Plan · distribución lineal sobre presupuestoContractual (fallback presupuesto)
+  // Plan · prioriza distribución mensual exacta del cronograma valorizado · fallback lineal
   const plan = buckets.map(() => 0);
+  // Index ym → bucket idx · 'YYYY-MM' (year+month con month 1-12)
+  const bucketByYm = new Map<string, number>();
+  buckets.forEach((b, idx) => {
+    bucketByYm.set(`${b.year}-${String(b.month + 1).padStart(2, '0')}`, idx);
+  });
+
   for (const p of leaves) {
-    const s = new Date(p.fechaInicio!);
-    const f = new Date(p.fechaFin!);
-    const presup = Number(p.presupuestoContractual ?? 0) || Number(p.presupuesto ?? 0);
-    const dias = Math.max(1, Math.round((f.getTime() - s.getTime()) / 86_400_000) + 1);
-    const costoPorDia = presup / dias;
-    buckets.forEach((b, idx) => {
-      const bs = b.start > s ? b.start : s;
-      const bf = b.finish < f ? b.finish : f;
-      if (bs <= bf) {
-        const d = Math.round((bf.getTime() - bs.getTime()) / 86_400_000) + 1;
-        plan[idx]! += d * costoPorDia;
+    const distrib = ((p as { distribucionMensual?: Array<{ ym: string; monto: number }> | null })
+      .distribucionMensual ?? []) as Array<{ ym: string; monto: number }>;
+    if (distrib.length > 0) {
+      // Distribución exacta · cronograma valorizado del expediente
+      for (const d of distrib) {
+        const idx = bucketByYm.get(d.ym);
+        if (idx != null) plan[idx]! += d.monto;
       }
-    });
+    } else {
+      // Fallback lineal · partidas sin distribución (legacy o cargadas manualmente)
+      const s = new Date(p.fechaInicio!);
+      const f = new Date(p.fechaFin!);
+      const presup = Number(p.presupuestoContractual ?? 0) || Number(p.presupuesto ?? 0);
+      const dias = Math.max(1, Math.round((f.getTime() - s.getTime()) / 86_400_000) + 1);
+      const costoPorDia = presup / dias;
+      buckets.forEach((b, idx) => {
+        const bs = b.start > s ? b.start : s;
+        const bf = b.finish < f ? b.finish : f;
+        if (bs <= bf) {
+          const d = Math.round((bf.getTime() - bs.getTime()) / 86_400_000) + 1;
+          plan[idx]! += d * costoPorDia;
+        }
+      });
+    }
   }
   const planAcum: number[] = [];
   {

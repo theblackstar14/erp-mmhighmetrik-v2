@@ -192,6 +192,9 @@ export const partidas = pgTable(
     isCritical: boolean('is_critical').default(false),
     percentComplete: decimal('percent_complete', { precision: 5, scale: 2 }).default('0'),
     predecessors: jsonb('predecessors').$type<string[]>().default([]),
+    // Distribución mensual exacta · array [{ym: '2026-04', monto: 12345.67}]
+    // Si null/vacío · curva S backend cae a distribución lineal fechaInicio/fechaFin
+    distribucionMensual: jsonb('distribucion_mensual').$type<Array<{ ym: string; monto: number }>>().default([]),
     orden: integer('orden').default(0),
   },
   (t) => ({

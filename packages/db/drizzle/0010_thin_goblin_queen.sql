@@ -1,0 +1,1 @@
+ALTER TABLE "partidas" ADD COLUMN "distribucion_mensual" jsonb DEFAULT '[]'::jsonb;
