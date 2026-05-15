@@ -91,11 +91,19 @@ export function PartidasTab({ proyectoId }: { proyectoId: string }) {
     setExpanded(new Set(partidas.filter((p) => p.nivel === 1).map((p) => p.codigo)));
 
   const totalCD = partidas.filter((p) => p.nivel === 1).reduce((s, p) => s + getBudget(p), 0);
-  // Detectar summaries con presupuesto 0 (rollup pendiente)
-  const summariesSinRollup = partidas.filter(
-    (p) => p.isSummary && getBudget(p) === 0 && partidas.some((c) => c.parentCodigo === p.codigo),
+  // Detectar summaries con presupuesto 0 O sin duracionDias (rollup pendiente)
+  const summariesSinRollup = partidas.filter((p) => {
+    if (!p.isSummary) return false;
+    if (!partidas.some((c) => c.parentCodigo === p.codigo)) return false;
+    const presupZero = getBudget(p) === 0;
+    const sinDuracion = p.fechaInicio && p.fechaFin && !p.duracionDias;
+    return presupZero || sinDuracion;
+  });
+  // Hojas con fechas pero sin duración · también pendiente
+  const hojasSinDuracion = partidas.filter(
+    (p) => !p.isSummary && p.fechaInicio && p.fechaFin && !p.duracionDias,
   );
-  const necesitaRollup = summariesSinRollup.length > 0;
+  const necesitaRollup = summariesSinRollup.length > 0 || hojasSinDuracion.length > 0;
   // Total real = suma valorizado de hojas + fallback manual avance solo si NO hay valorización
   const totalReal = partidas.reduce((s, p) => {
     if (p.valorizado) return s + Number(p.valorizado.montoAcumulado);
@@ -182,11 +190,10 @@ export function PartidasTab({ proyectoId }: { proyectoId: string }) {
         <div className="flex items-center justify-between gap-3 rounded-md border border-warn/30 bg-warn-soft px-3 py-2.5">
           <div className="flex-1 min-w-0">
             <p className="text-[12px] font-semibold text-warn-ink">
-              {summariesSinRollup.length} capítulos/sub-capítulos sin presupuesto agregado
+              {summariesSinRollup.length} capítulos sin presupuesto · {hojasSinDuracion.length} partidas sin duración
             </p>
             <p className="text-[11px] text-warn-ink/80 mt-0.5">
-              Los rubros padre (01, 01.01, etc.) muestran S/ 0 porque el Excel no los agrega.
-              Click para calcular bottom-up (suma de hijos).
+              Capítulos padres en S/ 0 · cronograma muestra 0d en algunos. Click para calcular rollup bottom-up (presupuesto + duración + fechas).
             </p>
           </div>
           <button

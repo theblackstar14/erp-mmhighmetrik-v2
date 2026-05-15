@@ -36,6 +36,15 @@ export interface CvParsedPartida {
   distribucionMensual: number[];
   fechaInicio: string | null; // ISO yyyy-mm-dd (primer día del primer mes con valor>0)
   fechaFin: string | null; // ISO yyyy-mm-dd (último día del último mes con valor>0)
+  duracionDias: number | null; // calculado de fechaInicio..fechaFin inclusivo
+}
+
+function diasEntreFechas(ini: string | null, fin: string | null): number | null {
+  if (!ini || !fin) return null;
+  const a = new Date(`${ini}T00:00:00Z`).getTime();
+  const b = new Date(`${fin}T00:00:00Z`).getTime();
+  if (!Number.isFinite(a) || !Number.isFinite(b) || b < a) return null;
+  return Math.round((b - a) / 86_400_000) + 1; // inclusivo · 1 día = mismo día
 }
 
 export interface CvParsedMes {
@@ -322,6 +331,7 @@ export function parseCronogramaValorizado(buffer: Buffer): CvParseResult {
       distribucionMensual,
       fechaInicio,
       fechaFin,
+      duracionDias: diasEntreFechas(fechaInicio, fechaFin),
     });
 
     if (isSummary) {
@@ -371,6 +381,7 @@ export function parseCronogramaValorizado(buffer: Buffer): CvParseResult {
       p.distribucionMensual = sumMensual.map((d) => d.toDecimalPlaces(2).toNumber());
       p.fechaInicio = minIni;
       p.fechaFin = maxFin;
+      p.duracionDias = diasEntreFechas(minIni, maxFin);
     }
   }
   void byCodigo; // map ya construido para extensiones futuras

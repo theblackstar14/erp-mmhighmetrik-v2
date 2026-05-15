@@ -344,6 +344,7 @@ router.post('/import-xlsx', upload.single('file'), async (req, res) => {
         presupuestoContractual: p.parcial.toString(),
         fechaInicio: p.fechaInicio,
         fechaFin: p.fechaFin,
+        duracionDias: p.duracionDias,
         isSummary: p.isSummary,
         orden: p.orden,
       }));
@@ -393,10 +394,35 @@ router.post('/:id/rebuild-rollup', async (req, res) => {
     }
     void byCodigo;
 
+    // Helper · días entre fechas ISO (inclusivo)
+    const diasEntre = (ini: string | null, fin: string | null): number | null => {
+      if (!ini || !fin) return null;
+      const a = new Date(`${ini}T00:00:00Z`).getTime();
+      const b = new Date(`${fin}T00:00:00Z`).getTime();
+      if (!Number.isFinite(a) || !Number.isFinite(b) || b < a) return null;
+      return Math.round((b - a) / 86_400_000) + 1;
+    };
+
     // Bottom-up: nivel mayor → menor
     const niveles = [...new Set(partidas.map((p) => p.nivel))].sort((a, b) => b - a);
     let updates = 0;
     await db.transaction(async (tx) => {
+      // Primero: hojas con fechas pero sin duracionDias · backfill
+      for (const p of partidas) {
+        if (!p.isSummary && p.fechaInicio && p.fechaFin && !p.duracionDias) {
+          const d = diasEntre(p.fechaInicio, p.fechaFin);
+          if (d != null) {
+            p.duracionDias = d;
+            await tx
+              .update(schema.partidas)
+              .set({ duracionDias: d })
+              .where(eq(schema.partidas.id, p.id));
+            updates++;
+          }
+        }
+      }
+
+      // Después: summaries bottom-up
       for (const lvl of niveles) {
         for (const p of partidas.filter((x) => x.nivel === lvl && x.isSummary)) {
           const hijos = childrenByParent.get(p.codigo);
@@ -413,19 +439,25 @@ router.post('/:id/rebuild-rollup', async (req, res) => {
             if (h.fechaFin && (!maxFin || h.fechaFin > maxFin)) maxFin = h.fechaFin;
           }
 
+          const newIni = minIni ?? p.fechaInicio;
+          const newFin = maxFin ?? p.fechaFin;
+          const newDur = diasEntre(newIni, newFin);
+
           // Mutar in-memory para que niveles más bajos vean valores nuevos
           p.presupuesto = sumPresup.toFixed(2);
           p.presupuestoContractual = sumPresupCon.toFixed(2);
-          if (minIni) p.fechaInicio = minIni;
-          if (maxFin) p.fechaFin = maxFin;
+          p.fechaInicio = newIni;
+          p.fechaFin = newFin;
+          p.duracionDias = newDur;
 
           await tx
             .update(schema.partidas)
             .set({
               presupuesto: sumPresup.toFixed(2),
               presupuestoContractual: sumPresupCon.toFixed(2),
-              fechaInicio: minIni ?? p.fechaInicio,
-              fechaFin: maxFin ?? p.fechaFin,
+              fechaInicio: newIni,
+              fechaFin: newFin,
+              duracionDias: newDur,
             })
             .where(eq(schema.partidas.id, p.id));
           updates++;
