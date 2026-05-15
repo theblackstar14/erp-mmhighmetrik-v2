@@ -31,6 +31,7 @@ export interface CvParsedPartida {
   precioUnitario: number | null;
   parcial: number;
   isSummary: boolean;
+  isMilestone: boolean;
   orden: number;
   // Distribución mensual (idx 0..N-1) · solo hojas
   distribucionMensual: number[];
@@ -327,6 +328,7 @@ export function parseCronogramaValorizado(buffer: Buffer): CvParseResult {
       precioUnitario,
       parcial,
       isSummary,
+      isMilestone: false,
       orden: orden++,
       distribucionMensual,
       fechaInicio,
@@ -385,6 +387,92 @@ export function parseCronogramaValorizado(buffer: Buffer): CvParseResult {
     }
   }
   void byCodigo; // map ya construido para extensiones futuras
+
+  // ─── Auto-detectar wrapper proyecto · shift -1 ────────────
+  // Excel S10/CAPECO PE usa nivel 1 = nombre obra (wrapper artificial).
+  // Si hay solo 1 partida nivel 1 · la descartamos y subimos hijos un nivel.
+  const nivel1Partidas = result.partidas.filter((p) => p.nivel === 1);
+  if (nivel1Partidas.length === 1) {
+    const wrapper = nivel1Partidas[0]!;
+    const obraNorm = (result.obra ?? '').toUpperCase().trim();
+    const wrapNorm = wrapper.descripcion.toUpperCase().trim();
+    // Verificar match con obra header · si no match · descartar igual
+    // (un solo nivel 1 = wrapper por convención S10 peruana)
+    const isWrapper =
+      wrapper.isSummary &&
+      (obraNorm === '' || obraNorm === wrapNorm || obraNorm.includes(wrapNorm) || wrapNorm.includes(obraNorm));
+
+    if (isWrapper) {
+      const wrapperCodigo = wrapper.codigo; // ej "01"
+      const prefix = `${wrapperCodigo}.`;
+      result.partidas = result.partidas
+        .filter((p) => p.codigo !== wrapperCodigo)
+        .map((p) => ({
+          ...p,
+          codigo: p.codigo.startsWith(prefix) ? p.codigo.slice(prefix.length) : p.codigo,
+          parentCodigo:
+            p.parentCodigo === wrapperCodigo
+              ? null
+              : p.parentCodigo?.startsWith(prefix)
+                ? p.parentCodigo.slice(prefix.length)
+                : p.parentCodigo,
+          nivel: p.nivel - 1,
+        }));
+      result.warnings.push(`Wrapper proyecto "${wrapper.descripcion}" descartado · jerarquía shift -1`);
+    }
+  }
+
+  // ─── Sintetizar hitos INICIO + FIN ────────────────────────
+  // Pezantes y cronogramas valorizados no traen hitos · agregar artificiales
+  // basados en fechaInicio/fechaFin min/max de hojas
+  let minProyIni: string | null = null;
+  let maxProyFin: string | null = null;
+  for (const p of result.partidas) {
+    if (p.isSummary) continue;
+    if (p.fechaInicio && (!minProyIni || p.fechaInicio < minProyIni)) minProyIni = p.fechaInicio;
+    if (p.fechaFin && (!maxProyFin || p.fechaFin > maxProyFin)) maxProyFin = p.fechaFin;
+  }
+  if (minProyIni && maxProyFin) {
+    const baseOrden = result.partidas.reduce((m, p) => Math.max(m, p.orden), 0);
+    result.partidas.unshift({
+      codigo: '00.HITO.INICIO',
+      parentCodigo: null,
+      nivel: 1,
+      descripcion: 'INICIO DE OBRA',
+      unidad: null,
+      metrado: null,
+      precioUnitario: null,
+      parcial: 0,
+      isSummary: false,
+      isMilestone: true,
+      orden: -2,
+      distribucionMensual: new Array(result.meses.length).fill(0),
+      fechaInicio: minProyIni,
+      fechaFin: minProyIni,
+      duracionDias: 0,
+    });
+    result.partidas.push({
+      codigo: '00.HITO.FIN',
+      parentCodigo: null,
+      nivel: 1,
+      descripcion: 'FIN DE OBRA',
+      unidad: null,
+      metrado: null,
+      precioUnitario: null,
+      parcial: 0,
+      isSummary: false,
+      isMilestone: true,
+      orden: baseOrden + 1,
+      distribucionMensual: new Array(result.meses.length).fill(0),
+      fechaInicio: maxProyFin,
+      fechaFin: maxProyFin,
+      duracionDias: 0,
+    });
+  }
+
+  // Recomputar stats después de shift + hitos
+  result.totalPartidasHoja = result.partidas.filter((p) => !p.isSummary && !p.isMilestone).length;
+  result.totalTitulos = result.partidas.filter((p) => p.isSummary).length;
 
   // ─── Totales bottom ─────────────────────────────────────────
   const findTotal = (kw: string): unknown[] | null => findRowByDesc(rows, kw);
