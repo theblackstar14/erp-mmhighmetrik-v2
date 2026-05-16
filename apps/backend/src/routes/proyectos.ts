@@ -299,6 +299,24 @@ router.post('/import-xlsx', upload.single('file'), async (req, res) => {
     const fechaFin = lastMes?.fechaFin ?? null;
     const fechaInicio = parsed.fechaBase ?? parsed.meses[0]?.fechaInicio ?? null;
 
+    // Detectar indirectos embebidos · cronograma contractual sin GG/Util desglosado
+    // Si parser NO detectó pctGg ni pctUtilidad · asume 0 (embebidos en CD)
+    // NO usa 15% default · sería invención
+    const cd = parsed.costoDirecto ?? 0;
+    const pctGgFinal = parsed.pctGg ?? 0;
+    const pctUtilFinal = parsed.pctUtilidad ?? 0;
+    const pctIgvFinal = parsed.pctIgv ?? 0.18;
+    const indirectosEmbebidos = !parsed.pctGg && !parsed.pctUtilidad && !parsed.montoGg && !parsed.montoUtilidad;
+
+    // Derivar montos si parser no los extrajo
+    const subtotalCalc = parsed.subTotal ?? cd * (1 + pctGgFinal + pctUtilFinal);
+    const mobiliarioCalc = parsed.mobiliario ?? 0;
+    const igvBase = subtotalCalc + mobiliarioCalc;
+    const montoIgvCalc = parsed.montoIgv ?? igvBase * pctIgvFinal;
+    const presupTotalCalc = parsed.presupuestoTotal ?? igvBase + montoIgvCalc;
+    const supervisionCalc = parsed.supervision ?? 0;
+    const vrCalc = parsed.valorReferencial ?? presupTotalCalc + supervisionCalc;
+
     const proyectoId = await db.transaction(async (tx) => {
       const [proyecto] = await tx
         .insert(schema.proyectos)
@@ -310,17 +328,17 @@ router.post('/import-xlsx', upload.single('file'), async (req, res) => {
           tipo: 'Edificación',
           modalidad: 'suma_alzada',
           status: 'adjudicado',
-          costoDirecto: parsed.costoDirecto?.toString() ?? '0',
-          costoDirectoSinIgv: parsed.costoDirecto?.toString() ?? '0',
+          costoDirecto: cd.toString(),
+          costoDirectoSinIgv: cd.toString(),
           igvEnXml: false,
-          pctGg: (parsed.pctGg ?? 0.15).toString(),
-          pctUtilidad: (parsed.pctUtilidad ?? 0.15).toString(),
-          pctIgv: (parsed.pctIgv ?? 0.18).toString(),
-          montoSubtotal: parsed.subTotal?.toString() ?? '0',
-          montoIgv: parsed.montoIgv?.toString() ?? '0',
-          montoReferencial: parsed.valorReferencial?.toString() ?? '0',
-          montoContractual: parsed.presupuestoTotal?.toString() ?? '0',
-          montoVigente: parsed.presupuestoTotal?.toString() ?? '0',
+          pctGg: pctGgFinal.toString(),
+          pctUtilidad: pctUtilFinal.toString(),
+          pctIgv: pctIgvFinal.toString(),
+          montoSubtotal: subtotalCalc.toFixed(2),
+          montoIgv: montoIgvCalc.toFixed(2),
+          montoReferencial: vrCalc.toFixed(2),
+          montoContractual: presupTotalCalc.toFixed(2),
+          montoVigente: presupTotalCalc.toFixed(2),
           fechaInicio,
           fechaFin,
           diasPlazo: parsed.diasPlazo,
