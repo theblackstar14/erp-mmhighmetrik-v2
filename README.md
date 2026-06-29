@@ -116,7 +116,6 @@ Email:    admin@mmhighmetrik.com
 Password: admin
 ```
 
-⚠ Cambialo después del primer login (próxima iteración: tab perfil).
 
 ## Diseño responsive
 
