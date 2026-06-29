@@ -68,6 +68,7 @@ export function GanttViewer({ partidas, height = 700 }: Props) {
   const [search, setSearch] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [hover, setHover] = useState<string | null>(null);
+  const [depMode, setDepMode] = useState<'none' | 'active' | 'all'>('active'); // líneas: ninguna/activas(hover-sel)/todas
   const [collapsed, setCollapsed] = useState<Set<string>>(() => {
     return new Set(partidas.filter((p) => p.nivel >= 3).map((p) => p.codigo));
   });
@@ -87,6 +88,22 @@ export function GanttViewer({ partidas, height = 700 }: Props) {
     // 2+ hitos · primero al tope · resto al final ordenados por fecha
     return [hitos[0]!, ...noHitos, ...hitos.slice(1)];
   }, [partidas]);
+
+  // Relaciones · preds (declaradas) + sucs (inversa) por código
+  const rel = useMemo(() => {
+    const m = new Map<string, { preds: string[]; sucs: string[] }>();
+    for (const p of validPartidas) m.set(p.codigo, { preds: (p.predecessors ?? []).filter(Boolean), sucs: [] });
+    for (const p of validPartidas) for (const pred of p.predecessors ?? []) { const e = m.get(pred); if (e) e.sucs.push(p.codigo); }
+    return m;
+  }, [validPartidas]);
+
+  // Foco al hover · códigos relacionados (hover + sus preds + sus sucs) para atenuar el resto
+  const relatedSet = useMemo(() => {
+    if (!hover) return null;
+    const r = rel.get(hover);
+    if (!r) return null;
+    return new Set<string>([hover, ...r.preds, ...r.sucs]);
+  }, [hover, rel]);
 
   // Aplicar collapse + filtros
   const visiblePartidas = useMemo(() => {
@@ -187,6 +204,16 @@ export function GanttViewer({ partidas, height = 700 }: Props) {
     }, 0);
     const projectFinishDay = (projectFinish - minMs) / 86_400_000;
 
+    // Índice predecesor→sucesores (O(1)) · evita filter dentro del loop (era O(n²))
+    const sucesoresPorCodigo = new Map<string, typeof validPartidas>();
+    for (const o of validPartidas) {
+      for (const pred of o.predecessors ?? []) {
+        const arr = sucesoresPorCodigo.get(pred) ?? [];
+        arr.push(o);
+        sucesoresPorCodigo.set(pred, arr);
+      }
+    }
+
     // Calc por partida (hojas con fechas)
     for (const p of validPartidas) {
       if (!p.fechaInicio || !p.fechaFin) continue;
@@ -204,7 +231,7 @@ export function GanttViewer({ partidas, height = 700 }: Props) {
         lateFinish = ef;
       }
       // Holgura libre: dist hasta primer sucesor
-      const sucesores = validPartidas.filter((o) => (o.predecessors ?? []).includes(p.codigo));
+      const sucesores = sucesoresPorCodigo.get(p.codigo) ?? [];
       let floatFree = projectFinishDay - ef;
       for (const suc of sucesores) {
         if (!suc.fechaInicio) continue;
@@ -363,10 +390,23 @@ export function GanttViewer({ partidas, height = 700 }: Props) {
         const idx = order.indexOf(zoom);
         if (idx > 0) setZoom(order[idx - 1]!);
       }
+      // [ → primera predecesora · ] → primera sucesora del item seleccionado
+      if ((e.key === '[' || e.key === ']') && selectedId) {
+        const cur = validPartidas.find((p) => p.id === selectedId);
+        const targetCod = cur ? (e.key === '[' ? rel.get(cur.codigo)?.preds[0] : rel.get(cur.codigo)?.sucs[0]) : undefined;
+        if (!targetCod) return;
+        e.preventDefault();
+        const target = validPartidas.find((p) => p.codigo === targetCod);
+        if (target) {
+          setSelectedId(target.id);
+          const vi = visiblePartidas.findIndex((p) => p.id === target.id);
+          if (vi >= 0) rowVirtualizer.scrollToIndex(vi, { align: 'center' });
+        }
+      }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [selectedId, visiblePartidas, rowVirtualizer, zoom]);
+  }, [selectedId, visiblePartidas, validPartidas, rel, rowVirtualizer, zoom]);
 
   if (!dateRange) {
     return (
@@ -425,6 +465,23 @@ export function GanttViewer({ partidas, height = 700 }: Props) {
             />
             <span className="text-[11px] text-ink-2">Solo críticas</span>
           </label>
+          {/* Líneas de dependencia */}
+          <div className="flex items-center gap-1">
+            <span className="text-[10px] uppercase tracking-wider text-ink-4">Deps</span>
+            <div className="flex rounded-md border border-line overflow-hidden">
+              {([['none', 'Ninguna'], ['active', 'Activas'], ['all', 'Todas']] as const).map(([v, l]) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => setDepMode(v)}
+                  className={cn('px-2 py-1 text-[11px] font-medium transition-colors', depMode === v ? 'bg-primary text-primary-foreground' : 'bg-bg-elev text-ink-3 hover:bg-bg-sunken')}
+                  title={v === 'active' ? 'Solo las del item en hover/selección' : v === 'all' ? 'Todas las dependencias' : 'Ocultar líneas'}
+                >
+                  {l}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
         <div className="flex items-center gap-2">
           {/* Búsqueda */}
@@ -481,12 +538,13 @@ export function GanttViewer({ partidas, height = 700 }: Props) {
           <div className="flex shrink-0 border-b border-line bg-bg-sunken" style={{ height: HEADER_HEIGHT }}>
             <div
               className="shrink-0 grid items-center gap-2 px-3 border-r border-line"
-              style={{ width: LEFT_WIDTH, gridTemplateColumns: '60px 1fr 50px 36px' }}
+              style={{ width: LEFT_WIDTH, gridTemplateColumns: '52px 1fr 38px 26px 54px' }}
             >
               <span className="font-mono text-[9.5px] uppercase tracking-wider text-ink-4 font-medium">WBS</span>
               <span className="font-mono text-[9.5px] uppercase tracking-wider text-ink-4 font-medium">Tarea</span>
               <span className="font-mono text-[9.5px] uppercase tracking-wider text-ink-4 font-medium text-right">Dur.</span>
               <span className="font-mono text-[9.5px] uppercase tracking-wider text-ink-4 font-medium text-right">%</span>
+              <span className="font-mono text-[9.5px] uppercase tracking-wider text-ink-4 font-medium text-right" title="Predecesoras → Sucesoras">Rel</span>
             </div>
             <TimelineHeader
               ticks={ticks}
@@ -524,8 +582,8 @@ export function GanttViewer({ partidas, height = 700 }: Props) {
                 leftWidth={LEFT_WIDTH}
                 totalWidth={totalWidth}
                 totalHeight={rowVirtualizer.getTotalSize()}
-                selectedCodigo={selected?.codigo ?? null}
-                hoverCodigo={hover}
+                depMode={depMode}
+                focusCodigo={hover ?? selected?.codigo ?? null}
               />
 
               {rowVirtualizer.getVirtualItems().map((vrow) => {
@@ -544,14 +602,21 @@ export function GanttViewer({ partidas, height = 700 }: Props) {
                 const pctValRow = p.valorizado ? Number(p.valorizado.pctAvanceReal) : 0;
                 const pctMppRow = Number(p.percentComplete ?? 0);
                 const pctRealRow = pctValRow > 0 ? pctValRow : pctMppRow;
+                const r = rel.get(p.codigo);
+                const nPred = r?.preds.length ?? 0;
+                const nSuc = r?.sucs.length ?? 0;
+                const dimmed = !!relatedSet && !relatedSet.has(p.codigo);
                 const tooltipParts = [
                   `${p.codigo} · ${p.nombre}`,
                   `${fmtSpanish(p.fechaInicio)} → ${fmtSpanish(p.fechaFin)} (${p.duracionDias ?? 0}d)`,
                   pctRealRow > 0 ? `Avance: ${pctRealRow.toFixed(1)}%` : 'Sin avance',
                   p.isCritical ? '⚠ Crítica' : '',
                   p.isMilestone ? '◆ Hito' : '',
+                  nPred > 0 ? `Predecesoras: ${r!.preds.slice(0, 6).join(', ')}` : '',
+                  nSuc > 0 ? `Sucesoras: ${r!.sucs.slice(0, 6).join(', ')}` : '',
                   p.valorizado ? `Valorizado: ${fmtPEN(Number(p.valorizado.montoAcumulado))}` : '',
                 ].filter(Boolean).join('\n');
+                const ariaLabel = `${p.codigo} ${p.nombre}. ${nPred ? `Depende de ${r!.preds.join(', ')}. ` : ''}${nSuc ? `Precede a ${r!.sucs.join(', ')}.` : ''}`;
 
                 return (
                   <div
@@ -560,11 +625,13 @@ export function GanttViewer({ partidas, height = 700 }: Props) {
                     onMouseLeave={() => setHover(null)}
                     onClick={() => setSelectedId(p.id)}
                     title={tooltipParts}
+                    aria-label={ariaLabel}
                     className={cn(
-                      'absolute left-0 flex border-b border-line/40 cursor-pointer transition-colors',
+                      'absolute left-0 flex border-b border-line/40 cursor-pointer transition-all',
                       isSel && 'bg-primary-soft',
                       !isSel && isHov && 'bg-bg-sunken/60',
                       !isSel && !isHov && p.nivel === 1 && 'bg-bg-sunken/40',
+                      dimmed && 'opacity-35',
                     )}
                     style={{
                       top: vrow.start,
@@ -572,10 +639,10 @@ export function GanttViewer({ partidas, height = 700 }: Props) {
                       width: LEFT_WIDTH + totalWidth,
                     }}
                   >
-                    {/* Left · 4 columnas */}
+                    {/* Left · 5 columnas (incluye relaciones) */}
                     <div
                       className="shrink-0 grid items-center gap-2 px-3 border-r border-line/60"
-                      style={{ width: LEFT_WIDTH, gridTemplateColumns: '60px 1fr 50px 36px' }}
+                      style={{ width: LEFT_WIDTH, gridTemplateColumns: '52px 1fr 38px 26px 54px' }}
                     >
                       <div className="flex items-center gap-0.5" style={{ paddingLeft: indent }}>
                         {has ? (
@@ -616,6 +683,11 @@ export function GanttViewer({ partidas, height = 700 }: Props) {
                       >
                         {Number(p.percentComplete ?? 0).toFixed(0)}%
                       </span>
+                      {/* Relaciones · pred azul → suc verde · ver sin abrir panel */}
+                      <div className="flex items-center justify-end gap-1 font-mono text-[9px]" title={`${nPred ? `Predecesoras: ${r!.preds.join(', ')}` : 'Sin predecesoras'}\n${nSuc ? `Sucesoras: ${r!.sucs.join(', ')}` : 'Sin sucesoras'}`}>
+                        {nPred > 0 && <span className="text-primary font-semibold">{nPred}→</span>}
+                        {nSuc > 0 && <span className="text-emerald-600 font-semibold">→{nSuc}</span>}
+                      </div>
                     </div>
 
                     {/* Right · timeline svg per row */}
@@ -1062,7 +1134,8 @@ function GanttDetailsPanel({
   );
 }
 
-/* ─── DependencyOverlay · líneas FS entre tareas visibles ─── */
+/* ─── DependencyOverlay · líneas FS · azul=predecesora verde=sucesora del foco ─── */
+type DepKind = 'pred' | 'suc' | 'normal';
 function DependencyOverlay({
   visiblePartidas,
   virtualItems,
@@ -1070,8 +1143,8 @@ function DependencyOverlay({
   leftWidth,
   totalWidth,
   totalHeight,
-  selectedCodigo,
-  hoverCodigo,
+  depMode,
+  focusCodigo,
 }: {
   visiblePartidas: Partida[];
   virtualItems: { index: number; start: number; size: number }[];
@@ -1079,10 +1152,11 @@ function DependencyOverlay({
   leftWidth: number;
   totalWidth: number;
   totalHeight: number;
-  selectedCodigo: string | null;
-  hoverCodigo: string | null;
+  depMode: 'none' | 'active' | 'all';
+  focusCodigo: string | null;
 }) {
-  // Map codigo → posición vertical en visible array
+  if (depMode === 'none') return null;
+
   const codigoToVRow = new Map<string, { yMid: number; xStart: number; xEnd: number }>();
   virtualItems.forEach((vi) => {
     const p = visiblePartidas[vi.index];
@@ -1094,7 +1168,7 @@ function DependencyOverlay({
     });
   });
 
-  const lines: { d: string; key: string; highlight: boolean }[] = [];
+  const lines: { d: string; key: string; kind: DepKind }[] = [];
   virtualItems.forEach((vi) => {
     const p = visiblePartidas[vi.index];
     if (!p || !p.predecessors) return;
@@ -1103,49 +1177,43 @@ function DependencyOverlay({
     p.predecessors.forEach((predCodigo) => {
       const pred = codigoToVRow.get(predCodigo);
       if (!pred) return;
-      // Path: predEnd → 8px right → down/up to current → currentStart
-      const x1 = pred.xEnd;
-      const y1 = pred.yMid;
-      const x2 = here.xStart;
-      const y2 = here.yMid;
-      const midX = Math.max(x1 + 8, x2 - 8);
-      const d = `M ${x1} ${y1} L ${midX} ${y1} L ${midX} ${y2} L ${x2 - 4} ${y2}`;
-      const isHighlight =
-        p.codigo === selectedCodigo ||
-        predCodigo === selectedCodigo ||
-        p.codigo === hoverCodigo ||
-        predCodigo === hoverCodigo;
-      lines.push({ d, key: `${predCodigo}→${p.codigo}`, highlight: isHighlight });
+      // Dirección respecto al foco: foco→sucesora (verde) · predecesora→foco (azul)
+      const kind: DepKind =
+        focusCodigo == null ? 'normal' : predCodigo === focusCodigo ? 'suc' : p.codigo === focusCodigo ? 'pred' : 'normal';
+      // En modo "activas" solo dibujamos las que tocan el foco
+      if (depMode === 'active' && kind === 'normal') return;
+      const x1 = pred.xEnd, y1 = pred.yMid, x2 = here.xStart, y2 = here.yMid;
+      let d: string;
+      if (x2 >= x1 + 12) {
+        // hay hueco temporal entre tareas · vertical en el hueco (no toca barras)
+        const midX = (x1 + x2) / 2;
+        d = `M ${x1} ${y1} L ${midX} ${y1} L ${midX} ${y2} L ${x2 - 4} ${y2}`;
+      } else {
+        // se solapan en el tiempo · rodea por el canal entre filas · verticales pegadas al borde de cada barra
+        const dir = y2 >= y1 ? 1 : -1;
+        const yg = y2 - dir * (ROW_HEIGHT / 2 - 1); // canal del lado de la sucesora
+        d = `M ${x1} ${y1} L ${x1 + 8} ${y1} L ${x1 + 8} ${yg} L ${x2 - 8} ${yg} L ${x2 - 8} ${y2} L ${x2 - 4} ${y2}`;
+      }
+      lines.push({ d, key: `${predCodigo}→${p.codigo}`, kind });
     });
   });
 
   if (lines.length === 0) return null;
+  const COLOR: Record<DepKind, string> = { pred: 'hsl(var(--primary))', suc: 'hsl(160 60% 40%)', normal: 'hsl(var(--ink-4))' };
 
   return (
-    <svg
-      width={totalWidth}
-      height={totalHeight}
-      className="absolute pointer-events-none"
-      style={{ left: leftWidth, top: 0, zIndex: 5 }}
-    >
+    <svg width={totalWidth} height={totalHeight} className="absolute pointer-events-none" style={{ left: leftWidth, top: 0, zIndex: 5 }}>
       <defs>
-        <marker id="dep-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto">
-          <path d="M 0 0 L 10 5 L 0 10 z" fill="hsl(var(--ink-3))" />
-        </marker>
-        <marker id="dep-arrow-hl" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto">
-          <path d="M 0 0 L 10 5 L 0 10 z" fill="hsl(var(--primary))" />
-        </marker>
+        <marker id="dep-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="hsl(var(--ink-4))" /></marker>
+        <marker id="dep-arrow-pred" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="hsl(var(--primary))" /></marker>
+        <marker id="dep-arrow-suc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="hsl(160 60% 40%)" /></marker>
       </defs>
-      {lines.map((l) => (
-        <path
-          key={l.key}
-          d={l.d}
-          fill="none"
-          stroke={l.highlight ? 'hsl(var(--primary))' : 'hsl(var(--ink-4))'}
-          strokeWidth={l.highlight ? 1.5 : 0.7}
-          strokeOpacity={l.highlight ? 0.95 : 0.45}
-          markerEnd={l.highlight ? 'url(#dep-arrow-hl)' : 'url(#dep-arrow)'}
-        />
+      {/* normales primero (debajo) · resaltadas encima */}
+      {lines.filter((l) => l.kind === 'normal').map((l) => (
+        <path key={l.key} d={l.d} fill="none" stroke={COLOR.normal} strokeWidth={0.7} strokeOpacity={0.4} markerEnd="url(#dep-arrow)" />
+      ))}
+      {lines.filter((l) => l.kind !== 'normal').map((l) => (
+        <path key={l.key} d={l.d} fill="none" stroke={COLOR[l.kind]} strokeWidth={1.8} strokeOpacity={0.95} markerEnd={l.kind === 'suc' ? 'url(#dep-arrow-suc)' : 'url(#dep-arrow-pred)'} />
       ))}
     </svg>
   );

@@ -11,6 +11,7 @@ import {
   primaryKey,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
   varchar,
 } from 'drizzle-orm/pg-core';
@@ -19,9 +20,25 @@ import {
 export const userRoleEnum = pgEnum('user_role', ['admin', 'gerente', 'residente', 'contadora', 'almacen']);
 export const projectStatusEnum = pgEnum('project_status', ['licitacion', 'adjudicado', 'ejecucion', 'liquidacion', 'cerrado', 'cancelado']);
 export const projectModalityEnum = pgEnum('project_modality', ['suma_alzada', 'precios_unitarios', 'mixto', 'llave_en_mano']);
+// Inversión padre (agrupa N proyectos-colegio bajo un CUI · ej. Obras por Impuestos)
+export const modalidadInversionEnum = pgEnum('modalidad_inversion', ['oxi', 'contrata', 'administracion_directa', 'app', 'nucleo_ejecutor']);
+// Cómo se calculan GG + Utilidad en el presupuesto del proyecto-colegio
+//   separado    · GG y UT como % sobre CD (clásico S10)
+//   embebido_cd · CD ya incluye GG+UT (pctGg/pctUtilidad deben ir NULL)
+//   simple_pct  · % simple sobre CD, sin mobiliario/adicionales
+export const ggUtModoEnum = pgEnum('gg_ut_modo', ['separado', 'embebido_cd', 'simple_pct']);
 export const trabajadorCategoriaEnum = pgEnum('trabajador_categoria', ['Capataz', 'Operario', 'Oficial', 'Peon']);
 export const trabajadorEstadoEnum = pgEnum('trabajador_estado', ['Activo', 'Permiso', 'Vacaciones', 'Cesado']);
-export const valorizacionStatusEnum = pgEnum('valorizacion_status', ['borrador', 'emitida', 'aprobada', 'cobrada', 'rechazada']);
+// Flujo: borrador → emitida(presentada) → conformidad_supervision → aprobada → facturada → cobrada(pagada) · rechazada
+export const valorizacionStatusEnum = pgEnum('valorizacion_status', [
+  'borrador',
+  'emitida',
+  'conformidad_supervision',
+  'aprobada',
+  'facturada',
+  'cobrada',
+  'rechazada',
+]);
 export const asientoStatusEnum = pgEnum('asiento_status', ['borrador', 'registrado', 'cerrado', 'anulado']);
 
 // F3 · Compras / Logística
@@ -29,6 +46,7 @@ export const reqUrgenciaEnum = pgEnum('req_urgencia', ['baja', 'media', 'alta', 
 export const reqEstadoEnum = pgEnum('req_estado', ['borrador', 'pendiente_aprobacion', 'aprobado', 'cotizando', 'oc_emitida', 'rechazado']);
 export const ocEstadoEnum = pgEnum('oc_estado', ['borrador', 'pendiente_aprobacion', 'aprobada', 'emitida', 'en_transito', 'entregada', 'anulada', 'rechazada']);
 export const ocConceptoEnum = pgEnum('oc_concepto', ['BIEN', 'SERVICIO']);
+export const ocEstadoPagoEnum = pgEnum('oc_estado_pago', ['pendiente', 'pagada']);
 export const ocMonedaEnum = pgEnum('oc_moneda', ['PEN', 'USD']);
 
 // ─── Auth · Users + Sessions ─────────────────────────────────
@@ -81,6 +99,53 @@ export const clientes = pgTable('clientes', {
   createdAt: timestamp('created_at').notNull().defaultNow(),
 });
 
+// ─── Inversiones (padre · agrupa colegios bajo un CUI) ───────
+// 1 inversión = 1 CUI MEF (ej. 2355883 · 4 colegios). Cada colegio es 1 proyecto.
+// Liviana: se crea solo con {cui, nombre, modalidad}. 08-A/convenio opcionales.
+export const inversiones = pgTable(
+  'inversiones',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    cui: varchar('cui', { length: 30 }).notNull().unique(), // Código Único Inversión · 2355883
+    nombre: varchar('nombre', { length: 1000 }).notNull(), // nombre largo MEF (multi-colegio)
+    modalidad: modalidadInversionEnum('modalidad').notNull().default('oxi'),
+    clienteId: uuid('cliente_id').references(() => clientes.id, { onDelete: 'set null' }),
+    ubicacion: text('ubicacion'),
+
+    // Montos MEF · Formato 08-A (referencia del padre · NULL hasta cargar 08-A)
+    montoInversionMef: decimal('monto_inversion_mef', { precision: 16, scale: 2 }), // costo total inversión actualizado
+    montoComponentes: decimal('monto_componentes', { precision: 16, scale: 2 }), // obra física Σ colegios
+    montoExpedienteTecnico: decimal('monto_expediente_tecnico', { precision: 16, scale: 2 }),
+    montoSupervision: decimal('monto_supervision', { precision: 16, scale: 2 }),
+    montoGestion: decimal('monto_gestion', { precision: 16, scale: 2 }),
+    montoLiquidacion: decimal('monto_liquidacion', { precision: 16, scale: 2 }),
+
+    // Fechas marco MEF (ejecución física de toda la inversión)
+    fechaInicioEjecucion: date('fecha_inicio_ejecucion'),
+    fechaFinEjecucion: date('fecha_fin_ejecucion'),
+    fechaEntregaOym: date('fecha_entrega_oym'),
+
+    // Identificación MEF Invierte.pe
+    ueiNombre: varchar('uei_nombre', { length: 255 }), // Unidad Ejecutora de Inversiones
+    ufNombre: varchar('uf_nombre', { length: 255 }), // Unidad Formuladora
+    uepNombre: varchar('uep_nombre', { length: 255 }), // Unidad Ejecutora Presupuestal
+    proveidoAprobacion: varchar('proveido_aprobacion', { length: 120 }),
+
+    // Convenio / contrato OxI (pendiente · siguiente revisión)
+    empresaFinancista: varchar('empresa_financista', { length: 255 }), // empresa privada OxI · null hasta convenio
+    pendienteContrato: boolean('pendiente_contrato').notNull().default(true),
+
+    snapshot: jsonb('snapshot').$type<Record<string, unknown>>(), // parse completo 08-A / fuente
+    nasFolder: text('nas_folder'),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+    updatedAt: timestamp('updated_at').notNull().defaultNow(),
+    deletedAt: timestamp('deleted_at'),
+  },
+  (t) => ({
+    cuiIdx: index('inversiones_cui_idx').on(t.cui),
+  }),
+);
+
 // ─── Proyectos ────────────────────────────────────────────────
 export const proyectos = pgTable(
   'proyectos',
@@ -89,12 +154,21 @@ export const proyectos = pgTable(
     codigo: varchar('codigo', { length: 50 }).notNull().unique(), // OB-2026-009
     nombre: varchar('nombre', { length: 500 }).notNull(),
     clienteId: uuid('cliente_id').references(() => clientes.id, { onDelete: 'set null' }),
+    responsableUserId: uuid('responsable_user_id').references(() => users.id, { onDelete: 'set null' }), // residente/gerente de obra
     ubicacion: text('ubicacion'),
     lat: decimal('lat', { precision: 10, scale: 6 }),
     lng: decimal('lng', { precision: 10, scale: 6 }),
     tipo: varchar('tipo', { length: 100 }), // Edificación · Saneamiento · Vial · etc
     modalidad: projectModalityEnum('modalidad').default('suma_alzada'),
     status: projectStatusEnum('status').notNull().default('licitacion'),
+
+    // Inversión padre (OxI · agrupa colegios bajo un CUI). NULL = proyecto suelto.
+    inversionId: uuid('inversion_id').references(() => inversiones.id, { onDelete: 'set null' }),
+    codigoIe: varchar('codigo_ie', { length: 20 }), // 16647 · nº institución educativa
+    // Modo de cálculo GG+Utilidad de este presupuesto (separado | embebido_cd | simple_pct)
+    ggUtModo: ggUtModoEnum('gg_ut_modo').notNull().default('separado'),
+    // Fuente que gobierna los montos vigentes (valorizacion | cronograma | resumen | cuadro)
+    fuenteMontos: varchar('fuente_montos', { length: 30 }),
 
     // Montos
     costoDirecto: decimal('costo_directo', { precision: 14, scale: 2 }).default('0'),
@@ -110,6 +184,16 @@ export const proyectos = pgTable(
     factorOferta: decimal('factor_oferta', { precision: 7, scale: 6 }), // monto_contractual / monto_referencial · ej 0.95
     montoVigente: decimal('monto_vigente', { precision: 14, scale: 2 }).default('0'), // contractual ± modificaciones aprobadas
     presupuestoMeta: decimal('presupuesto_meta', { precision: 14, scale: 2 }), // meta interna constructora · objetivo utility
+
+    // Componentes inversión (OxI / MEF) · base del avance financiero-inversión.
+    // montoReferencial = monto de inversión total (suma de estos + obra). Obra-CD vive en costoDirecto.
+    montoMobiliario: decimal('monto_mobiliario', { precision: 14, scale: 2 }), // mobiliario y equipamiento
+    montoExpedienteTecnico: decimal('monto_expediente_tecnico', { precision: 14, scale: 2 }), // documento de trabajo
+    montoSupervisionExpediente: decimal('monto_supervision_expediente', { precision: 14, scale: 2 }), // supervisión doc trabajo
+    montoSupervisionObra: decimal('monto_supervision_obra', { precision: 14, scale: 2 }),
+    // Plan financiero-inversión mensual · MONTO DE INVERSIÓN distribuido (cronograma valorizado).
+    // [{ ym: '2026-04', monto }] · PV inversión. Σ = montoReferencial. Distinto de partidas.distribucionMensual (obra-CD).
+    distribucionInversion: jsonb('distribucion_inversion').$type<Array<{ ym: string; monto: number }>>().default([]),
 
     // Plazos
     fechaInicio: date('fecha_inicio'),
@@ -136,6 +220,9 @@ export const proyectos = pgTable(
     pctRetencion: decimal('pct_retencion', { precision: 5, scale: 4 }),
     pctFielCumplimiento: decimal('pct_fiel_cumplimiento', { precision: 5, scale: 4 }),
 
+    // Participación propia (MM) en esta obra · 1.0000 = 100% · base del P&L "mi bolsillo"
+    pctParticipacionPropia: decimal('pct_participacion_propia', { precision: 5, scale: 4 }).default('1.0000'),
+
     // Penalidades
     formulaPenalidadMora: text('formula_penalidad_mora'), // "0.10 × monto / (F × plazo)"
     factorFPenalidad: decimal('factor_f_penalidad', { precision: 5, scale: 3 }), // 0.40 / 0.25 / 0.15
@@ -151,6 +238,11 @@ export const proyectos = pgTable(
     // Riesgo · análisis IA
     risk: varchar('risk', { length: 20 }).default('medium'), // low | medium | high
     nasFolder: text('nas_folder'), // /Proyectos/OB-2026-009
+
+    // Hitos contractuales sugeridos por IA al parsear el .mpp (cronograma). Se confirman → hitos_obra.
+    hitosSugeridos: jsonb('hitos_sugeridos')
+      .$type<Array<{ tipo: string; fechaPlan: string; confianza: number; fuente: string; razon: string }>>()
+      .default([]),
 
     // Meta
     ganttFile: text('gantt_file'), // path al XML
@@ -258,6 +350,10 @@ export const valorizaciones = pgTable(
     montoTotalConIgv: decimal('monto_total_con_igv', { precision: 14, scale: 2 }),
     montoRetencion: decimal('monto_retencion', { precision: 14, scale: 2 }).default('0'),
     totalContratista: decimal('total_contratista', { precision: 14, scale: 2 }), // pago final
+    // Inversión (bloque totales del Excel · financiero-inversión real)
+    montoInversionPeriodo: decimal('monto_inversion_periodo', { precision: 16, scale: 2 }),
+    montoInversionAcumulado: decimal('monto_inversion_acumulado', { precision: 16, scale: 2 }),
+    pctInversionAcumulado: decimal('pct_inversion_acumulado', { precision: 6, scale: 2 }),
     archivoXlsx: varchar('archivo_xlsx', { length: 255 }),
     status: valorizacionStatusEnum('status').notNull().default('borrador'),
     snapshot: jsonb('snapshot').$type<Record<string, unknown>>(), // hojas K + Reajuste + RES.VALO + Ios/Irs
@@ -344,17 +440,34 @@ export const trabajadores = pgTable(
   }),
 );
 
-// ─── Equipo profesional asignado ─────────────────────────────
+// ─── Profesionales · padrón de staff técnico (sin login) ─────
+// Pool del que se elige el "Equipo profesional" de cada obra. Distinto de users (login).
+export const profesionales = pgTable('profesionales', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  nombre: varchar('nombre', { length: 160 }).notNull(),
+  profesion: varchar('profesion', { length: 120 }), // Ingeniero Civil · Arquitecto · Técnico...
+  colegiatura: varchar('colegiatura', { length: 40 }), // CIP / CAP
+  dni: varchar('dni', { length: 12 }),
+  telefono: varchar('telefono', { length: 30 }),
+  email: varchar('email', { length: 255 }),
+  cargoDefault: varchar('cargo_default', { length: 100 }), // rol sugerido (Residente, Supervisor...)
+  activo: boolean('activo').notNull().default(true),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+});
+export type Profesional = typeof profesionales.$inferSelect;
+export type NewProfesional = typeof profesionales.$inferInsert;
+
+// ─── Equipo profesional asignado a una obra ──────────────────
 export const equipoProyecto = pgTable(
   'equipo_proyecto',
   {
     proyectoId: uuid('proyecto_id').notNull().references(() => proyectos.id, { onDelete: 'cascade' }),
-    userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    profesionalId: uuid('profesional_id').notNull().references(() => profesionales.id, { onDelete: 'cascade' }),
     rol: varchar('rol', { length: 100 }).notNull(), // Residente · Supervisor · Capataz · etc
     asignadoEn: timestamp('asignado_en').notNull().defaultNow(),
   },
   (t) => ({
-    pk: primaryKey({ columns: [t.proyectoId, t.userId] }),
+    pk: primaryKey({ columns: [t.proyectoId, t.profesionalId] }),
   }),
 );
 
@@ -372,11 +485,17 @@ export const asientos = pgTable(
   'asientos',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    correlativo: varchar('correlativo', { length: 20 }).notNull(), // AS-0001
+    correlativo: varchar('correlativo', { length: 20 }).notNull(), // AS-202601-0001
     fecha: date('fecha').notNull(),
+    periodo: varchar('periodo', { length: 7 }), // YYYY-MM (derivado de fecha)
     glosa: text('glosa').notNull(),
     docOrigen: varchar('doc_origen', { length: 50 }),
     tipoDoc: varchar('tipo_doc', { length: 50 }),
+    // Motor automático · liga el asiento al documento fuente (idempotencia)
+    origen: varchar('origen', { length: 20 }).notNull().default('manual'), // manual·gasto·pago_oc·valorizacion·cobro_valo·planilla
+    origenId: uuid('origen_id'), // id del doc fuente (gasto/oc/valorizacion/semana)
+    moneda: varchar('moneda', { length: 3 }).notNull().default('PEN'),
+    tipoCambio: decimal('tipo_cambio', { precision: 8, scale: 4 }), // TC SUNAT si USD
     proyectoId: uuid('proyecto_id').references(() => proyectos.id, { onDelete: 'set null' }),
     contraparteRuc: varchar('contraparte_ruc', { length: 11 }),
     contraparteRazon: varchar('contraparte_razon', { length: 255 }),
@@ -410,6 +529,519 @@ export const asientosLineas = pgTable(
   }),
 );
 
+// ─── FIN-1 · Finanzas operativas (modelo "Plantilla MM" · ledger de gastos) ───
+// Cuentas bancarias / caja chica
+export const cuentasBancarias = pgTable('cuentas_bancarias', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  codigo: varchar('codigo', { length: 60 }).notNull().unique(), // 194-9927833-0-39 · REND-KELY
+  banco: varchar('banco', { length: 80 }),
+  moneda: varchar('moneda', { length: 3 }).notNull().default('PEN'),
+  descripcion: varchar('descripcion', { length: 120 }), // Cuenta Corriente Principal · Caja Chica Oficina
+  cuentaContable: varchar('cuenta_contable', { length: 10 }), // F1 · sub-cuenta PCGE 104x (104101…) para asientos de caja
+  activo: boolean('activo').notNull().default(true),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+});
+export type CuentaBancaria = typeof cuentasBancarias.$inferSelect;
+
+// Presupuesto de oficina por mes (tope editable · gastos administrativos)
+export const presupuestoOficina = pgTable('presupuesto_oficina', {
+  mes: varchar('mes', { length: 7 }).primaryKey(), // 2026-04
+  monto: decimal('monto', { precision: 14, scale: 2 }).notNull().default('0'),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+});
+export type PresupuestoOficina = typeof presupuestoOficina.$inferSelect;
+
+// F3 · configuración contable key/value (CUTOVER del 104x, parallel-run, futuros flags) · editable + auditable
+export const configuracionContable = pgTable('configuracion_contable', {
+  clave: varchar('clave', { length: 60 }).primaryKey(), // MOVIMIENTOS_104X_CUTOVER · MOVIMIENTOS_104X_PARALLEL
+  valor: text('valor'),
+  comentario: text('comentario'),
+  actualizadoPor: varchar('actualizado_por', { length: 120 }),
+  actualizadoEn: timestamp('actualizado_en').notNull().defaultNow(),
+});
+export type ConfiguracionContable = typeof configuracionContable.$inferSelect;
+
+// Gastos (Fact de Compras) · costo REAL ejecutado por proyecto
+export const gastos = pgTable(
+  'gastos',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    codigo: varchar('codigo', { length: 30 }), // CMP-09001
+    proyectoId: uuid('proyecto_id').references(() => proyectos.id, { onDelete: 'set null' }), // null = VARIOS
+    fecha: date('fecha').notNull(),
+    tipoRegistro: varchar('tipo_registro', { length: 40 }), // Gasto Directo · etc
+    tipoIgv: varchar('tipo_igv', { length: 20 }), // IGV · Exonerado
+    ordenCompraId: uuid('orden_compra_id').references(() => ordenesCompra.id, { onDelete: 'set null' }),
+    proveedorId: uuid('proveedor_id').references(() => proveedores.id, { onDelete: 'set null' }),
+    proveedorRuc: varchar('proveedor_ruc', { length: 11 }),
+    proveedorRazon: varchar('proveedor_razon', { length: 255 }),
+    tipoComprobante: varchar('tipo_comprobante', { length: 40 }),
+    serie: varchar('serie', { length: 20 }),
+    numero: varchar('numero', { length: 40 }),
+    moneda: varchar('moneda', { length: 3 }).notNull().default('PEN'),
+    formaPago: varchar('forma_pago', { length: 40 }),
+    fuentePago: varchar('fuente_pago', { length: 40 }),
+    cuentaId: uuid('cuenta_id').references(() => cuentasBancarias.id, { onDelete: 'set null' }),
+    descripcionItem: text('descripcion_item'),
+    subtotal: decimal('subtotal', { precision: 14, scale: 2 }).notNull().default('0'),
+    igv: decimal('igv', { precision: 14, scale: 2 }).notNull().default('0'),
+    exonerado: decimal('exonerado', { precision: 14, scale: 2 }).notNull().default('0'),
+    total: decimal('total', { precision: 14, scale: 2 }).notNull().default('0'),
+    tipoGasto: varchar('tipo_gasto', { length: 40 }), // Compra Materiales · Planilla · etc
+    observaciones: text('observaciones'),
+    lockedAt: timestamp('locked_at'), // H2 · congelado por cierre de periodo
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+  },
+  (t) => ({
+    proyectoIdx: index('gastos_proyecto_idx').on(t.proyectoId),
+    fechaIdx: index('gastos_fecha_idx').on(t.fecha),
+    tipoIdx: index('gastos_tipo_idx').on(t.tipoGasto),
+  }),
+);
+export type Gasto = typeof gastos.$inferSelect;
+export type NewGasto = typeof gastos.$inferInsert;
+
+// FIN-2 · Movimientos de cuenta (Fact de Flujo Cuentas) · caja real por cuenta bancaria
+export const movimientos = pgTable(
+  'movimientos',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    codigo: varchar('codigo', { length: 30 }), // BN-090001
+    fecha: date('fecha').notNull(),
+    proyectoId: uuid('proyecto_id').references(() => proyectos.id, { onDelete: 'set null' }),
+    tipoMovimiento: varchar('tipo_movimiento', { length: 10 }).notNull(), // Ingreso · Egreso
+    fuentePago: varchar('fuente_pago', { length: 40 }), // Cuenta Corriente · Caja Chica
+    cuentaId: uuid('cuenta_id').references(() => cuentasBancarias.id, { onDelete: 'set null' }),
+    fuenteMovimiento: varchar('fuente_movimiento', { length: 40 }), // Cliente · Socio · Otros · Préstamo
+    clienteId: uuid('cliente_id').references(() => clientes.id, { onDelete: 'set null' }),
+    clienteNombre: varchar('cliente_nombre', { length: 255 }),
+    tipoComprobante: varchar('tipo_comprobante', { length: 40 }),
+    serie: varchar('serie', { length: 20 }),
+    numero: varchar('numero', { length: 40 }),
+    moneda: varchar('moneda', { length: 3 }).notNull().default('PEN'),
+    monto: decimal('monto', { precision: 14, scale: 2 }).notNull(), // positivo · el signo lo da tipoMovimiento · = subtotal+igv (importe comprobante)
+    descripcion: text('descripcion'),
+    numOperacion: varchar('num_operacion', { length: 40 }),
+    gastoId: uuid('gasto_id').references(() => gastos.id, { onDelete: 'set null' }), // si paga un gasto
+    // Desglose fiscal (form rico v1) · subtotal+igv = monto · detracción/retención son splits informativos
+    subtipo: varchar('subtipo', { length: 60 }), // Materiales · Comisión · Transferencia entre cuentas · etc
+    subtotal: decimal('subtotal', { precision: 14, scale: 2 }).default('0'),
+    igv: decimal('igv', { precision: 14, scale: 2 }).default('0'),
+    detraccion: decimal('detraccion', { precision: 14, scale: 2 }).default('0'),
+    retencion: decimal('retencion', { precision: 14, scale: 2 }).default('0'),
+    cuentaDestinoId: uuid('cuenta_destino_id'), // transferencias bancarias (egreso origen ↔ ingreso destino) · sin .references por orden
+    transferenciaId: uuid('transferencia_id'), // liga las 2 filas de una transferencia
+    // F1 · contabilidad: naturaleza estructurada (→ cuenta PCGE) + link a documento (contrapartida exacta)
+    naturalezaContable: varchar('naturaleza_contable', { length: 30 }), // key de NATURALEZAS_CONTABLES (@erp/shared)
+    ordenCompraId: uuid('orden_compra_id'), // si el movimiento paga/cobra una OC · uuid plano (orden tablas)
+    valorizacionId: uuid('valorizacion_id'), // si el movimiento cobra una valorización
+    fechaVencimiento: date('fecha_vencimiento'),
+    estado: varchar('estado', { length: 20 }), // Pendiente · Pagada · Por cobrar · Cobrada · Completada
+    // H1 · trazabilidad + anulación formal (audit hardening · NO toca estado operacional)
+    userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }), // quién creó el movimiento
+    anulado: boolean('anulado').notNull().default(false), // soft-anular (reemplaza hard-delete operacional)
+    anuladoPor: uuid('anulado_por').references(() => users.id, { onDelete: 'set null' }),
+    anuladoEn: timestamp('anulado_en'),
+    anuladoMotivo: text('anulado_motivo'),
+    lockedAt: timestamp('locked_at'), // H2 · congelado por cierre de periodo (freeze row-level)
+    // H3.1 · TC histórico · monedaBase = PEN. tipoCambio snapshot (nunca recalcular). montoBase = monto*tc.
+    tipoCambio: decimal('tipo_cambio', { precision: 10, scale: 4 }), // null/1 = PEN
+    montoBase: decimal('monto_base', { precision: 14, scale: 2 }), // monto convertido a PEN (para sumas/shadow)
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+  },
+  (t) => ({
+    proyectoIdx: index('mov_proyecto_idx').on(t.proyectoId),
+    cuentaIdx: index('mov_cuenta_idx').on(t.cuentaId),
+    fechaIdx: index('mov_fecha_idx').on(t.fecha),
+  }),
+);
+export type Movimiento = typeof movimientos.$inferSelect;
+export type NewMovimiento = typeof movimientos.$inferInsert;
+
+// ─── H3 · Conciliación bancaria (ERP ↔ extracto banco) ───────
+export const conciliacionEstadoEnum = pgEnum('conciliacion_estado', ['pendiente', 'conciliado', 'diferencia', 'ignorado']);
+export const extractosBancarios = pgTable('extractos_bancarios', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  cuentaId: uuid('cuenta_id').references(() => cuentasBancarias.id, { onDelete: 'set null' }),
+  banco: varchar('banco', { length: 80 }),
+  moneda: varchar('moneda', { length: 3 }).notNull().default('PEN'),
+  nombreArchivo: varchar('nombre_archivo', { length: 255 }),
+  totalFilas: integer('total_filas').notNull().default(0),
+  importadoPor: uuid('importado_por').references(() => users.id, { onDelete: 'set null' }),
+  importadoEn: timestamp('importado_en').notNull().defaultNow(),
+  contenidoHash: varchar('contenido_hash', { length: 64 }), // F4B.3 · dedup de import (sha256 cuenta+totales+contenido) · UNIQUE
+}, (t) => ({
+  hashIdx: uniqueIndex('extbanc_hash_unq').on(t.contenidoHash),
+}));
+export const extractoLineas = pgTable(
+  'extracto_lineas',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    extractoId: uuid('extracto_id').notNull().references(() => extractosBancarios.id, { onDelete: 'cascade' }),
+    fecha: date('fecha').notNull(),
+    descripcion: text('descripcion'),
+    referencia: varchar('referencia', { length: 120 }), // nº operación / glosa banco
+    monto: decimal('monto', { precision: 14, scale: 2 }).notNull(), // signo: + abono / − cargo (normalizado)
+    moneda: varchar('moneda', { length: 3 }).notNull().default('PEN'),
+    saldo: decimal('saldo', { precision: 14, scale: 2 }),
+    estado: conciliacionEstadoEnum('estado').notNull().default('pendiente'),
+    movimientoId: uuid('movimiento_id').references(() => movimientos.id, { onDelete: 'set null' }), // match ERP
+    score: decimal('score', { precision: 5, scale: 2 }), // 0-100 confianza del match sugerido
+    confianza: varchar('confianza', { length: 10 }), // alta · media · baja
+    matchedPor: uuid('matched_por').references(() => users.id, { onDelete: 'set null' }),
+    matchedEn: timestamp('matched_en'),
+  },
+  (t) => ({
+    extractoIdx: index('extlin_extracto_idx').on(t.extractoId),
+    estadoIdx: index('extlin_estado_idx').on(t.estado),
+    movIdx: index('extlin_mov_idx').on(t.movimientoId),
+  }),
+);
+export type ExtractoBancario = typeof extractosBancarios.$inferSelect;
+export type ExtractoLinea = typeof extractoLineas.$inferSelect;
+
+// ─── F4.2 · Snapshots de estabilidad pre-cutover (tendencia histórica · read-only) ───
+// Captura idempotente 1/día/periodo bajo PARALLEL (o manual). Evidencia objetiva antes del flip.
+export const cutoverSnapshots = pgTable(
+  'cutover_snapshots',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    periodo: varchar('periodo', { length: 7 }).notNull(), // 'YYYY-MM'
+    fechaSnapshot: date('fecha_snapshot').notNull(),       // día de captura (dedup)
+    diff: decimal('diff', { precision: 14, scale: 2 }).notNull().default('0'),
+    realDiffsCount: integer('real_diffs_count').notNull().default(0),
+    ownershipAmbiguo: integer('ownership_ambiguo').notNull().default(0),
+    movimientosSinCuenta: integer('movimientos_sin_cuenta').notNull().default(0),
+    cuentasSin104x: integer('cuentas_sin_104x').notNull().default(0),
+    conciliacionPendiente: integer('conciliacion_pendiente').notNull().default(0),
+    listoParaFlip: boolean('listo_para_flip').notNull().default(false),
+    meta: jsonb('meta'),                                   // {cutover, parallel, fuente, ...}
+    hash: varchar('hash', { length: 64 }),                 // sha256 de las métricas (tamper-evidence)
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+  },
+  (t) => ({
+    unq: uniqueIndex('cutsnap_periodo_fecha_unq').on(t.periodo, t.fechaSnapshot), // 1/día/periodo
+    periodoIdx: index('cutsnap_periodo_idx').on(t.periodo),
+  }),
+);
+export type CutoverSnapshot = typeof cutoverSnapshots.$inferSelect;
+
+// ─── Notificaciones / alertas (dashboard · campana) ──────────
+// Materializadas por un generador idempotente (dedup por `clave`). El estado leído
+// vive en `leidoEn`. ponytail: read-state global (equipo chico); si crece, tabla
+// notificacion_lecturas por (userId, notificacionId).
+export const notificaciones = pgTable('notificaciones', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  clave: varchar('clave', { length: 140 }).notNull().unique(), // 'valo-vencida-<valoId>' · idempotencia
+  tipo: varchar('tipo', { length: 40 }).notNull(), // valo_vencida · oc_pendiente · sobrecosto · stock · oportunidad
+  severidad: varchar('severidad', { length: 10 }).notNull().default('media'), // alta · media · baja
+  titulo: varchar('titulo', { length: 200 }).notNull(),
+  detalle: text('detalle'),
+  proyectoId: uuid('proyecto_id').references(() => proyectos.id, { onDelete: 'cascade' }),
+  proyectoCodigo: varchar('proyecto_codigo', { length: 50 }),
+  accionUrl: varchar('accion_url', { length: 300 }),
+  leidoEn: timestamp('leido_en'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+});
+export type Notificacion = typeof notificaciones.$inferSelect;
+
+// FIN-3 · Inventario (Fact de Inventario) · items de almacén por proyecto
+export const inventarioItems = pgTable(
+  'inventario_items',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    codigo: varchar('codigo', { length: 30 }), // ITM-090001
+    fecha: date('fecha').notNull(),
+    proyectoId: uuid('proyecto_id').references(() => proyectos.id, { onDelete: 'set null' }),
+    proveedorRuc: varchar('proveedor_ruc', { length: 11 }),
+    proveedorRazon: varchar('proveedor_razon', { length: 255 }),
+    tipoComprobante: varchar('tipo_comprobante', { length: 40 }),
+    serie: varchar('serie', { length: 20 }),
+    numero: varchar('numero', { length: 40 }),
+    cantidad: decimal('cantidad', { precision: 14, scale: 4 }).notNull().default('0'),
+    descripcionItem: text('descripcion_item'),
+    valorUnitario: decimal('valor_unitario', { precision: 14, scale: 4 }).notNull().default('0'),
+    categoria: varchar('categoria', { length: 40 }), // Compra Materiales · Herramientas · EPPS...
+    estado: varchar('estado', { length: 30 }).default('Disponible'), // Disponible · Usado · Devuelto · Bajado
+    responsable: varchar('responsable', { length: 120 }),
+    observacion: text('observacion'),
+    gastoId: uuid('gasto_id').references(() => gastos.id, { onDelete: 'set null' }), // compra de origen (Opción B · costo vive en el gasto)
+    activoId: uuid('activo_id'), // si se promovió a activo (FK activos en DB · sin .references por orden)
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+  },
+  (t) => ({
+    proyectoIdx: index('inv_proyecto_idx').on(t.proyectoId),
+    fechaIdx: index('inv_fecha_idx').on(t.fecha),
+    gastoIdx: index('inv_gasto_idx').on(t.gastoId),
+  }),
+);
+export type InventarioItem = typeof inventarioItems.$inferSelect;
+export type NewInventarioItem = typeof inventarioItems.$inferInsert;
+
+// ─── Activos · herramientas y equipos (NO consumibles) ───────
+// Depreciación SUNAT calculada: valorNeto = valorAdq − (valorAdq × pctAnual × años transcurridos)
+export const activos = pgTable(
+  'activos',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    codigo: varchar('codigo', { length: 20 }).notNull().unique(), // MM-A-0001
+    rfidTag: varchar('rfid_tag', { length: 64 }).unique(), // UID tag UHF/RFID · null hasta vincular lector
+    nombre: varchar('nombre', { length: 255 }).notNull(),
+    categoria: varchar('categoria', { length: 40 }).notNull(), // Herramienta eléctrica · Andamios · Cómputo...
+    marca: varchar('marca', { length: 80 }),
+    serie: varchar('serie', { length: 120 }), // n° serie del fabricante
+    fechaAdquisicion: date('fecha_adquisicion').notNull(),
+    valorAdquisicion: decimal('valor_adquisicion', { precision: 14, scale: 2 }).notNull(),
+    pctDepreciacionAnual: decimal('pct_depreciacion_anual', { precision: 5, scale: 2 }).notNull().default('10.00'), // SUNAT · editable
+    estado: varchar('estado', { length: 20 }).notNull().default('operativo'), // operativo · baja · perdido
+    proyectoId: uuid('proyecto_id').references(() => proyectos.id, { onDelete: 'set null' }), // null = almacén/oficina
+    ubicacion: varchar('ubicacion', { length: 160 }), // detalle libre (Almacén central · contenedor N1)
+    responsable: varchar('responsable', { length: 120 }),
+    notas: text('notas'),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+    updatedAt: timestamp('updated_at').notNull().defaultNow(),
+  },
+  (t) => ({
+    proyectoIdx: index('activos_proyecto_idx').on(t.proyectoId),
+    categoriaIdx: index('activos_categoria_idx').on(t.categoria),
+  }),
+);
+export type Activo = typeof activos.$inferSelect;
+
+// Historial de traslados del activo (trazabilidad obra→obra)
+export const activoMovimientos = pgTable(
+  'activo_movimientos',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    activoId: uuid('activo_id').notNull().references(() => activos.id, { onDelete: 'cascade' }),
+    fecha: date('fecha').notNull(),
+    desde: varchar('desde', { length: 200 }), // texto resuelto (obra X · Almacén)
+    hacia: varchar('hacia', { length: 200 }).notNull(),
+    proyectoId: uuid('proyecto_id').references(() => proyectos.id, { onDelete: 'set null' }), // destino
+    responsable: varchar('responsable', { length: 120 }),
+    notas: text('notas'),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+  },
+  (t) => ({
+    activoIdx: index('actmov_activo_idx').on(t.activoId),
+  }),
+);
+export type ActivoMovimiento = typeof activoMovimientos.$inferSelect;
+
+// ─── FIN-4 · Planilla construcción civil (CAPECO) ────────────
+// Empleados (obreros + administrativos)
+export const empleados = pgTable('empleados', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  nombre: varchar('nombre', { length: 200 }).notNull(),
+  tipoDoc: varchar('tipo_doc', { length: 10 }).default('DNI'),
+  numDoc: varchar('num_doc', { length: 20 }),
+  fechaNacimiento: date('fecha_nacimiento'),
+  sistemaPension: varchar('sistema_pension', { length: 40 }), // AFP Habitat · S.N.P. · etc
+  cuspp: varchar('cuspp', { length: 30 }),
+  fechaIngreso: date('fecha_ingreso'),
+  categoria: varchar('categoria', { length: 30 }), // Operario · Oficial · Peón · Maestro · Empleado
+  tieneHijos: boolean('tiene_hijos').default(false),
+  numHijos: integer('num_hijos').default(0),
+  aplicaMovilidad: boolean('aplica_movilidad').default(false),
+  bonifAltura: boolean('bonif_altura').default(false), // CC · trabajo en altura
+  bonifAgua: boolean('bonif_agua').default(false), // CC · contacto con agua
+  banco: varchar('banco', { length: 40 }),
+  numCuenta: varchar('num_cuenta', { length: 40 }),
+  tipoPlanilla: varchar('tipo_planilla', { length: 10 }).notNull().default('obrero'), // obrero · admin
+  proyectoId: uuid('proyecto_id').references(() => proyectos.id, { onDelete: 'set null' }), // obra asignada (null = oficina)
+  sctrVigencia: date('sctr_vigencia'), // vencimiento póliza SCTR
+  activo: boolean('activo').notNull().default(true),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+});
+export type Empleado = typeof empleados.$inferSelect;
+
+// Tasas legales globales (singleton) · EDITABLE en Configuración
+// Cambian por ley/convenio · separadas de los % por categoría
+export const configPlanilla = pgTable('config_planilla', {
+  id: varchar('id', { length: 12 }).primaryKey().default('singleton'),
+  uit: decimal('uit', { precision: 10, scale: 2 }).notNull().default('5350'), // UIT 2026
+  pctEsSalud: decimal('pct_essalud', { precision: 6, scale: 4 }).notNull().default('0.09'),
+  pctOnp: decimal('pct_onp', { precision: 6, scale: 4 }).notNull().default('0.13'),
+  pctSencico: decimal('pct_sencico', { precision: 6, scale: 4 }).notNull().default('0.002'),
+  pctConafovicer: decimal('pct_conafovicer', { precision: 6, scale: 4 }).notNull().default('0.02'),
+  pctSctrSalud: decimal('pct_sctr_salud', { precision: 6, scale: 4 }).notNull().default('0.0155'),
+  pctSctrPension: decimal('pct_sctr_pension', { precision: 6, scale: 4 }).notNull().default('0.0174'),
+  pctBonifAltura: decimal('pct_bonif_altura', { precision: 6, scale: 4 }).notNull().default('0.07'),
+  pctBonifAgua: decimal('pct_bonif_agua', { precision: 6, scale: 4 }).notNull().default('0.20'),
+  asignEscolarJornales: decimal('asign_escolar_jornales', { precision: 6, scale: 2 }).notNull().default('30'), // jornales/año/hijo
+});
+export type ConfigPlanilla = typeof configPlanilla.$inferSelect;
+
+// Asistencia diaria (tareo) · base legal de la planilla · grid semanal
+export const asistencia = pgTable(
+  'asistencia',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    empleadoId: uuid('empleado_id').notNull().references(() => empleados.id, { onDelete: 'cascade' }),
+    semanaId: uuid('semana_id').references(() => planillaSemanas.id, { onDelete: 'set null' }),
+    proyectoId: uuid('proyecto_id').references(() => proyectos.id, { onDelete: 'set null' }),
+    fecha: date('fecha').notNull(),
+    // normal · tardanza · falta_inj · falta_just · descanso_med · feriado_trab · vacaciones · dominical
+    tipo: varchar('tipo', { length: 15 }).notNull().default('normal'),
+  },
+  (t) => ({
+    empFechaUq: index('asist_emp_fecha_uq').on(t.empleadoId, t.fecha),
+    semanaIdx: index('asist_semana_idx').on(t.semanaId),
+  }),
+);
+export type Asistencia = typeof asistencia.$inferSelect;
+
+// Parámetros por categoría (jornal + %s) · EDITABLE
+export const paramPlanilla = pgTable('param_planilla', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  categoria: varchar('categoria', { length: 30 }).notNull().unique(),
+  jornalBase: decimal('jornal_base', { precision: 10, scale: 2 }).notNull().default('0'),
+  movilidad: decimal('movilidad', { precision: 10, scale: 2 }).default('0'),
+  pctBuc: decimal('pct_buc', { precision: 6, scale: 4 }).default('0'),
+  pctDominical: decimal('pct_dominical', { precision: 6, scale: 4 }).default('0.1667'),
+  pctCompVac: decimal('pct_comp_vac', { precision: 6, scale: 4 }).default('0.10'),
+  pctCts: decimal('pct_cts', { precision: 6, scale: 4 }).default('0.15'),
+  pctGratif: decimal('pct_gratif', { precision: 6, scale: 4 }).default('0'),
+  pctHe60: decimal('pct_he60', { precision: 6, scale: 4 }).default('0.20'),
+  pctHe100: decimal('pct_he100', { precision: 6, scale: 4 }).default('0.25'),
+});
+export type ParamPlanilla = typeof paramPlanilla.$inferSelect;
+
+// Tasas AFP (comisión + seguro) · EDITABLE
+export const afpTasas = pgTable('afp_tasas', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  afp: varchar('afp', { length: 40 }).notNull().unique(),
+  pctAporte: decimal('pct_aporte', { precision: 6, scale: 4 }).notNull().default('0.10'),
+  pctComision: decimal('pct_comision', { precision: 6, scale: 4 }).notNull().default('0'),
+  pctSeguro: decimal('pct_seguro', { precision: 6, scale: 4 }).notNull().default('0.0184'),
+});
+export type AfpTasa = typeof afpTasas.$inferSelect;
+
+// Planilla semana (corrida)
+export const planillaSemanas = pgTable('planilla_semanas', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  proyectoId: uuid('proyecto_id').references(() => proyectos.id, { onDelete: 'set null' }),
+  fechaInicio: date('fecha_inicio').notNull(),
+  fechaFin: date('fecha_fin').notNull(),
+  mes: varchar('mes', { length: 7 }), // 2026-04
+  estado: varchar('estado', { length: 20 }).notNull().default('borrador'), // borrador · cerrada · pagada
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+});
+export type PlanillaSemana = typeof planillaSemanas.$inferSelect;
+
+// Detalle por obrero · snapshot + asistencia + montos calculados
+export const planillaDetalle = pgTable(
+  'planilla_detalle',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    semanaId: uuid('semana_id').notNull().references(() => planillaSemanas.id, { onDelete: 'cascade' }),
+    empleadoId: uuid('empleado_id').references(() => empleados.id, { onDelete: 'set null' }),
+    // snapshot (congelado al correr)
+    nombre: varchar('nombre', { length: 200 }),
+    categoria: varchar('categoria', { length: 30 }),
+    sistemaPension: varchar('sistema_pension', { length: 40 }),
+    jornalUsado: decimal('jornal_usado', { precision: 10, scale: 2 }),
+    // asistencia
+    diasTrabajados: integer('dias_trabajados').default(0),
+    jornadaDominical: boolean('jornada_dominical').default(false),
+    horasExtra60: decimal('horas_extra_60', { precision: 6, scale: 2 }).default('0'),
+    horasExtra100: decimal('horas_extra_100', { precision: 6, scale: 2 }).default('0'),
+    // ingresos
+    montoJornada: decimal('monto_jornada', { precision: 12, scale: 2 }).default('0'),
+    montoDominical: decimal('monto_dominical', { precision: 12, scale: 2 }).default('0'),
+    montoBuc: decimal('monto_buc', { precision: 12, scale: 2 }).default('0'),
+    montoCompVac: decimal('monto_comp_vac', { precision: 12, scale: 2 }).default('0'),
+    montoGratif: decimal('monto_gratif', { precision: 12, scale: 2 }).default('0'),
+    montoBonifExtra: decimal('monto_bonif_extra', { precision: 12, scale: 2 }).default('0'),
+    montoCts: decimal('monto_cts', { precision: 12, scale: 2 }).default('0'),
+    montoMovilidad: decimal('monto_movilidad', { precision: 12, scale: 2 }).default('0'),
+    montoHorasExtra: decimal('monto_horas_extra', { precision: 12, scale: 2 }).default('0'),
+    montoEscolaridad: decimal('monto_escolaridad', { precision: 12, scale: 2 }).default('0'),
+    montoBonifAltura: decimal('monto_bonif_altura', { precision: 12, scale: 2 }).default('0'),
+    montoBonifAgua: decimal('monto_bonif_agua', { precision: 12, scale: 2 }).default('0'),
+    totalIngreso: decimal('total_ingreso', { precision: 12, scale: 2 }).default('0'),
+    totalAfecto: decimal('total_afecto', { precision: 12, scale: 2 }).default('0'),
+    // descuentos
+    montoAfpAporte: decimal('monto_afp_aporte', { precision: 12, scale: 2 }).default('0'),
+    montoAfpComision: decimal('monto_afp_comision', { precision: 12, scale: 2 }).default('0'),
+    montoAfpSeguro: decimal('monto_afp_seguro', { precision: 12, scale: 2 }).default('0'),
+    montoOnp: decimal('monto_onp', { precision: 12, scale: 2 }).default('0'),
+    montoConafovicer: decimal('monto_conafovicer', { precision: 12, scale: 2 }).default('0'),
+    montoRenta5ta: decimal('monto_renta_5ta', { precision: 12, scale: 2 }).default('0'), // manual
+    montoAdelanto: decimal('monto_adelanto', { precision: 12, scale: 2 }).default('0'), // manual
+    montoSindical: decimal('monto_sindical', { precision: 12, scale: 2 }).default('0'), // manual
+    totalDescuentos: decimal('total_descuentos', { precision: 12, scale: 2 }).default('0'),
+    netoPago: decimal('neto_pago', { precision: 12, scale: 2 }).default('0'),
+    // empleador (aportes · no afectan neto · suman al costo)
+    montoEsSalud: decimal('monto_essalud', { precision: 12, scale: 2 }).default('0'),
+    montoSctrSalud: decimal('monto_sctr_salud', { precision: 12, scale: 2 }).default('0'),
+    montoSctrPension: decimal('monto_sctr_pension', { precision: 12, scale: 2 }).default('0'),
+    montoSencico: decimal('monto_sencico', { precision: 12, scale: 2 }).default('0'),
+    montoCostoTotal: decimal('monto_costo_total', { precision: 12, scale: 2 }).default('0'),
+  },
+  (t) => ({
+    semanaIdx: index('pld_semana_idx').on(t.semanaId),
+  }),
+);
+export type PlanillaDetalle = typeof planillaDetalle.$inferSelect;
+
+// ─── FIN-5 · Oficina · Rendiciones / Viáticos ────────────────
+// Cualquier usuario registra un gasto; admin/contador aprueba → genera gasto + egreso.
+export const rendiciones = pgTable(
+  'rendiciones',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    codigo: varchar('codigo', { length: 30 }), // REN-2026-0001
+    solicitanteUserId: uuid('solicitante_user_id').references(() => users.id, { onDelete: 'set null' }),
+    solicitanteNombre: varchar('solicitante_nombre', { length: 200 }), // snapshot
+    proyectoId: uuid('proyecto_id').references(() => proyectos.id, { onDelete: 'set null' }), // obra opcional · null = oficina
+    modo: varchar('modo', { length: 12 }).notNull().default('reembolso'), // reembolso · anticipo
+    tipo: varchar('tipo', { length: 20 }).notNull().default('viatico'), // viatico·movilidad·utiles·servicio·compra_menor·otro
+    concepto: text('concepto'),
+    fecha: date('fecha').notNull(),
+    montoAnticipo: decimal('monto_anticipo', { precision: 12, scale: 2 }).notNull().default('0'),
+    montoRendido: decimal('monto_rendido', { precision: 12, scale: 2 }).notNull().default('0'),
+    // borrador · pendiente · aprobado · rendido · cerrado · rechazado
+    estado: varchar('estado', { length: 12 }).notNull().default('borrador'),
+    cuentaId: uuid('cuenta_id').references(() => cuentasBancarias.id, { onDelete: 'set null' }),
+    aprobadoPorUserId: uuid('aprobado_por_user_id').references(() => users.id, { onDelete: 'set null' }),
+    aprobadoEn: timestamp('aprobado_en'),
+    motivoRechazo: text('motivo_rechazo'),
+    gastoId: uuid('gasto_id').references(() => gastos.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+  },
+  (t) => ({
+    estadoIdx: index('rend_estado_idx').on(t.estado),
+    solicitanteIdx: index('rend_solicitante_idx').on(t.solicitanteUserId),
+  }),
+);
+export type Rendicion = typeof rendiciones.$inferSelect;
+
+// Comprobantes de la rendición (sustento fiscal)
+export const rendicionItems = pgTable(
+  'rendicion_items',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    rendicionId: uuid('rendicion_id').notNull().references(() => rendiciones.id, { onDelete: 'cascade' }),
+    tipoComprobante: varchar('tipo_comprobante', { length: 12 }).notNull().default('boleta'), // factura·boleta·rh·recibo
+    serie: varchar('serie', { length: 20 }),
+    numero: varchar('numero', { length: 40 }),
+    ruc: varchar('ruc', { length: 11 }),
+    razon: varchar('razon', { length: 255 }),
+    fecha: date('fecha'),
+    categoria: varchar('categoria', { length: 20 }), // alimentacion·movilidad·hospedaje·utiles·otro
+    subtotal: decimal('subtotal', { precision: 12, scale: 2 }).notNull().default('0'),
+    igv: decimal('igv', { precision: 12, scale: 2 }).notNull().default('0'),
+    total: decimal('total', { precision: 12, scale: 2 }).notNull().default('0'),
+    deducible: boolean('deducible').notNull().default(true), // recibo interno / exceso viático = false
+    archivo: varchar('archivo', { length: 300 }), // ruta NAS (opcional)
+  },
+  (t) => ({
+    rendIdx: index('rend_item_idx').on(t.rendicionId),
+  }),
+);
+export type RendicionItem = typeof rendicionItems.$inferSelect;
+
 // ─── Consorcios · empresas integrantes (cuando contratista = consorcio) ───
 export const consorciosIntegrantes = pgTable(
   'consorcios_integrantes',
@@ -431,6 +1063,38 @@ export const consorciosIntegrantes = pgTable(
     proyectoIdx: index('consorcios_proyecto_idx').on(t.proyectoId),
   }),
 );
+
+// ─── Hitos de obra (ciclo de vida · actas) ───────────────────
+// entrega_terreno → inicio_plazo → (ampliacion_plazo) → culminacion → recepcion → liquidacion → consentimiento
+export const hitoTipoEnum = pgEnum('hito_tipo', [
+  'entrega_terreno',
+  'inicio_plazo',
+  'ampliacion_plazo',
+  'culminacion',
+  'recepcion',
+  'liquidacion',
+  'consentimiento_liquidacion',
+]);
+
+export const hitosObra = pgTable(
+  'hitos_obra',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    proyectoId: uuid('proyecto_id').notNull().references(() => proyectos.id, { onDelete: 'cascade' }),
+    tipo: hitoTipoEnum('tipo').notNull(),
+    fecha: date('fecha').notNull(),
+    numeroDocumento: varchar('numero_documento', { length: 120 }), // N° acta / asiento cuaderno
+    adjuntoNas: text('adjunto_nas'), // ruta NAS al PDF (acta escaneada)
+    notas: text('notas'),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+  },
+  (t) => ({
+    proyectoIdx: index('hitos_proyecto_idx').on(t.proyectoId),
+  }),
+);
+
+export type HitoObra = typeof hitosObra.$inferSelect;
+export type NewHitoObra = typeof hitosObra.$inferInsert;
 
 // ─── Garantías ────────────────────────────────────────────────
 export const garantiaTipoEnum = pgEnum('garantia_tipo', [
@@ -454,7 +1118,8 @@ export const garantias = pgTable(
     fechaEmision: date('fecha_emision'),
     vigenciaDesde: date('vigencia_desde'),
     vigenciaHasta: date('vigencia_hasta'),
-    estado: varchar('estado', { length: 30 }).notNull().default('vigente'), // vigente · vencida · ejecutada · devuelta
+    estado: varchar('estado', { length: 30 }).notNull().default('vigente'), // vigente · ejecutada · devuelta
+    liberaEnHito: hitoTipoEnum('libera_en_hito'), // hito que libera la garantía (recepcion/consentimiento_liquidacion)
     adjuntoNas: text('adjunto_nas'), // ruta NAS al PDF
     notas: text('notas'),
     createdAt: timestamp('created_at').notNull().defaultNow(),
@@ -727,6 +1392,7 @@ export const periodosContables = pgTable(
     reabiertoPor: uuid('reabierto_por').references(() => users.id),
     motivoReapertura: text('motivo_reapertura'),
     fechaReapertura: timestamp('fecha_reapertura'),
+    cierreMeta: jsonb('cierre_meta').$type<Record<string, unknown>>(), // H2.5 · snapshot del estado al cierre (totals/diff/hash)
     createdAt: timestamp('created_at').notNull().defaultNow(),
   },
   (t) => ({
@@ -998,7 +1664,7 @@ export const ordenesCompra = pgTable(
     numero: varchar('numero', { length: 20 }).notNull().unique(), // OC-2026-0001
     correlativo: integer('correlativo').notNull(),
     anio: integer('anio').notNull(), // 2026
-    proyectoId: uuid('proyecto_id').notNull().references(() => proyectos.id, { onDelete: 'cascade' }),
+    proyectoId: uuid('proyecto_id').references(() => proyectos.id, { onDelete: 'set null' }), // null = oficina/empresa (MM)
     proveedorId: uuid('proveedor_id').notNull().references(() => proveedores.id, { onDelete: 'restrict' }),
     requerimientoId: uuid('requerimiento_id').references(() => requerimientos.id, { onDelete: 'set null' }),
     // Fechas
@@ -1034,9 +1700,16 @@ export const ordenesCompra = pgTable(
     emitidaEn: timestamp('emitida_en'),
     entregadaEn: timestamp('entregada_en'),
     canceladaMotivo: text('cancelada_motivo'),
-    // Documentos
+    // Documentos · NAS
     terminos: text('terminos'),
-    pdfNasPath: varchar('pdf_nas_path', { length: 500 }),
+    pdfNasPath: varchar('pdf_nas_path', { length: 500 }), // OC.pdf generado
+    cotizacionNasPath: varchar('cotizacion_nas_path', { length: 500 }), // cotización adjunta (obligatoria)
+    comprobantePagoNasPath: varchar('comprobante_pago_nas_path', { length: 500 }), // captura transferencia (Finanzas)
+    // Pago (eje separado del estado logístico)
+    estadoPago: ocEstadoPagoEnum('estado_pago').notNull().default('pendiente'),
+    pagadoEn: timestamp('pagado_en'),
+    pagadoPorEmail: varchar('pagado_por_email', { length: 255 }),
+    gastoId: uuid('gasto_id'), // FK→gastos.id (constraint en DB · sin .references() para evitar ciclo de tipos OC↔gastos)
     notas: text('notas'),
     createdAt: timestamp('created_at').notNull().defaultNow(),
     updatedAt: timestamp('updated_at').notNull().defaultNow(),
@@ -1156,6 +1829,8 @@ export const documentosVersiones = pgTable(
 // ─── Type exports ─────────────────────────────────────────────
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
+export type Inversion = typeof inversiones.$inferSelect;
+export type NewInversion = typeof inversiones.$inferInsert;
 export type Proyecto = typeof proyectos.$inferSelect;
 export type NewProyecto = typeof proyectos.$inferInsert;
 export type Partida = typeof partidas.$inferSelect;

@@ -1,0 +1,6 @@
+fecha,descripcion,referencia,monto
+2026-13-99,fecha invalida,X1,-100
+basura,texto,Y2,abc
+2026-04-05,linea ok,Z3,-250.50
+,,,
+2026-04-06,encoñding raro €,W4,-99.99

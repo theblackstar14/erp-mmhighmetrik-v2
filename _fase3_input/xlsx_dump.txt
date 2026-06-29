@@ -1,0 +1,312 @@
+
+===== HOJA: Monedas · rango A1:A10 · filas 3 =====
+[0] ["desmoneda"]
+[1] ["PEN"]
+[2] ["USD"]
+
+===== HOJA: FuentesPago · rango A1:A10 · filas 3 =====
+[0] ["desfuentepago"]
+[1] ["Caja Chica"]
+[2] ["Cuenta Corriente"]
+
+===== HOJA: FormasPago · rango A1:A10 · filas 7 =====
+[0] ["desformapago"]
+[1] ["Contado"]
+[2] ["Crédito 15 días"]
+[3] ["Crédito 30 días"]
+[4] ["Transferencia"]
+[5] ["Yape/Plin"]
+[6] ["Caja Chica"]
+
+===== HOJA: TiposDocumento · rango A1:A12 · filas 9 =====
+[0] ["tipcomprobante"]
+[1] ["Factura"]
+[2] ["Boleta"]
+[3] ["Recibo por Honorarios"]
+[4] ["Nota de Crédito"]
+[5] ["Sin Comprobante"]
+[6] ["Contrato"]
+[7] ["Invoice"]
+[8] ["Recibo de servicios"]
+
+===== HOJA: SistPensionario · rango A1:A10 · filas 8 =====
+[0] ["dessistemapensionario"]
+[1] ["AFP Habitat(M)"]
+[2] ["AFP Profuturo(M)"]
+[3] ["S.N.P."]
+[4] ["AFP Integra(M)"]
+[5] ["AFP Integra(F)"]
+[6] ["AFP Profuturo(F)"]
+[7] ["AFP Habitat(F)"]
+
+===== HOJA: TiposGasto · rango A1:A28 · filas 28 =====
+[0] ["tipgasto"]
+[1] ["Compra Materiales"]
+[2] ["Servicio Terceros"]
+[3] ["Movilidad"]
+[4] ["Viáticos"]
+[5] ["Seguro"]
+[6] ["Servicios básicos"]
+[7] ["Comisión"]
+[8] ["Planilla"]
+[9] ["Cliente"]
+[10] ["Socio"]
+[11] ["Varios"]
+[12] ["Impuestos"]
+[13] ["Mantenimiento"]
+[14] ["Devolucion"]
+[15] ["Gasto Bancario"]
+[16] ["Herramientas"]
+[17] ["Maquinaria y equipo"]
+[18] ["EPPS"]
+[19] ["Abono de cliente"]
+[20] ["Prestamo otorgado"]
+[21] ["Prestamo recibido"]
+[22] ["Gasto Administrativo"]
+[23] ["Combustible"]
+[24] ["Otros"]
+[25] ["Alquileres"]
+[26] ["Utiles de oficina"]
+[27] ["Nota de Credito"]
+
+===== HOJA: Descuentos · rango A1:B10 · filas 7 =====
+[0] ["tipimpuesto","pcttasaimpuesto"]
+[1] ["IGV",0.18]
+[2] ["ONP",0.13]
+[3] ["Seguro AFP",0.02]
+[4] ["Aporte AFP",0.16]
+[5] ["Conafov",0.02]
+[6] ["IGV Afecto",0.1]
+
+===== HOJA: Proveedores · rango A1:M465 · filas 465 =====
+[0] ["codproveedor","desproveedor","desdistrito","desdireccion","despersonacontacto","destelefonocontacto","desemail","despersonacontacto2","destelefonocontacto2","desemail2","tipcategoria","desproductos","desdescripcion"]
+[1] [20544464389,"A & A COPIADORAS SOCIEDAD ANONIMA CERRADA","","","","","","","","","","",""]
+[2] [20603566794,"A & A TERRA LAB. S.A.C.","","","","","","","","","","",""]
+[3] [20548252777,"A & E SUMINISTROS S.A.C.","","","","","","","","","","",""]
+[4] [10235655611,"ACERO ANCALLE CESAR DEMETRIO ","","","","","","","","","","",""]
+[5] [10775996868,"ADRIANZEN ENCISO KATHERINE AURELIA","","","","","","","","","","",""]
+[6] [20458378747,"AERO GAS DEL NORTE SAC","","","","","","","","","","",""]
+[7] [20605958452,"AGRO INDRUSTRIA RODRIPLAST PERU S.A.C.","","","","","","","","","","",""]
+[8] [10759458635,"AGUILAR CORRAL ALEXIS DAVID","","","","","","","","","","",""]
+[9] [20613689215,"ALLE ESTACIONES S.A.C.","","","","","","","","","","",""]
+[10] [20513567139,"ALTA VIDDA GAS S.A.C.","","","","","","","","","","",""]
+[11] [10071538007,"ALVA BARROSO VICTOR ELIAS ","","","","","","","","","","",""]
+[12] [20508896701,"APOLLO´S MARKET SAC.","","","","","","","","","","",""]
+[13] [10106458168,"ARANGO TINEO WILBER AUBERTO","","","","","","","","","","",""]
+[14] [20513679875,"ASIA GRIFOS Y SERV. GENERALES SAC","","","","","","","","","","",""]
+[15] [20508018453,"AUTOCLEAN GEORGE S.A.C.","","","","","","","","","","",""]
+[16] [20609339501,"AXEL GAS SAC","","","","","","","","","","",""]
+[17] [20600851803,"BAHIA CAMANA E.I.R.L.","","","","","","","","","","",""]
+[18] [20100047218,"BANCO DE CREDITO DEL PERU","","","","","","","","","","",""]
+[19] [10414424169,"BARILLAS MANRIQUE NORMA","","","","","","","","","","",""]
+[20] [10474880538,"BARRIONUEVO BARRIONUEVO MIGUEL ANGEL ","","","","","","","","","","",""]
+[21] [20602500331,"BBC HOLDING GROUP S.A.C.","","","","","","","","","","",""]
+[22] [20601847192,"BERYPEZ II S.A.C.","","","","","","","","","","",""]
+[23] [10404675864,"BOTICA EIRA","","","","","","","","","","",""]
+[24] [20608430301,"BOTICAS IP S.A.C","","","","","","","","","","",""]
+[25] [20614506009,"BRISMAR &amp; A SAC","","","","","","","","","","",""]
+[26] [10070316485,"CABRERA ZALDIVAR MERCEDES MARTINA","","","","","","","","","","",""]
+[27] [20602743960,"CADENA DE COMERCIO PERÃš S.A.C. - OXXO","","","","","","","","","","",""]
+[28] [20612055361,"CALANCA S.A.C","","","","","","","","","","",""]
+[29] [10429520202,"CALIXTO PIO ANGEL CLAUDIO","","","","","","","","","","",""]
+
+===== HOJA: CuentasBancarias · rango A1:D14 · filas 14 =====
+[0] ["codcuentacomercial","desbanco","desmoneda","desdescripcion"]
+[1] ["194-9927833-0-39","BCP","PEN","Cuenta Corriente Principal"]
+[2] ["REND-KELY","BCP","PEN","Caja Chica Oficina"]
+[3] ["000-3786639","SCOTIABANK","PEN","Cuenta Corriente DORATTA"]
+[4] ["REND-MARIO","BCP","PEN","RENDICION MARIO"]
+[5] ["REND-DANIEL","BCP","PEN","RENDICION DANIEL"]
+[6] ["REND-FRANK","BCP","PEN","RENDICION FRANK"]
+[7] ["REND-JONATHAN","BCP","PEN","RENDICION JONATHA"]
+[8] ["REND-GRECIA","BCP","PEN","RENDICION GRECIA"]
+[9] ["REND-ISRAEL","BCP","PEN","RENDICION ISRAEL"]
+[10] ["REND-VIVIAN","BCP","PEN","RENDICION VIVIAN"]
+[11] ["REND-JOE","BCP","PEN","RENDICION JOE"]
+[12] ["REND-SERGIO","BCP","PEN","RENDICION SERGIO"]
+[13] ["REND-NAYELLI","BCP","PEN","RENDICION NAYELLI"]
+
+===== HOJA: Clientes · rango A1:B50 · filas 8 =====
+[0] ["codcliente","descliente"]
+[1] ["20608496859","ZANE CONSTRUCCION S.A.C. "]
+[2] ["20297832761","CONSTRUCTORA Y CONSULTORA TENORIO SAC"]
+[3] ["20376082114","ORGANISMO SUPERVISOR DE LA INVERSION EN ENERGIA Y MINERIA"]
+[4] ["00000000000","VARIOS"]
+[5] ["20609286360","DORATTA INGENIERIA Y CONSTRUCCION S.A.C."]
+[6] ["20489250731","GOBIERNO REGIONAL HUANUCO "]
+[7] ["20610639764","MM HIGH METRIK ENGINEERS SAC"]
+
+===== HOJA: Proyectos · rango A1:J40 · filas 16 =====
+[0] ["codproyecto","desproyecto","codcliente","descliente","tipestado","pctprogreso","mtopresupuesto","mtopresupuestoejecucion","fecinicio","fecfinplanificado"]
+[1] ["VARIOS","VARIOS","00000000000","VARIOS","activo",0,25000,20000,"2025-10-10T05:00:36.000Z","2025-02-28T05:00:36.000Z"]
+[2] ["PG0001","FAMESA CHANCAY",20608496859,"ZANE CONSTRUCCION S.A.C. ","activo",0,30000,25000,"2025-10-11T05:00:36.000Z","2025-03-01T05:00:36.000Z"]
+[3] ["PG0002","MOLLENDO AREQUIPA","20297832761","CONSTRUCTORA Y CONSULTORA TENORIO SAC","activo",0.1,40000,350000,"2025-10-12T05:00:36.000Z","2025-03-02T05:00:36.000Z"]
+[4] ["PG0003","OSSINERMING","20376082114","ORGANISMO SUPERVISOR DE LA INVERSION EN ENERGIA Y MINERIA","activo",0.2,50000,48000,"2025-10-13T05:00:36.000Z","2025-03-03T05:00:36.000Z"]
+[5] ["PG0004","COLEGIOS SAN IGNACIO","20610639764","MM HIGH METRIK ENGINEERS SAC","activo",0.3,20000,150000,"2025-10-14T05:00:36.000Z","2025-03-04T05:00:36.000Z"]
+[6] ["PG0005","CREMATORIO SURCO","20609286360","DORATTA INGENIERIA Y CONSTRUCCION S.A.C.","activo",0.3,20000,150000,"2025-10-14T05:00:36.000Z","2025-03-04T05:00:36.000Z"]
+[7] ["OF0001","GASTOS DE OFICINA","20610639764","MM HIGH METRIK ENGINEERS SAC","activo",0.3,20000,150000,"2025-10-14T05:00:36.000Z","2025-03-04T05:00:36.000Z"]
+[8] ["PG0006","CONSULTORIA HUANUCO ","20610639764","MM HIGH METRIK ENGINEERS SAC","activo",0.3,20000,150000,"2025-10-14T05:00:36.000Z","2025-03-04T05:00:36.000Z"]
+[9] ["OF0002","GASTOS  BANCARIOS","20610639764","MM HIGH METRIK ENGINEERS SAC","activo",0.3,20000,150000,"2025-10-14T05:00:36.000Z","2025-03-04T05:00:36.000Z"]
+[10] ["OF0003","NO ID / POR CONSULTAR","20610639764","MM HIGH METRIK ENGINEERS SAC","activo",0.3,20000,150000,"2025-10-14T05:00:36.000Z","2025-03-04T05:00:36.000Z"]
+[11] ["OF0004","PRESTAMOS","20610639764","MM HIGH METRIK ENGINEERS SAC","activo",0.3,20000,150000,"2025-10-14T05:00:36.000Z","2025-03-04T05:00:36.000Z"]
+[12] ["OF0005","IMPUESTOS ","20610639764","MM HIGH METRIK ENGINEERS SAC","activo",0.3,20000,150000,"2025-10-14T05:00:36.000Z","2025-03-04T05:00:36.000Z"]
+[13] ["PG0007","COSTA VERDE","20610639764","MM HIGH METRIK ENGINEERS SAC","activo",0.3,20000,150000,"2025-10-14T05:00:36.000Z","2025-03-04T05:00:36.000Z"]
+[14] ["PG0008","CASA HACIENDA SURCO","20609286360","DORATTA INGENIERIA Y CONSTRUCCION S.A.C.","activo",0.3,20000,150000,"2025-10-14T05:00:36.000Z","2025-03-04T05:00:36.000Z"]
+[15] ["OF0006","TRANSFERENCIAS ENTRE CUENTAS  PROPIAS","20610639764","MM HIGH METRIK ENGINEERS SAC","activo",0.3,20000,150000,"2025-10-14T05:00:36.000Z","2025-03-04T05:00:36.000Z"]
+
+===== HOJA: ParamPlanilla · rango A1:U27 · filas 27 =====
+[0] ["tipcategoriaempleado","mtojornalbase","mtomovilidad","pctbuc","mtobuc","pctjornadadominical","mtojornadadominical","pctcompensacionvacacional","mtocompensacionvacacional","pctcts","mtocts","pctgratificacion","mtogratificacion","pcthoraextra60pct","mtohoraextra60pct","pcthoraextra100pct","mtohoraextra100pct","","","",""]
+[1] ["Operario",87.3,8.6,0.32,27.936,0.166666666666667,14.550000000000027,0.1,8.73,0.15,13.094999999999999,0.31,27.063,0.2,17.46,0.25,21.825,"","","",""]
+[2] ["Operario 1",158.33,"","","",0.166666666666667,26.388333333333385,0.1,15.833000000000002,0.15,23.7495,0.31,49.082300000000004,0.2,31.666000000000004,0.25,39.5825,"","","",""]
+[3] ["Oficial 1",125,"","","",0.166666666666667,20.833333333333375,0.1,12.5,0.15,18.75,0.31,38.75,0.2,25,0.25,31.25,"","","",""]
+[4] ["Maestro",110,8.6,0.32,35.2,0.166666666666667,18.333333333333368,0.1,11,0.15,16.5,0.31,34.1,0.2,22,0.25,27.5,"","","",""]
+[5] ["Oficial",68.5,8.6,0.3,20.55,0.166666666666667,11.41666666666669,0.1,6.8500000000000005,0.15,10.275,0.27,18.495,0.2,13.700000000000001,0.25,17.125,"","","",""]
+[6] ["Peón",61.65,8.6,0.3,18.494999999999997,0.166666666666667,10.27500000000002,0.1,6.165,0.15,9.247499999999999,0.27,16.645500000000002,0.2,12.33,0.25,15.4125,"","","",""]
+[7] ["Empleado","","","","","","","","","","","","","","","","","","","",""]
+[8] ["","","","","","","","","","","","","Moneda","Moneda!$A$2:INDICE(Moneda!$A:$A;CONTARA(Moneda!$A:$A))"," ","Moneda!$A$2:INDICE(Moneda!$A:$A;CONTARA(Moneda!$A:$A))","","","","","OK"]
+[9] ["","","","","","","","","","","","","FuentesPago","FuentesPago!$A$2:INDICE(FuentesPago!$A:$A;CONTARA(FuentesPago!$A:$A))"," ","FuentesPago!$A$2:INDICE(FuentesPago!$A:$A;CONTARA(FuentesPago!$A:$A))","","","","","OK"]
+[10] ["","","","","","","","","","","","","FormasPago","FormasPago!$A$2:INDICE(FormasPago!$A:$A;CONTARA(FormasPago!$A:$A))"," ","FormasPago!$A$2:INDICE(FormasPago!$A:$A;CONTARA(FormasPago!$A:$A))","","","","","OK"]
+[11] ["","","","","","","","","","","","","TiposDocumento","TiposDocumento!$A$2:INDICE(TiposDocumento!$A:$A;CONTARA(TiposDocumento!$A:$A))"," ","TiposDocumento!$A$2:INDICE(TiposDocumento!$A:$A;CONTARA(TiposDocumento!$A:$A))","","","","","OK"]
+[12] ["","","","","","","","","","","","","SistPensionario","SistPensionario!$A$2:INDICE(SistPensionario!$A:$A;CONTARA(SistPensionario!$A:$A))"," ","SistPensionario!$A$2:INDICE(SistPensionario!$A:$A;CONTARA(SistPensionario!$A:$A))","","","","","OK"]
+[13] ["","","","","","","","","","","","","TiposGasto","TiposGasto!$A$2:INDICE(TiposGasto!$A:$A;CONTARA(TiposGasto!$A:$A))"," ","TiposGasto!$A$2:INDICE(TiposGasto!$A:$A;CONTARA(TiposGasto!$A:$A))","","","","","OK"]
+[14] ["","","","","","","","","","","","","",""," ","","","","","",""]
+[15] ["","","","","","","","","","","","","Descuentos","Descuentos!$A$2:INDICE(Descuentos!$A:$A;CONTARA(Descuentos!$A:$A))"," ","Descuentos!$A$2:INDICE(Descuentos!$A:$A;CONTARA(Descuentos!$A:$A))","","","","","OK"]
+[16] ["","","","","","","","","","","","","Proveedores","Proveedores!$A$2:INDICE(Proveedores!$A:$A;CONTARA(Proveedores!$A:$A))"," ","Proveedores!$A$2:INDICE(Proveedores!$A:$A;CONTARA(Proveedores!$A:$A))","","","","","OK"]
+[17] ["","","","","","","","","","","","","CuentasBancarias","CuentasBancarias!$A$2:INDICE(CuentasBancarias!$A:$A;CONTARA(CuentasBancarias!$A:$A))"," ","CuentasBancarias!$A$2:INDICE(CuentasBancarias!$A:$A;CONTARA(CuentasBancarias!$A:$A))","","","","","OK"]
+[18] ["","","","","","","","","","","","","Proyectos","Proyectos!$A$2:INDICE(Proyectos!$A:$A;CONTARA(Proyectos!$A:$A))"," ","Proyectos!$A$2:INDICE(Proyectos!$A:$A;CONTARA(Proyectos!$A:$A))","","","","","OK"]
+[19] ["","","","","","","","","","","","","Clientes","Clientes!$A$2:INDICE(Clientes!$A:$A;CONTARA(Clientes!$A:$A))"," ","Clientes!$A$2:INDICE(Clientes!$A:$A;CONTARA(Clientes!$A:$A))","","","","","OK"]
+[20] ["","","","","","","","","","","","","Operario",""," ","","","","","",""]
+[21] ["","","","","","","","","","","","","Operario 1",""," ","","","","","",""]
+[22] ["","","","","","","","","","","","","Oficial 1",""," ","","","","","",""]
+[23] ["","","","","","","","","","","","","Maestro","","","","","","","",""]
+[24] ["","","","","","","","","","","","","Oficial","","","","","","","",""]
+[25] ["","","","","","","","","","","","","Peón","","","","","","","",""]
+[26] ["","","","","","","","","","","","","Empleado","","","","","","","",""]
+
+===== HOJA: Fact de Compras · rango A1:W1605 · filas 1605 =====
+[0] ["ID de Registro","Fecha de Compra","Código de Proyecto Asociado","Nombre de Proyecto Asociado","Tipo de Registro de Compra","Tipo IGV","RUC de Proveedor","Razón Social de proveedor","Tipo de Comprobante","Serie del Comprobante","N° de Comprobante","Moneda","Forma de Pago","Fuente de Pago","Número de Cuenta Asociada","Descripción de Cuenta Asociada","Descripción del Item","Monto Subtotal","Monto IGV","Monto Exonerado","Monto Total","Tipo de Gasto","Observaciones"]
+[1] ["codregistro","fecgestion","codproyecto","desproyecto","tipregistrocompra","codordencompra","codproveedor","desproveedor","tipcomprobante","desseriecomprobante","numcomprobante","desmoneda","desformapago","desfuentepago","codcuentacomercial","desdescripcion","desitemdescripcion","mtosubtotal","mtoigv","mtoexonerado","mtototal","tipgasto","desobservaciones"]
+[2] ["CMP-09001","2025-09-01T05:00:36.000Z","PG0001","FAMESA CHANCAY","Gasto Directo","IGV",20100047218,"BANCO DE CREDITO DEL PERU","Factura","FN01",36382033,"PEN","Transferencia","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","COMISIÓN","","",1,1,"Comisión",""]
+[3] ["CMP-09002","2025-09-02T05:00:36.000Z","PG0005","CREMATORIO SURCO","Gasto Directo","IGV",20127765279,"COESTI S.A.","Factura","F45U",156658,"PEN","Transferencia","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","COMBUSTIBLE (MAX-D DIESEL B5 S50 UV~~~100)",84.75,15.26,"",100.01,"Combustible",""]
+[4] ["CMP-09003","2025-09-02T05:00:36.000Z","PG0004","COLEGIOS SAN IGNACIO","Gasto Directo","IGV",20609592631,"EL PIBE RESTAURANT & PARRILLAS S.A.C","Factura","F001",13574,"PEN","Transferencia","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","ALMUERZO EN PROYECTO","","",515,515,"Viáticos",""]
+[5] ["CMP-09004","2025-09-02T05:00:36.000Z","PG0005","CREMATORIO SURCO","Gasto Directo","IGV",20550372640,"RUTAS DE LIMA S.A.C.","Factura","F705",222559,"PEN","Transferencia","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","PEAJE",6.36,1.14,"",7.5,"Movilidad",""]
+[6] ["CMP-09005","2025-09-02T05:00:36.000Z","PG0005","CREMATORIO SURCO","Gasto Directo","IGV",20550372640,"RUTAS DE LIMA S.A.C.","Factura","F212",3506223,"PEN","Transferencia","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","PEAJE",6.36,1.14,"",7.5,"Movilidad",""]
+[7] ["CMP-09006","2025-09-03T05:00:36.000Z","OF0001","GASTOS DE OFICINA","Gasto Directo","IGV",20608565486,"VANIA POWER DATA S.A.C.","Factura","E001",3,"PEN","Transferencia","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","DISCO SSD 240 GB KINGSTON A400",120,21.6,"",141.6,"Compra Materiales",""]
+[8] ["CMP-09007","2025-09-03T05:00:36.000Z","PG0004","COLEGIOS SAN IGNACIO","Gasto Directo","IGV",20113658500,"HOTELERA EL BOSQUE SCRL","Factura","F001",6798,"PEN","Transferencia","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","SERVICIO DE ALOJAMIENTO DEL 02 AL 09/2025","","",300,300,"Servicio Terceros",""]
+[9] ["CMP-09008","2025-09-04T05:00:36.000Z","OF0001","GASTOS DE OFICINA","Gasto Directo","IGV",20473522404,"COPIGAMA S.A.C.","Factura","E001",6925,"PEN","Transferencia","Cuenta Corriente","REND-NAYELLI","RENDICION NAYELLI","HUELLERO ARTESCO",7.2,1.3,"",8.5,"Servicio Terceros",""]
+[10] ["CMP-09009","2025-09-04T05:00:36.000Z","PG0004","COLEGIOS SAN IGNACIO","Gasto Directo","IGV",20518220218,"PROACCION EMPRESARIAL S.A.C","Factura","F012",6277,"PEN","Transferencia","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","TRASLADO AL AEROPUERTO P. PROYECTO","","",55,55,"Servicio Terceros",""]
+[11] ["CMP-09010","2025-09-04T05:00:36.000Z","PG0004","COLEGIOS SAN IGNACIO","Gasto Directo","IGV",10334087056,"MORI TUESTA OTTO","Factura","F001",10,"PEN","Transferencia","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","ALOJAMIENTO EN VISITA PROYECTO","","",140,140,"Servicio Terceros",""]
+[12] ["CMP-09011","2025-09-05T05:00:36.000Z","PG0001","FAMESA CHANCAY","Gasto Directo","IGV",20100047218,"BANCO DE CREDITO DEL PERU","Factura","FI01",16371998,"PEN","Transferencia","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","COMISIÓN","","",40.5,40.5,"Comisión",""]
+[13] ["CMP-09012","2025-09-05T05:00:36.000Z","PG0001","FAMESA CHANCAY","Gasto Directo","IGV",20100047218,"BANCO DE CREDITO DEL PERU","Factura","FI01",16371949,"PEN","Transferencia","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","COMISIÓN","","",44,44,"Comisión",""]
+[14] ["CMP-09013","2025-09-07T05:00:36.000Z","PG0005","CREMATORIO SURCO","Gasto Directo","IGV",20550372640,"RUTAS DE LIMA S.A.C.","Factura","F703",1093067,"PEN","Transferencia","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","PEAJE",6.36,1.14,"",7.5,"Movilidad",""]
+[15] ["CMP-09014","2025-09-09T05:00:36.000Z","OF0001","GASTOS DE OFICINA","Gasto Directo","IGV",10224077381,"FALCON MARIN GUIDO","Factura","F001",18874,"PEN","Transferencia","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","SERV. NOTARIALES PARA AUMENTO DE CAPITAL","","",2000,2000,"Servicio Terceros",""]
+[16] ["CMP-09015","2025-09-10T05:00:36.000Z","PG0001","FAMESA CHANCAY","Gasto Directo","IGV",20100047218,"BANCO DE CREDITO DEL PERU","Factura","FN01",36631195,"PEN","Transferencia","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","COMISIÓN","","",4.3,4.3,"Comisión",""]
+[17] ["CMP-09016","2025-09-10T05:00:36.000Z","OF0001","GASTOS DE OFICINA","Gasto Directo","IGV",20601694680,"TOTAL NETWORKS S.A.","Factura","F001",9232,"PEN","Transferencia","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","Internet Business 100Mbps Prom. PERIODO: MES DE SETIEMBRE 2025 UBICACION: Av República de Colombia 625, Of. 501 - San Isidro",160.17,28.83,"",189,"Servicio Terceros",""]
+[18] ["CMP-09017","2025-09-10T05:00:36.000Z","PG0002","MOLLENDO AREQUIPA","Gasto Directo","IGV",20612648949,"MAK TEK IMPORT & SERVICE E.I.R.L.","Factura","E001",301,"PEN","Transferencia","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","CORTADORA DE VARILLAS JOS MACHINERY G\r\nQ50A TRIFASICA 220V/380V\r\nDOBLADORA DE VARILLLAS MAKTEK MT25",27060.93,4870.97,"",31931.9,"Compra Materiales",""]
+[19] ["CMP-09018","2025-09-11T05:00:36.000Z","PG0002","MOLLENDO AREQUIPA","Gasto Directo","IGV",10457848787,"LAUREANO CERRON ISABEL MIDALUZ","Nota de Crédito","E001",139,"PEN","Transferencia","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","ROLLO 4 X12\r\nCHUPON",-686.44,-123.56,"",-810,"Compra Materiales",""]
+[20] ["CMP-09019","2025-09-11T05:00:36.000Z","PG0001","FAMESA CHANCAY","Gasto Directo","IGV",20100047218,"BANCO DE CREDITO DEL PERU","Factura","FN01",36666569,"PEN","Transferencia","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","COMISIÓN","","",4.3,4.3,"Comisión",""]
+[21] ["CMP-09020","2025-09-11T05:00:36.000Z","PG0002","MOLLENDO AREQUIPA","Gasto Directo","IGV",20503089794,"GRIFO NUEVO LURIN SAC","Factura","F010",174088,"PEN","Transferencia","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","DIESEL B5 S-50 UV",42.37,7.63,"",50,"Combustible",""]
+[22] ["CMP-09021","2025-09-11T05:00:36.000Z","PG0002","MOLLENDO AREQUIPA","Gasto Directo","IGV",10457848787,"LAUREANO CERRON ISABEL MIDALUZ","Factura","E001",6365,"PEN","Transferencia","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","ROLLO VULCANIZADO 4 X 12\r\nMENNEKE MACHOS Y HEMBRA",686.44,123.56,"",810,"Compra Materiales",""]
+[23] ["CMP-09022","2025-09-11T05:00:36.000Z","PG0002","MOLLENDO AREQUIPA","Gasto Directo","IGV",10457848787,"LAUREANO CERRON ISABEL MIDALUZ","Factura","E001",6362,"PEN","Transferencia","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","ROLLO 4 X12\r\nCHUPON",686.44,123.56,"",810,"Compra Materiales",""]
+[24] ["CMP-09023","2025-09-11T05:00:36.000Z","PG0002","MOLLENDO AREQUIPA","Gasto Directo","IGV",10408064410,"PEREZ LUNASCO ROSARIO MARLENE","Factura","F001",3084,"PEN","Transferencia","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","Tronzadora Dewalt 028730\r\nDisco 14 fierro Tronzadora\r\nWincha STANLEY 8M\r\nDesarmadores\r\nMeneke H",1100.85,198.15,"",1299,"Compra Materiales",""]
+[25] ["CMP-09024","2025-09-11T05:00:36.000Z","PG0002","MOLLENDO AREQUIPA","Gasto Directo","IGV",20613051059,"MKAR S.A.C.","Factura","F001",301,"PEN","Transferencia","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","LENTE CLARO TECSEG IOOHC-C\r\nCASCO AZUL TRIDENTE\r\nPOLO AZUL 2W1 TL\r\nPANTALON DRIL UNA CINTA DE 1\" T/32\r\nZAPATO NACIONAL T/41\r\nGUANTE MULTIFLEX ROJO\r\nARNES CON DOBLE LINEA\r\nBLOQUEADOR SOLAR 6MAX SPF 50 + FRASCO\r\n1 LITRO\r\nCORTA VIENTO DRIL AZUL\r\nPOLO AZU
+[26] ["CMP-09025","2025-09-11T05:00:36.000Z","PG0005","CREMATORIO SURCO","Gasto Directo","IGV",20550372640,"RUTAS DE LIMA S.A.C.","Factura","F704",844499,"PEN","Transferencia","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","PEAJE",6.36,1.14,"",7.5,"Movilidad",""]
+[27] ["CMP-09026","2025-09-11T05:00:36.000Z","PG0005","CREMATORIO SURCO","Gasto Directo","IGV",20550372640,"RUTAS DE LIMA S.A.C.","Factura","F210","2243297","PEN","Transferencia","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","PEAJE",6.36,1.14,"",7.5,"Movilidad",""]
+[28] ["CMP-09027","2025-09-12T05:00:36.000Z","OF0001","GASTOS DE OFICINA","Gasto Directo","IGV",20601211361,"MARYORI PERU S.A.C.","Factura","FQQ1",53561,"PEN","Transferencia","Cuenta Corriente","REND-NAYELLI","RENDICION NAYELLI","BIDON DE AGUA GADU X 20 LTS",30.51,5.49,"",36,"Compra Materiales",""]
+[29] ["CMP-09028","2025-09-12T05:00:36.000Z","PG0002","MOLLENDO AREQUIPA","Gasto Directo","IGV",20273355279,"GRIFO ATICO SRL.","Factura","F016",8131,"PEN","Transferencia","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","DIESEL B5 S-50 UV",84.75,15.26,"",100.01,"Combustible",""]
+
+===== HOJA: Fact de Flujo Cuentas · rango A1:DT3467 · filas 3467 =====
+[0] ["ID de Registro","Fecha de Movimiento","Código de Proyecto Asociado","Nombre de Proyecto Asociado","Tipo de Movimiento","Fuente de Pago","Número de Cuenta Asociada","Descripción de Cuenta Asociada","Fuente de Movimiento","Código de Cliente Asociado","Nombre de Cliente Asociado","Tipo de Comprobante","Serie del Comprobante","N° de Comprobante","Moneda","Monto Total de Movimiento","Descripción del Movimiento","N° operación ","","","","","","","","","","","","","","","","","","","","","","","","",
+[1] ["codmovimiento","fecmovimiento","codproyecto","desproyecto","tipmovimiento","desfuentepago","codcuentacomercial","desdescripcion","desfuenteingreso","codcliente","descliente","tipcomprobante","desseriecomprobante","numcomprobante","desmoneda","mtototal","desdescripcionmov","Columna1","Columna2","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","",""
+[2] ["BN-090001","2025-09-02T05:00:36.000Z","PG0001","FAMESA CHANCAY","Egreso","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","Otros","","","Sin Comprobante","","","PEN",-200,"RETIRO DE TARJETA EMPRESARIAL / NO ID",5404,"","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","",
+[3] ["BN-090002","2025-09-02T05:00:36.000Z","OF0001","GASTOS DE OFICINA","Egreso","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","Otros","","","Sin Comprobante","","","PEN",-200,"RETIRO DE TARJETA EMPRESARIAL / NO ID",5404,"","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","",
+[4] ["BN-090003","2025-09-03T05:00:36.000Z","OF0001","GASTOS DE OFICINA","Egreso","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","Servicios básicos","","","Factura","F001","9232","PEN",-189,"INTERNET OFICINA ",4347096,"","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","",""
+[5] ["BN-090004","2025-09-03T05:00:36.000Z","PG0001","FAMESA CHANCAY","Egreso","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","Otros","","","Sin Comprobante","","","PEN",-272.5,"CONSUMO TARJETA / NO ID",797585,"","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","
+[6] ["BN-090005","2025-09-03T05:00:36.000Z","OF0001","GASTOS DE OFICINA","Egreso","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","Otros","","","Sin Comprobante","","","PEN",-272.5,"CONSUMO TARJETA / NO ID",797585,"","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","
+[7] ["BN-090006","2025-09-04T05:00:36.000Z","OF0001","GASTOS DE OFICINA","Egreso","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","Otros","","","Sin Comprobante","","","PEN",-55,"CONSUMO TARJETA / NO ID",545004,"","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","
+[8] ["BN-090007","2025-09-04T05:00:36.000Z","OF0001","GASTOS DE OFICINA","Egreso","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","Servicios básicos","","","Recibo de servicios","","","PEN",-91.3,"LUZ OFICINA ",3239169,"","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","",""
+[9] ["BN-090008","2025-09-04T05:00:36.000Z","OF0001","GASTOS DE OFICINA","Egreso","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","Mantenimiento","","","Sin Comprobante","","","PEN",-100,"LIMPIEZA OFICINA / PAGO A NERIDA RODRIGUEZ ",3242966,"","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","
+[10] ["BN-090009","2025-09-04T05:00:36.000Z","PG0004","COLEGIOS SAN IGNACIO","Egreso","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","Viáticos","","","Factura","F001",10,"PEN",-140,"OTTO MORI/ ALOJAMIENTO DE PROYECTO",1024507,"","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","
+[11] ["BN-090010","2025-09-05T05:00:36.000Z","PG0001","FAMESA CHANCAY","Egreso","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","Compra Materiales","","","Sin Comprobante","","","PEN",-227.4,"RC - JONATHAN CHALLCO",4104949,"","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","",""
+[12] ["BN-090011","2025-09-05T05:00:36.000Z","PG0002","MOLLENDO AREQUIPA","Egreso","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","Planilla","","","Recibo por Honorarios","","","PEN",-2500,"PG0001- PLANILLA GUILLERMO PAUCAR  CRISTHIAN",55546125,"","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","",
+[13] ["BN-090012","2025-09-05T05:00:36.000Z","PG0001","FAMESA CHANCAY","Egreso","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","Gasto Bancario","","","Sin Comprobante","","","PEN",-0.1,"IMPUESTO ITF ","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","",""
+[14] ["BN-090013","2025-09-08T05:00:36.000Z","OF0001","GASTOS DE OFICINA","Egreso","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","Otros","","","Sin Comprobante","","","PEN",-1258,"KAREN CHAVEZ / NO ID",2013517,"","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","
+[15] ["BN-090014","2025-09-08T05:00:36.000Z","PG0001","FAMESA CHANCAY","Egreso","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","Otros","","","Sin Comprobante","","","PEN",-1258,"KAREN CHAVEZ / NO ID",2013517,"","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","
+[16] ["BN-090015","2025-09-08T05:00:36.000Z","PG0001","FAMESA CHANCAY","Egreso","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","Gasto Bancario","","","Sin Comprobante","","","PEN",-0.1,"IMPUESTO ITF ","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","",""
+[17] ["BN-090016","2025-09-09T05:00:36.000Z","PG0001","FAMESA CHANCAY","Egreso","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","EPPS","","","Factura","","","PEN",-200,"COMPRA DE EPPS / Transferencia Renzo E Rojas ",3283374,"","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","
+[18] ["BN-090017","2025-09-09T05:00:36.000Z","OF0001","GASTOS DE OFICINA","Egreso","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","Planilla","","","Sin Comprobante","","","PEN",-6.94,"AFP DE AGOSTO",2003972,"","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","",""
+[19] ["BN-090018","2025-09-09T05:00:36.000Z","OF0001","GASTOS DE OFICINA","Egreso","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","Planilla","","","Sin Comprobante","","","PEN",-2641.02,"AFP DE AGOSTO",2003972,"","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","",""
+[20] ["BN-090019","2025-09-09T05:00:36.000Z","PG0001","FAMESA CHANCAY","Egreso","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","Gasto Bancario","","","Sin Comprobante","","","PEN",-0.1,"IMPUESTO ITF ","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","",""
+[21] ["BN-090020","2025-09-10T05:00:36.000Z","PG0002","MOLLENDO AREQUIPA","Egreso","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","Maquinaria y equipo","","","Factura","E001",301,"PEN",-31936.2,"MAK TEK IMPORT & SERVICE/ COMPRA CORTADORA DE VARILLAS",2016991,"","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","
+[22] ["BN-090021","2025-09-10T05:00:36.000Z","OF0001","GASTOS DE OFICINA","Egreso","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","Otros","","","Sin Comprobante","","","PEN",-20,"AARON M SUTA / NO ID",1012689,"","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","",
+[23] ["BN-090022","2025-09-10T05:00:36.000Z","PG0001","FAMESA CHANCAY","Egreso","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","Otros","","","Sin Comprobante","","","PEN",-50,"SERGIO CHANCO / NO ID",852632,"","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","",
+[24] ["BN-090023","2025-09-10T05:00:36.000Z","PG0002","MOLLENDO AREQUIPA","Egreso","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","Planilla","","","Sin Comprobante","","","PEN",-150,"JUAN GARCIA / VIATICOS",901823,"","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","
+[25] ["BN-090024","2025-09-10T05:00:36.000Z","PG0005","CREMATORIO SURCO","Egreso","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","Otros","","","Sin Comprobante","","","PEN",-1500,"JESSICA NUÑEZ VILLANUEVA / NO ID",1829579,"","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","",""
+[26] ["BN-090025","2025-09-10T05:00:36.000Z","PG0001","FAMESA CHANCAY","Egreso","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","Gasto Bancario","","","Sin Comprobante","","","PEN",-1.6,"IMPUESTO ITF ","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","",""
+[27] ["BN-090026","2025-09-11T05:00:36.000Z","PG0002","MOLLENDO AREQUIPA","Egreso","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","EPPS","","","Factura","F001",301,"PEN",-4668.4,"COMPRA EPPS - MKAR S.A.C.",56209298,"","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","",
+[28] ["BN-090027","2025-09-11T05:00:36.000Z","PG0002","MOLLENDO AREQUIPA","Egreso","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","Maquinaria y equipo","","","Factura","F001",3084,"PEN",-1299,"PEREZ LUNASCO/ COMPRA TRONZADORA",56117712,"","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","",
+[29] ["BN-090028","2025-09-11T05:00:36.000Z","PG0002","MOLLENDO AREQUIPA","Egreso","Cuenta Corriente","194-9927833-0-39","Cuenta Corriente Principal","Compra Materiales","","","Factura","E001",6365,"PEN",-810,"LAUREANO CERRON ISABEL MIDALUZ / MENEKE",56118285,"","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","",""
+
+===== HOJA: Fact de Inventario · rango A1:P1082 · filas 1082 =====
+[0] ["ID de Registro","Fecha de Movimiento","RUC de Proveedor","Razón Social de proveedor","Tipo de Comprobante","Serie del Comprobante","N° de Comprobante","Cantidad de Items","Descripción del Item","Monto Total","Categoría","Estado","Código de Proyecto Asociado","Nombre de Proyecto Asociado","Responsable","Observación"]
+[1] ["coditem","fecmovimiento","codproveedor","desproveedor","tipcomprobante","desseriecomprobante","numcomprobante","numitem","desdescripcionitem","mtovalorunitario","tipcategoria","desestado","codproyecto","desproyecto","nbrresponsable","desobservacion"]
+[2] ["ITM-090001","2025-09-11T05:00:36.000Z",10457848787,"LAUREANO CERRON ISABEL MIDALUZ","Factura","E001",6365,1,"ROLLO VULCANIZADO 4 X 12",584.7457,"Compra Materiales","","PG0001","FAMESA CHANCAY","",""]
+[3] ["ITM-090002","2025-09-15T05:00:36.000Z","20112273922","TIENDAS DEL MEJORAMIENTO DEL HOGAR S.A.","FACTURA","F522",165091,1,"PANTALON TRABAJO DENIM C/R",51.8964,"EPPs","","PG0005","CREMATORIO SURCO","",""]
+[4] ["ITM-090003","2025-09-15T05:00:36.000Z","20112273922","TIENDAS DEL MEJORAMIENTO DEL HOGAR S.A.","FACTURA","F522",165091,1,"PANTALON TRABAJO DENIM C/R",51.8964,"EPPs","","PG0005","CREMATORIO SURCO","",""]
+[5] ["ITM-090004","2025-09-16T05:00:36.000Z","20613051059","MKAR S.A.C.","Factura","F001",318,4,"CASCO BLANCO TRIDENTE",248.00000000000003,"EPPS","","PG0001","FAMESA CHANCAY","",""]
+[6] ["ITM-090005","2025-09-16T05:00:36.000Z","20613051059","MKAR S.A.C.","Factura","F001",318,24,"CORTA VIENTO DRILL AZUL",1612.8000000000002,"EPPS","","PG0001","FAMESA CHANCAY","",""]
+[7] ["ITM-090006","2025-09-16T05:00:36.000Z","20613051059","MKAR S.A.C.","Factura","F001",318,24,"LENTE CLARO CUADRADO TECSEG 200AF",1612.8000000000002,"EPPS","","PG0001","FAMESA CHANCAY","",""]
+[8] ["ITM-090007","2025-09-16T05:00:36.000Z","20613051059","MKAR S.A.C.","Factura","F001",318,24,"TAPON DE OIDO CAJITA",691.2,"EPPS","","PG0001","FAMESA CHANCAY","",""]
+[9] ["ITM-090008","2025-09-16T05:00:36.000Z","20613051059","MKAR S.A.C.","Factura","F001",318,6,"RESPIRADOR MEDIA CARA DOS VIAS",468,"EPPS","","PG0001","FAMESA CHANCAY","",""]
+[10] ["ITM-090009","2025-09-16T05:00:36.000Z","20613051059","MKAR S.A.C.","Factura","F001",318,24,"CHALECO NARANJA H CINTA CHINA T/L CON LOGO",14688,"EPPS","","PG0001","FAMESA CHANCAY","",""]
+[11] ["ITM-090010","2025-09-16T05:00:36.000Z","20613051059","MKAR S.A.C.","Factura","F001",318,24,"POLO PLOMO 20/1 T/L CON LOGO",13536,"EPPS","","PG0001","FAMESA CHANCAY","",""]
+[12] ["ITM-090011","2025-09-16T05:00:36.000Z","20613051059","MKAR S.A.C.","Factura","F001",318,24,"PANTALON DRIL UNA CINTA T/L",9792.000000000002,"EPPS","","PG0001","FAMESA CHANCAY","",""]
+[13] ["ITM-090012","2025-09-16T05:00:36.000Z","20613051059","MKAR S.A.C.","Factura","F001",318,24,"ZAPATO NACIONAL ",21888,"EPPS","","PG0001","FAMESA CHANCAY","",""]
+[14] ["ITM-090013","2025-09-16T05:00:36.000Z","20613051059","MKAR S.A.C.","Factura","F001",318,2,"GUANTE MULTIFLEX ROJO",104,"EPPS","","PG0001","FAMESA CHANCAY","",""]
+[15] ["ITM-090014","2025-09-16T05:00:36.000Z","20613051059","MKAR S.A.C.","Factura","F001",318,2,"BLOQUEADOR SOLAR 6MAX SPF 50 + FRASCO 1 LITRO",320,"EPPS","","PG0001","FAMESA CHANCAY","",""]
+[16] ["ITM-090015","2025-09-16T05:00:36.000Z","20613051059","MKAR S.A.C.","Factura","F001",318,5,"ARNES CON DOBLE LINEA",3125,"EPPS","","PG0001","FAMESA CHANCAY","",""]
+[17] ["ITM-090016","2025-09-20T05:00:36.000Z","20608390279","FERROSOLUCIONES VIDAL E.I.R.L.","Factura","E001",10925,2,"NIVEL 24 TRAMONTINA",120,"Herramientas","","PG0001","FAMESA CHANCAY","",""]
+[18] ["ITM-090017","2025-09-20T05:00:36.000Z","20608390279","FERROSOLUCIONES VIDAL E.I.R.L.","Factura","E001",10925,1,"ESCUADRA 12",26,"Herramientas","","PG0001","FAMESA CHANCAY","",""]
+[19] ["ITM-090018","2025-09-20T05:00:36.000Z","20608390279","FERROSOLUCIONES VIDAL E.I.R.L.","Factura","E001",10925,1,"MARTILLO",10,"Herramientas","","PG0001","FAMESA CHANCAY","",""]
+[20] ["ITM-090019","2025-09-20T05:00:36.000Z","20608390279","FERROSOLUCIONES VIDAL E.I.R.L.","Factura","E001",10925,3,"PLOMADA",135,"Herramientas","","PG0001","FAMESA CHANCAY","",""]
+[21] ["ITM-090020","2025-09-20T05:00:36.000Z","20608390279","FERROSOLUCIONES VIDAL E.I.R.L.","Factura","E001",10925,2,"MADEJA",16,"Herramientas","","PG0001","FAMESA CHANCAY","",""]
+[22] ["ITM-090021","2025-09-20T05:00:36.000Z","20608390279","FERROSOLUCIONES VIDAL E.I.R.L.","Factura","E001",10925,1,"PATA DE CABRA",15,"Herramientas","","PG0001","FAMESA CHANCAY","",""]
+[23] ["ITM-090022","2025-09-20T05:00:36.000Z","20608390279","FERROSOLUCIONES VIDAL E.I.R.L.","Factura","E002",10926,1,"MOCHILA JADEVER ",100.00000000000001,"Herramientas","","PG0001","FAMESA CHANCAY","",""]
+[24] ["ITM-090023","2025-09-20T05:00:36.000Z","20112273922","TIENDAS DEL MEJORAMIENTO DEL HOGAR S.A.","Factura","F459",94993,1,"CANDADO STD YALE 30MM Y110",32.9,"Herramientas","","PG0001","FAMESA CHANCAY","",""]
+[25] ["ITM-090024","2025-09-20T05:00:36.000Z","20608390279","FERROSOLUCIONES VIDAL E.I.R.L.","Factura","E001",10925,1,"PALA CUCHARA TRAMONTINA",23,"Herramientas","","PG0001","FAMESA CHANCAY","",""]
+[26] ["ITM-090025","2025-09-20T05:00:36.000Z","20608390279","FERROSOLUCIONES VIDAL E.I.R.L.","Factura","E001",10925,3,"BUGUI PESADA NACIONAL",1800,"Herramientas","","PG0001","FAMESA CHANCAY","",""]
+[27] ["ITM-090026","2025-09-20T05:00:36.000Z","20608390279","FERROSOLUCIONES VIDAL E.I.R.L.","Factura","E001",10925,1,"JUEGO DE DESARMADOR COMPLETO",48.00000000000001,"Herramientas","","PG0001","FAMESA CHANCAY","",""]
+[28] ["ITM-090027","2025-09-20T05:00:36.000Z",10206446655,"TAIPE ESTEBAN ELADIO","Factura","E001",204,4,"MENEKES",159.92000000000002,"Herramientas","","PG0001","FAMESA CHANCAY","",""]
+[29] ["ITM-090028","2025-09-20T05:00:36.000Z",10206446655,"TAIPE ESTEBAN ELADIO","Factura","E001",204,2,"CAJAS DE 19<15",27.98,"Compra Materiales","","PG0001","FAMESA CHANCAY","",""]
+
+===== HOJA: Fact de Planilla Obreros · rango A1:BG12 · filas 12 =====
+[0] ["ID de Registro","Fecha de Inicio Semana","Fecha de Fin de Semana","Mes de Gestión","Código de Proyecto Asociado","Nombre de Proyecto Asociado","Tipo de Comprobante","Nombre del Empleado","Tipo Documento de Identificación","N° de Documento de Identificación","Fecha de Nacimiento de Empleado","Sistema de Pensión","CUSPP","Fecha de Ingreso","Categoría del Empleado","Tenencia de Hijos","Cantidad de Hijos","Aplica Movilidad","Asistencia Lunes","Asistencia Martes","Asistencia Miércoles","Asistencia 
+[1] ["codplanilla","fecinigestion","fecfingestion","codmes","codproyecto","nbrproyecto","tipcategoria","nbrempleado","tipdocidentificacion","coddocidentificacion","fecnaciminetoempleado","dessistemapensionario","codcuspp","fecingreso","tipcategoriaempleado","flgtenenciahijos","numhijos","flgaplicamovilidad","codasistencialunes","codasistenciamartes","codasistenciamiercoles","codasistenciajueves","codasistenciaviernes","codasistenciasabado","numtotdialaborado","flgjornadadominical","numtotfaltajustif
+[2] ["PO-0001","","","","","","","","DNI","43575787","1986-05-18T05:00:36.000Z","AFP Habitat(M)","315481NCMLO7","2025-09-15T05:00:36.000Z","Operario","No",0,"No","S","S","S","S","S","S",6,"Sí",0,0,"","",523.8,"",87.30000000000017,167.61599999999999,52.379999999999995,"","","","",162.378,14.6664,78.57,"","",1086.7104000000002,831.0959999999999,"","","","","","","","","","","","BCP","19192618049082"]
+[3] ["PO-0002","","","","","","","","DNI","10230210","1976-09-14T05:00:36.000Z","AFP Profuturo(M)","261991JGRCR3","2025-09-15T05:00:36.000Z","Maestro","No",0,"No","S","S","S","S","S","S",6,"Sí",0,0,"","",660,"",110.0000000000002,211.20000000000002,66,"","","","",204.6,18.477899999999998,99,"","",1369.2779000000003,1047.18,"","","","","","","","","","","","BCP","19428235128030"]
+[4] ["","","","","","","","","DNI","42061664","1982-08-06T05:00:36.000Z","S.N.P.","","2025-09-24T05:00:36.000Z","Peón","Sí",1,"No","S","S","S","S","S","S",6,"Sí",0,0,"","",369.9,35.9625,61.65000000000012,110.96999999999998,36.99,"","",34.4,"",99.873,5.9184,55.48499999999999,"","",800.8739000000002,412.06750000000005,"","","","","","","","","","","","BCP","42595233811076"]
+[5] ["","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","",""]
+[6] ["","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","",""]
+[7] ["","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","",""]
+[8] ["","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","",""]
+[9] ["","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","",""]
+[10] ["","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","",""]
+[11] ["","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","",""]
+
+===== HOJA: Fact de Planilla Adm · rango A1:AT17 · filas 16 =====
+[0] ["ID de Registro","Fecha de Inicio Gestión","Fec de Fin Gestión","Mes de Gestión","Nombre del Empleado","Tipo Documento de Identificación","N° de Documento de Identificación","Categoría del Empleado","Fecha de Ingreso","Sistema de Pensión","CUSPP","Asignación Familiar","Días Laborales","Días del Mes","Días de Falta Justificada","Días de Falta Injustificada","Días de Vacaciones","Monto Jornada Básica","Monto Jornada Dominical","Monto Otra Bonificación","Monto Asignación Familiar","Monto IncrenSPP
+[1] ["codplanilla","fecinigestion","fecfingestion","codmes","nbrempleado","tipdocidentificacion","docidentificacion","tipcategoriaempleado","fecingreso","nbrsistemapension","codcuspp","flgasignacionfamiliar","numtotdialaborado","numdiasmes","numdiasfaltajustificada","numdiasfaltainjustificada","numdiasvacaciones","mtojornadabasica","mtojornadadominical","mtootrabonificacion","mtoasignacionfamiliar","mtoincrenspp","mtovacacionesordinaria","mtovacacionestrunca","mtohorasextra25pct","mtohorasextra35pct
+[2] ["PA-0001","2025-09-01T05:00:36.000Z","2025-09-30T05:00:36.000Z",202509,"CHALLCO HUAMAN JONATHAN EDWARD","DNI",46710141,"Empleado","2025-08-01T05:00:36.000Z","AFP Integra(M)","","No",26,30,"","","",2000,"","","","","","","","","","","","","","","","","","","","","","","","","","","",""]
+[3] ["PA-0002","2025-09-01T05:00:36.000Z","2025-09-30T05:00:36.000Z",202509,"DELGADO VILLEGAS EDWIN OSCAR","DNI",72198729,"Empleado","2025-09-25T05:00:36.000Z","AFP Integra(M)","","No",26,30,"","","",4500,"","","","","","","","","","","","","","","","","","","","","","","","","","","",""]
+[4] ["PA-0003","2025-09-01T05:00:36.000Z","2025-09-30T05:00:36.000Z",202509,"GARCIA CALDERON MARIO GUILLERMO","DNI",48448443,"Empleado","2025-06-01T05:00:36.000Z","AFP Profuturo(M)","","No",26,30,"","","",10000,"","","","","","","","","","","","","","","","","","","","","","","","","","","",""]
+[5] ["PA-0004","2025-09-01T05:00:36.000Z","2025-09-30T05:00:36.000Z",202509,"HUERTA FELIX JOSEPH JOHAN","DNI",43760364,"Empleado","2023-12-01T05:00:36.000Z","AFP Profuturo(M)","","No",26,30,"","","",1130,"","","","","","","","","","","","","","","","","","","","","","","","","","","",""]
+[6] ["PA-0005","2025-09-01T05:00:36.000Z","2025-09-30T05:00:36.000Z",202509,"LEGUIA ORTIZ GRECIA ALEJANDRA","DNI",70148933,"Empleado","2025-07-09T05:00:36.000Z","AFP Integra(F)","","No",26,30,"","","",3000,"","","","","","","","","","","","","","","","","","","","","","","","","","","",""]
+[7] ["PA-0006","2025-09-01T05:00:36.000Z","2025-09-30T05:00:36.000Z",202509,"MORENO RAMOS VICTOR JOEL","DNI",70998972,"Empleado","2023-06-08T05:00:36.000Z","AFP Integra(M)","","No",26,30,"","","",1130,"","","","","","","","","","","","","","","","","","","","","","","","","","","",""]
+[8] ["PA-0007","2025-09-01T05:00:36.000Z","2025-09-30T05:00:36.000Z",202509,"RIVERA LOZANO VIVIAN","DNI",72172317,"Empleado","2025-06-01T05:00:36.000Z","AFP Profuturo(F)","","No",26,30,"","","",3500,"","","","","","","","","","","","","","","","","","","","","","","","","","","",""]
+[9] ["PA-0008","2025-09-01T05:00:36.000Z","2025-09-30T05:00:36.000Z",202509,"ROJAS CESPEDES RENZO ENZO","DNI",47879454,"Empleado","2025-08-01T05:00:36.000Z","AFP Integra(M)","","No",26,30,"","","",2000,"","","","","","","","","","","","","","","","","","","","","","","","","","","",""]
+[10] ["PA-0009","2025-09-01T05:00:36.000Z","2025-09-30T05:00:36.000Z",202509,"SANCHEZ TAPIA NAYELLI BRISET","DNI",75458433,"Empleado","2025-06-20T05:00:36.000Z","AFP Integra(F)","","No",26,30,"","","",2000,"","","","","","","","","","","","","","","","","","","","","","","","","","","",""]
+[11] ["","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","",""]
+[12] ["","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","",""]
+[13] ["","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","",""]
+[14] ["","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","",""]
+[15] ["","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","",""]

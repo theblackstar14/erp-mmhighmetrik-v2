@@ -1,0 +1,6 @@
+fecha,descripcion,referencia,monto
+2026-13-99,fecha invalida calendario,X1,-100
+2026-04-05,linea valida 1,Z3,-250.50
+basura,fecha texto,Y2,-99
+2026-04-06,linea valida 2,W4,-77.00
+2026-02-30,feb 30 inexistente,V5,-50

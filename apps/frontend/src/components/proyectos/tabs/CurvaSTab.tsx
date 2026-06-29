@@ -1,10 +1,13 @@
 import { useQuery } from '@tanstack/react-query';
 import { Activity, TrendingDown, TrendingUp } from 'lucide-react';
-import { useState } from 'react';
+import { Suspense, lazy, useState } from 'react';
 import { type CurvaSData, api } from '@/lib/api.js';
 import { cn, fmtCompact, fmtPEN } from '@/lib/utils.js';
 
+const CurvaSChartEcharts = lazy(() => import('./CurvaSChartEcharts.js'));
+
 type LabelMode = 'fecha' | 'mes';
+type Metric = 'obra' | 'inversion';
 
 export function CurvaSTab({ proyectoId }: { proyectoId: string }) {
   const { data: resp, isLoading } = useQuery({
@@ -12,6 +15,8 @@ export function CurvaSTab({ proyectoId }: { proyectoId: string }) {
     queryFn: () => api.proyectos.getCurvaS(proyectoId),
   });
   const [labelMode, setLabelMode] = useState<LabelMode>('fecha');
+  // Default: avance físico obra (inversión por ahora sin ingesta · togglable)
+  const [metricRaw, setMetricRaw] = useState<Metric | null>(null);
 
   if (isLoading) return <div className="text-[12px] text-ink-3">Cargando curva S...</div>;
   const data = resp?.data;
@@ -25,32 +30,128 @@ export function CurvaSTab({ proyectoId }: { proyectoId: string }) {
     );
   }
 
-  const hayEjecucion = data.realAcum.some((v) => v > 0) || data.earnedAcum.some((v) => v > 0);
+  const inv = data.inversion;
+  const hasInversion = !!inv && inv.BAC > 0;
+  // default: avance físico obra (la inversión queda en 0 sin ingesta · usuario puede togglear)
+  const metric: Metric = metricRaw ?? 'obra';
+  const setMetric = (m: Metric) => setMetricRaw(m);
+  const activeMetric: Metric = hasInversion ? metric : 'obra';
+
+  const labelOf = (b: CurvaSData['buckets'][number]) =>
+    labelMode === 'mes'
+      ? `Mes ${b.idx}`
+      : new Date(b.year, b.month, 1).toLocaleDateString('es-PE', { month: 'short', year: '2-digit' }).replace('.', '');
+
+  // ── Vista activa · mapea arrays según métrica ──
+  const view =
+    activeMetric === 'inversion' && inv
+      ? {
+          BAC: inv.BAC,
+          PV: inv.PV,
+          EV: inv.EV,
+          planAcum: inv.planAcum,
+          earnedAcum: inv.evAcum,
+          realAcum: [] as number[], // inversión no separa AC
+          plan: inv.plan,
+          earned: inv.ev,
+          real: [] as number[],
+          pctCompletado: inv.pctRealHoy,
+          pctPlan: inv.pctPlanHoy,
+          spi: inv.spi,
+          hasAC: false,
+          hayEjecucion: inv.evIngestado,
+        }
+      : {
+          BAC: data.evm.BAC,
+          PV: data.evm.PV,
+          EV: data.evm.EV,
+          planAcum: data.planAcum,
+          earnedAcum: data.earnedAcum,
+          realAcum: data.realAcum,
+          plan: data.plan,
+          earned: data.earned,
+          real: data.real,
+          pctCompletado: data.evm.pctCompletado,
+          pctPlan: data.evm.BAC > 0 ? (data.evm.PV / data.evm.BAC) * 100 : 0,
+          spi: data.evm.SPI,
+          hasAC: true,
+          hayEjecucion: data.realAcum.some((v) => v > 0) || data.earnedAcum.some((v) => v > 0),
+        };
+
   const fuenteLabel = {
     valorizaciones: { txt: 'Valorizaciones aprobadas', cls: 'green' },
     avances: { txt: 'Avances físicos', cls: 'blue' },
     mixed: { txt: 'Valorizaciones + avances', cls: 'blue' },
     'plan-only': { txt: 'Solo plan · sin ejecución', cls: 'amber' },
   }[data.fuente];
-  const labelOf = (b: CurvaSData['buckets'][number]) =>
-    labelMode === 'mes'
-      ? `Mes ${b.idx}`
-      : new Date(b.year, b.month, 1).toLocaleDateString('es-PE', { month: 'short', year: '2-digit' }).replace('.', '');
 
   return (
     <div className="space-y-4">
+      {/* Banner jerárquico · inversión primario (oficial MEF) · obra secundario */}
+      {hasInversion && inv && (
+        <div className="rounded-md border border-line bg-bg-elev overflow-hidden">
+          {/* Primario · INVERSIÓN */}
+          <button
+            type="button"
+            onClick={() => setMetric('inversion')}
+            className={cn(
+              'w-full text-left px-4 py-3.5 transition-colors border-l-2',
+              activeMetric === 'inversion' ? 'border-primary bg-primary/5' : 'border-transparent hover:bg-bg-sunken',
+            )}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-2">
+                Avance de inversión
+                <span className="ml-2 chip green">oficial MEF/OxI</span>
+              </span>
+              {activeMetric === 'inversion' && <span className="chip blue">viendo</span>}
+            </div>
+            <div className="mt-1 flex items-baseline gap-2.5 flex-wrap">
+              <span className="text-[30px] font-bold tracking-[-0.02em] text-primary leading-none">
+                {inv.pctRealHoy.toFixed(2)}%
+              </span>
+              <span className="text-[12px] text-ink-3">ejecutado</span>
+              <DeltaPill pct={inv.pctRealHoy} plan={inv.pctPlanHoy} />
+            </div>
+            <div className="mt-1 text-[10.5px] text-ink-4">
+              Base monto inversión {fmtCompact(inv.BAC)} · obra + mobiliario + ET + supervisiones
+              {!inv.evIngestado && <span className="ml-1 text-warn-ink">· sin avance real ingestado</span>}
+            </div>
+          </button>
+          {/* Secundario · OBRA */}
+          <button
+            type="button"
+            onClick={() => setMetric('obra')}
+            className={cn(
+              'w-full text-left px-4 py-2.5 border-t border-line transition-colors border-l-2',
+              activeMetric === 'obra' ? 'border-primary bg-primary/5' : 'border-transparent hover:bg-bg-sunken',
+            )}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-baseline gap-2 flex-wrap">
+                <span className="text-[11px] text-ink-3">Avance físico obra (CD):</span>
+                <span className="text-[16px] font-bold tracking-[-0.02em] text-ink-1">
+                  {data.evm.pctCompletado.toFixed(2)}%
+                </span>
+                <DeltaPill pct={data.evm.pctCompletado} plan={data.evm.BAC > 0 ? (data.evm.PV / data.evm.BAC) * 100 : 0} small />
+                <span className="text-[10px] text-ink-4">· interno · base {fmtCompact(data.evm.BAC)}</span>
+              </div>
+              {activeMetric === 'obra' && <span className="chip blue shrink-0">viendo</span>}
+            </div>
+          </button>
+        </div>
+      )}
+
       {/* Toolbar */}
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-line bg-bg-elev px-3 py-2">
         <div>
           <h3 className="text-[13px] font-semibold flex items-center gap-2">
-            Curva S · Avance acumulado
+            Curva S · {activeMetric === 'inversion' ? 'Inversión' : 'Obra (CD)'}
             <span className={`chip ${fuenteLabel.cls}`}>{fuenteLabel.txt}</span>
           </h3>
           <p className="text-[11px] text-ink-3 mt-0.5">
             {data.buckets.length} meses · Fecha de corte: {new Date().toLocaleDateString('es-PE')}
-            {!hayEjecucion && (
-              <span className="ml-2 text-warn-ink">· Sin ejecución registrada</span>
-            )}
+            {!view.hayEjecucion && <span className="ml-2 text-warn-ink">· Sin ejecución registrada</span>}
           </p>
         </div>
         <div className="flex rounded-md border border-line overflow-hidden">
@@ -59,9 +160,7 @@ export function CurvaSTab({ proyectoId }: { proyectoId: string }) {
             onClick={() => setLabelMode('fecha')}
             className={cn(
               'px-3 py-1 text-[11px] font-medium',
-              labelMode === 'fecha'
-                ? 'bg-primary text-primary-foreground'
-                : 'bg-bg-elev text-ink-3 hover:bg-bg-sunken',
+              labelMode === 'fecha' ? 'bg-primary text-primary-foreground' : 'bg-bg-elev text-ink-3 hover:bg-bg-sunken',
             )}
           >
             Fechas
@@ -71,9 +170,7 @@ export function CurvaSTab({ proyectoId }: { proyectoId: string }) {
             onClick={() => setLabelMode('mes')}
             className={cn(
               'px-3 py-1 text-[11px] font-medium border-l border-line',
-              labelMode === 'mes'
-                ? 'bg-primary text-primary-foreground'
-                : 'bg-bg-elev text-ink-3 hover:bg-bg-sunken',
+              labelMode === 'mes' ? 'bg-primary text-primary-foreground' : 'bg-bg-elev text-ink-3 hover:bg-bg-sunken',
             )}
           >
             Mes N
@@ -83,49 +180,50 @@ export function CurvaSTab({ proyectoId }: { proyectoId: string }) {
 
       {/* Chips EVM */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
-        <Kpi lbl="BAC" val={fmtCompact(data.evm.BAC)} sub="Presupuesto total" mono />
-        <Kpi
-          lbl="PV"
-          val={fmtCompact(data.evm.PV)}
-          sub={`${data.evm.BAC > 0 ? ((data.evm.PV / data.evm.BAC) * 100).toFixed(1) : '0'}% planificado`}
-          mono
-        />
+        <Kpi lbl="BAC" val={fmtCompact(view.BAC)} sub={activeMetric === 'inversion' ? 'Monto inversión' : 'Presupuesto obra'} mono />
+        <Kpi lbl="PV" val={fmtCompact(view.PV)} sub={`${view.pctPlan.toFixed(1)}% planificado`} mono />
         <Kpi
           lbl="EV"
-          val={fmtCompact(data.evm.EV)}
-          sub={`${data.evm.pctCompletado.toFixed(1)}% completado`}
+          val={fmtCompact(view.EV)}
+          sub={`${view.pctCompletado.toFixed(1)}% ejecutado`}
           mono
           accent="text-primary"
         />
-        <Kpi lbl="AC" val={fmtCompact(data.evm.AC)} sub="Costo real" mono accent="text-warn-ink" />
+        {view.hasAC ? (
+          <Kpi lbl="AC" val={fmtCompact(data.evm.AC)} sub="Costo real" mono accent="text-warn-ink" />
+        ) : (
+          <Kpi lbl="—" val="—" sub="Inversión no separa costo real" mono accent="text-ink-4" />
+        )}
         <Kpi
           lbl="SPI"
-          val={hayEjecucion ? data.evm.SPI.toFixed(2) : '—'}
-          sub={
-            hayEjecucion
-              ? data.evm.SV >= 0
-                ? `Adelanto ${fmtCompact(Math.abs(data.evm.SV))}`
-                : `Atraso ${fmtCompact(Math.abs(data.evm.SV))}`
-              : 'Sin ejecución'
-          }
-          accent={!hayEjecucion ? 'text-ink-4' : data.evm.SPI >= 1 ? 'text-ok' : 'text-destructive'}
-          icon={hayEjecucion ? (data.evm.SPI >= 1 ? 'up' : 'down') : null}
+          val={view.hayEjecucion ? view.spi.toFixed(2) : '—'}
+          sub={view.hayEjecucion ? (view.spi >= 1 ? 'Adelantado' : 'Atrasado') : 'Sin ejecución'}
+          accent={!view.hayEjecucion ? 'text-ink-4' : view.spi >= 1 ? 'text-ok' : 'text-destructive'}
+          icon={view.hayEjecucion ? (view.spi >= 1 ? 'up' : 'down') : null}
         />
-        <Kpi
-          lbl="CPI"
-          val={hayEjecucion && data.evm.AC > 0 ? data.evm.CPI.toFixed(2) : '—'}
-          sub={
-            hayEjecucion && data.evm.AC > 0
-              ? data.evm.CV >= 0
-                ? `Ahorro ${fmtCompact(Math.abs(data.evm.CV))}`
-                : `Sobrecosto ${fmtCompact(Math.abs(data.evm.CV))}`
-              : 'Sin ejecución'
-          }
-          accent={
-            !(hayEjecucion && data.evm.AC > 0) ? 'text-ink-4' : data.evm.CPI >= 1 ? 'text-ok' : 'text-destructive'
-          }
-          icon={hayEjecucion && data.evm.AC > 0 ? (data.evm.CPI >= 1 ? 'up' : 'down') : null}
-        />
+        {view.hasAC ? (
+          <Kpi
+            lbl="CPI"
+            val={view.hayEjecucion && data.evm.AC > 0 ? data.evm.CPI.toFixed(2) : '—'}
+            sub={
+              view.hayEjecucion && data.evm.AC > 0
+                ? data.evm.CV >= 0
+                  ? `Ahorro ${fmtCompact(Math.abs(data.evm.CV))}`
+                  : `Sobrecosto ${fmtCompact(Math.abs(data.evm.CV))}`
+                : 'Sin ejecución'
+            }
+            accent={!(view.hayEjecucion && data.evm.AC > 0) ? 'text-ink-4' : data.evm.CPI >= 1 ? 'text-ok' : 'text-destructive'}
+            icon={view.hayEjecucion && data.evm.AC > 0 ? (data.evm.CPI >= 1 ? 'up' : 'down') : null}
+          />
+        ) : (
+          <Kpi
+            lbl="SV"
+            val={view.hayEjecucion ? fmtCompact(view.EV - view.PV) : '—'}
+            sub={view.EV - view.PV >= 0 ? 'Adelanto plan' : 'Atraso plan'}
+            mono
+            accent={view.EV - view.PV >= 0 ? 'text-ok' : 'text-destructive'}
+          />
+        )}
       </div>
 
       {/* Chart */}
@@ -134,7 +232,16 @@ export function CurvaSTab({ proyectoId }: { proyectoId: string }) {
           <h3 className="text-[13px] font-semibold">Plan vs Real · Acumulado</h3>
         </div>
         <div className="p-4">
-          <CurvaSChart data={data} labelOf={labelOf} />
+          <Suspense fallback={<div className="h-[340px] animate-pulse rounded bg-bg-sunken/50" />}>
+            <CurvaSChartEcharts
+              labels={data.buckets.map(labelOf)}
+              planAcum={view.planAcum}
+              earnedAcum={view.earnedAcum}
+              realAcum={view.realAcum}
+              hoyIdx={data.hoyIdx}
+              showAC={view.hasAC}
+            />
+          </Suspense>
         </div>
       </div>
 
@@ -166,12 +273,16 @@ export function CurvaSTab({ proyectoId }: { proyectoId: string }) {
             </thead>
             <tbody>
               {[
-                { lbl: 'Valor Planificado (PV)', arr: data.plan },
-                { lbl: 'PV Acumulado', arr: data.planAcum, bold: true },
-                { lbl: 'Earned Value (EV)', arr: data.earned, color: 'text-primary' },
-                { lbl: 'EV Acumulado', arr: data.earnedAcum, bold: true, color: 'text-primary' },
-                { lbl: 'Costo Real (AC)', arr: data.real, color: 'text-warn-ink', muted: !hayEjecucion },
-                { lbl: 'AC Acumulado', arr: data.realAcum, bold: true, color: 'text-warn-ink', muted: !hayEjecucion },
+                { lbl: 'Valor Planificado (PV)', arr: view.plan },
+                { lbl: 'PV Acumulado', arr: view.planAcum, bold: true },
+                { lbl: 'Earned Value (EV)', arr: view.earned, color: 'text-primary' },
+                { lbl: 'EV Acumulado', arr: view.earnedAcum, bold: true, color: 'text-primary' },
+                ...(view.hasAC
+                  ? [
+                      { lbl: 'Costo Real (AC)', arr: view.real, color: 'text-warn-ink', muted: !view.hayEjecucion },
+                      { lbl: 'AC Acumulado', arr: view.realAcum, bold: true, color: 'text-warn-ink', muted: !view.hayEjecucion },
+                    ]
+                  : []),
               ].map((row) => (
                 <tr key={row.lbl} className="border-b border-line">
                   <td
@@ -206,6 +317,20 @@ export function CurvaSTab({ proyectoId }: { proyectoId: string }) {
   );
 }
 
+function DeltaPill({ pct, plan, small }: { pct: number; plan: number; small?: boolean }) {
+  const delta = pct - plan;
+  const ok = delta >= 0;
+  return (
+    <span className={cn('text-ink-3', small ? 'text-[10px]' : 'text-[11px]')}>
+      Plan hoy {plan.toFixed(2)}% ·{' '}
+      <span className={ok ? 'text-ok font-medium' : 'text-destructive font-medium'}>
+        {ok ? 'adelanto +' : 'atraso '}
+        {delta.toFixed(2)} pts
+      </span>
+    </span>
+  );
+}
+
 function Kpi({
   lbl,
   val,
@@ -233,171 +358,5 @@ function Kpi({
       </div>
       {sub && <div className="text-[10px] text-ink-3 mt-0.5 truncate">{sub}</div>}
     </div>
-  );
-}
-
-/* ─── Chart SVG · líneas plan + real + earned + hoy ─── */
-function CurvaSChart({
-  data,
-  labelOf,
-}: {
-  data: CurvaSData;
-  labelOf: (b: CurvaSData['buckets'][number]) => string;
-}) {
-  const W = 1100;
-  const H = 360;
-  const padL = 64;
-  const padR = 24;
-  const padT = 20;
-  const padB = 50;
-  const iW = W - padL - padR;
-  const iH = H - padT - padB;
-  const N = data.buckets.length;
-  if (N === 0) return null;
-
-  const maxVal = Math.max(...data.planAcum, ...data.realAcum, ...data.earnedAcum, 1);
-  const xOf = (i: number) => padL + (i / Math.max(1, N - 1)) * iW;
-  const yOf = (v: number) => padT + iH - (v / maxVal) * iH;
-
-  const pathOf = (arr: number[]) =>
-    arr.map((v, i) => `${i === 0 ? 'M' : 'L'}${xOf(i).toFixed(1)},${yOf(v).toFixed(1)}`).join(' ');
-
-  const planPath = pathOf(data.planAcum);
-  const realHasData = data.realAcum.some((v) => v > 0);
-  const earnedHasData = data.earnedAcum.some((v) => v > 0);
-  const realPath = realHasData ? pathOf(data.realAcum) : '';
-  const earnedPath = earnedHasData ? pathOf(data.earnedAcum) : '';
-
-  const yTicks = [0, 0.25, 0.5, 0.75, 1].map((f) => maxVal * f);
-  const fmtAxisY = (v: number) =>
-    v >= 1e6 ? `S/ ${(v / 1e6).toFixed(1)}M` : v >= 1e3 ? `S/ ${(v / 1e3).toFixed(0)}K` : `S/ ${v.toFixed(0)}`;
-
-  const hoyX = data.hoyIdx >= 0 ? xOf(data.hoyIdx + 0.5) : -1;
-
-  return (
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: 'block' }}>
-      {/* Grid horizontal */}
-      {yTicks.map((v, i) => (
-        <g key={i}>
-          <line
-            x1={padL}
-            x2={W - padR}
-            y1={yOf(v)}
-            y2={yOf(v)}
-            stroke="hsl(var(--line))"
-            strokeDasharray={i === 0 ? '0' : '2,3'}
-            opacity={0.6}
-          />
-          <text
-            x={padL - 6}
-            y={yOf(v) + 3}
-            fontSize="9"
-            textAnchor="end"
-            fill="hsl(var(--ink-3))"
-            fontFamily="ui-monospace, monospace"
-          >
-            {fmtAxisY(v)}
-          </text>
-        </g>
-      ))}
-
-      {/* X labels */}
-      {data.buckets.map((b, i) => (
-        <text
-          key={b.key}
-          x={xOf(i)}
-          y={H - 28}
-          fontSize="9"
-          textAnchor="middle"
-          fill="hsl(var(--ink-3))"
-          fontFamily="ui-monospace, monospace"
-        >
-          {labelOf(b)}
-        </text>
-      ))}
-
-      {/* Plan area + line */}
-      <path
-        d={`${planPath} L${xOf(N - 1)},${padT + iH} L${padL},${padT + iH} Z`}
-        fill="hsl(var(--ink-3))"
-        opacity="0.06"
-      />
-      <path
-        d={planPath}
-        fill="none"
-        stroke="hsl(var(--ink-3))"
-        strokeWidth="2"
-        strokeDasharray="6,3"
-        strokeLinecap="round"
-      />
-
-      {/* Earned line · azul · sobre area si hay */}
-      {earnedPath && (
-        <path
-          d={earnedPath}
-          fill="none"
-          stroke="hsl(var(--primary))"
-          strokeWidth="2.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      )}
-
-      {/* Real line · ámbar */}
-      {realPath && (
-        <path
-          d={realPath}
-          fill="none"
-          stroke="hsl(var(--warn))"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      )}
-
-      {/* Línea hoy */}
-      {hoyX > 0 && (
-        <g>
-          <line
-            x1={hoyX}
-            x2={hoyX}
-            y1={padT}
-            y2={padT + iH}
-            stroke="hsl(var(--destructive))"
-            strokeWidth="1.5"
-            strokeDasharray="3,3"
-          />
-          <rect
-            x={hoyX - 14}
-            y={padT - 14}
-            width={28}
-            height={14}
-            fill="hsl(var(--destructive))"
-            rx={2}
-          />
-          <text
-            x={hoyX}
-            y={padT - 4}
-            fontSize="8.5"
-            fill="white"
-            fontFamily="ui-monospace, monospace"
-            fontWeight="700"
-            textAnchor="middle"
-          >
-            HOY
-          </text>
-        </g>
-      )}
-
-      {/* Leyenda */}
-      <g transform={`translate(${padL + 8}, ${padT + 4})`} fontSize="10" fontFamily="Inter, sans-serif">
-        <line x1="0" x2="16" y1="6" y2="6" stroke="hsl(var(--ink-3))" strokeWidth="2" strokeDasharray="6,3" />
-        <text x="20" y="10" fill="hsl(var(--ink-2))" fontWeight="600">PV · Plan</text>
-        <line x1="100" x2="116" y1="6" y2="6" stroke="hsl(var(--primary))" strokeWidth="2.5" />
-        <text x="120" y="10" fill="hsl(var(--ink-2))" fontWeight="600">EV · Earned</text>
-        <line x1="210" x2="226" y1="6" y2="6" stroke="hsl(var(--warn))" strokeWidth="2" />
-        <text x="230" y="10" fill="hsl(var(--ink-2))" fontWeight="600">AC · Real</text>
-      </g>
-    </svg>
   );
 }

@@ -1,0 +1,7 @@
+PASS · USD sin TC → 400
+PASS · USD con TC → 200
+PASS · montoBase=375 · =375.00
+ERROR: TypeError: fetch failed
+    at node:internal/deps/undici/undici:16416:13
+    at async file:///C:/Users/gabri/Desktop/erp-mmhighmetrik-v2/packages/db/_h3s.mjs:19:11
+H3 SMOKE: 3/3 PASS

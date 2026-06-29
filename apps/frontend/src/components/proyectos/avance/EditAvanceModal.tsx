@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Clock, History, Loader2, X } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { type Partida, api } from '@/lib/api.js';
 import { fmtPEN, partidaPresupuesto } from '@/lib/utils.js';
 
@@ -165,7 +165,7 @@ export function EditAvanceModal({ partida, proyectoId, initialAvancePct, initial
                 </span>
               </div>
               <div className="border border-line rounded-md overflow-hidden">
-                {histQ.data.avances.slice(0, 6).map((h, i) => (
+                {histQ.data.avances.slice(0, 6).map((h) => (
                   <div
                     key={h.id}
                     className="grid grid-cols-[90px_60px_110px_1fr] gap-2 items-center px-3 py-2 text-[11px] border-b border-line last:border-b-0"

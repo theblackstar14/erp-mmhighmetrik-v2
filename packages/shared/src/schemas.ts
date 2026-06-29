@@ -34,6 +34,42 @@ export const proyectoCreateSchema = z.object({
 });
 export type ProyectoCreate = z.infer<typeof proyectoCreateSchema>;
 
+// ─── Inversión (padre · agrupa N proyectos-colegio bajo 1 CUI) ──
+export const inversionCreateSchema = z.object({
+  cui: z.string().trim().min(1).max(30),
+  nombre: z.string().trim().min(3).max(1000),
+  modalidad: z
+    .enum(['oxi', 'contrata', 'administracion_directa', 'app', 'nucleo_ejecutor'])
+    .default('oxi'),
+  clienteId: z.string().uuid().optional(),
+  ubicacion: z.string().optional(),
+  montoInversionMef: z.number().nonnegative().optional(),
+  montoComponentes: z.number().nonnegative().optional(),
+  montoExpedienteTecnico: z.number().nonnegative().optional(),
+  montoSupervision: z.number().nonnegative().optional(),
+  montoGestion: z.number().nonnegative().optional(),
+  montoLiquidacion: z.number().nonnegative().optional(),
+  fechaInicioEjecucion: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  fechaFinEjecucion: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  fechaEntregaOym: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  ueiNombre: z.string().max(255).optional(),
+  ufNombre: z.string().max(255).optional(),
+  uepNombre: z.string().max(255).optional(),
+  proveidoAprobacion: z.string().max(120).optional(),
+  empresaFinancista: z.string().max(255).optional(),
+  nasFolder: z.string().optional(),
+});
+export type InversionCreate = z.infer<typeof inversionCreateSchema>;
+
+// Vincular proyecto-colegio existente a una inversión (no destructivo)
+export const inversionLinkProyectoSchema = z.object({
+  proyectoId: z.string().uuid(),
+  cui: z.string().trim().min(1).max(30).optional(),
+  codigoIe: z.string().trim().max(20).optional(),
+  ggUtModo: z.enum(['separado', 'embebido_cd', 'simple_pct']).optional(),
+});
+export type InversionLinkProyecto = z.infer<typeof inversionLinkProyectoSchema>;
+
 // ─── Avance ──────────────────────────────────────────────────
 export const avanceCreateSchema = z.object({
   partidaId: z.string().uuid(),

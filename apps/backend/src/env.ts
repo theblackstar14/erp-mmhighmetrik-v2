@@ -16,7 +16,8 @@ const envSchema = z.object({
   NAS_URL: z.string().url(),
   NAS_USER: z.string(),
   NAS_PASS: z.string(),
-  NAS_ROOT: z.string().default('/Proyectos'),
+  NAS_ROOT: z.string().default('/ERP/01_Proyectos'), // base proyectos (obras)
+  NAS_ROOT_ADMIN: z.string().default('/ERP/02_Administracion'), // base administración (oficina/empresa)
   NAS_TLS_INSECURE: z.coerce.boolean().default(true),
   GEMINI_API_KEY: z.string().optional(),
   GEMINI_MODEL: z.string().default('gemini-2.5-flash'),

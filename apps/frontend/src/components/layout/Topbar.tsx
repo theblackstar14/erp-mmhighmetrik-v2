@@ -1,7 +1,10 @@
-import { useQueryClient } from '@tanstack/react-query';
-import { Bell, FileUp, Menu, Moon, PanelLeft, Search, Sparkles, Sun } from 'lucide-react';
-import { Link, useLocation } from 'react-router-dom';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Bell, FileUp, Menu, Moon, PanelLeft, Search, Sparkles, Sun, X } from 'lucide-react';
+import { useState } from 'react';
+import { createPortal } from 'react-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useCopilotoStore } from '@/components/copiloto/copiloto-store.js';
+import { api } from '@/lib/api.js';
 import { useThemeStore } from '@/lib/theme-store.js';
 import { cn } from '@/lib/utils.js';
 
@@ -112,15 +115,7 @@ export function Topbar({ onToggleSidebar, isMobile }: Props) {
       </button>
 
       {/* Notifications */}
-      <button
-        type="button"
-        className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-ink-3 hover:bg-bg-sunken hover:text-foreground"
-      >
-        <Bell className="h-4 w-4" />
-        <span className="absolute -top-0.5 -right-0.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-destructive px-1 text-[9px] font-bold text-white">
-          3
-        </span>
-      </button>
+      <Notificaciones />
 
       {/* Copiloto IA */}
       <button
@@ -133,5 +128,89 @@ export function Topbar({ onToggleSidebar, isMobile }: Props) {
         <span className="hidden sm:inline">Copiloto IA</span>
       </button>
     </div>
+  );
+}
+
+const SEV_DOT: Record<string, string> = { alta: 'bg-destructive', media: 'bg-amber-500', baja: 'bg-ink-4' };
+const hace = (iso: string) => {
+  const s = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (s < 3600) return `hace ${Math.max(1, Math.floor(s / 60))}m`;
+  if (s < 86400) return `hace ${Math.floor(s / 3600)}h`;
+  return `hace ${Math.floor(s / 86400)}d`;
+};
+
+// Campana global · vive en el Topbar persistente → sigue al usuario por todas las páginas.
+function Notificaciones() {
+  const [open, setOpen] = useState(false);
+  const navigate = useNavigate();
+  const qc = useQueryClient();
+  const { data } = useQuery({ queryKey: ['notificaciones'], queryFn: () => api.notificaciones.list(), refetchInterval: 60_000 });
+  const items = data?.items ?? [];
+  const noLeidas = data?.noLeidas ?? 0;
+  const inval = () => qc.invalidateQueries({ queryKey: ['notificaciones'] });
+  const leer = useMutation({ mutationFn: (id: string) => api.notificaciones.leer(id), onSuccess: inval });
+  const leerTodo = useMutation({ mutationFn: () => api.notificaciones.leerTodo(), onSuccess: inval });
+
+  const abrir = (id: string, url: string | null) => {
+    leer.mutate(id);
+    setOpen(false);
+    if (url) navigate(url);
+  };
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-ink-3 hover:bg-bg-sunken hover:text-foreground"
+      >
+        <Bell className="h-4 w-4" />
+        {noLeidas > 0 && (
+          <span className="absolute -top-0.5 -right-0.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-destructive px-1 text-[9px] font-bold text-white">
+            {noLeidas > 9 ? '9+' : noLeidas}
+          </span>
+        )}
+      </button>
+      {open && createPortal(
+        <>
+          <button type="button" className="fixed inset-0 z-40" onClick={() => setOpen(false)} aria-label="Cerrar" />
+          <div className="fixed right-3 top-14 z-50 w-[380px] max-w-[calc(100vw-1.5rem)] rounded-xl border border-line bg-bg-elev shadow-2xl animate-pageEnter">
+            <div className="flex items-center justify-between border-b border-line px-4 py-2.5">
+              <div className="text-[13px] font-semibold inline-flex items-center">Notificaciones {noLeidas > 0 && <span className="ml-1.5 rounded bg-destructive px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">{noLeidas}</span>}</div>
+              <div className="flex items-center gap-2">
+                {noLeidas > 0 && <button onClick={() => leerTodo.mutate()} className="text-[11px] text-primary hover:underline">Marcar todo leído</button>}
+                <button onClick={() => setOpen(false)} className="h-6 w-6 rounded-md border border-line inline-flex items-center justify-center text-ink-3 hover:bg-bg-sunken"><X className="h-3 w-3" /></button>
+              </div>
+            </div>
+            <div className="max-h-[60vh] overflow-y-auto">
+              {items.length === 0 ? (
+                <div className="py-10 text-center text-[12px] text-ink-3">Sin notificaciones</div>
+              ) : items.map((n) => (
+                <button key={n.id} onClick={() => abrir(n.id, n.accionUrl)}
+                  className={cn('block w-full text-left px-4 py-2.5 border-b border-line/60 hover:bg-bg-sunken/50', !n.leidoEn && 'bg-primary/[0.04]')}>
+                  <div className="flex items-start gap-2">
+                    <span className={cn('mt-1 h-2 w-2 shrink-0 rounded-full', SEV_DOT[n.severidad] ?? 'bg-ink-4')} />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[12px] font-semibold leading-tight truncate">{n.titulo}</span>
+                        <span className="text-[10px] text-ink-4 shrink-0">{hace(n.createdAt)}</span>
+                      </div>
+                      {n.detalle && <div className="text-[11px] text-ink-3 mt-0.5 leading-snug">{n.detalle}</div>}
+                      {n.proyectoCodigo && <span className="mt-1 inline-block rounded bg-bg-sunken px-1.5 py-0.5 font-mono text-[9.5px] text-ink-3">{n.proyectoCodigo}</span>}
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+            {items.length > 0 && (
+              <button onClick={() => setOpen(false)} className="block w-full border-t border-line px-4 py-2.5 text-center text-[12px] text-primary hover:bg-bg-sunken/40">
+                Ver historial completo
+              </button>
+            )}
+          </div>
+        </>,
+        document.body,
+      )}
+    </>
   );
 }

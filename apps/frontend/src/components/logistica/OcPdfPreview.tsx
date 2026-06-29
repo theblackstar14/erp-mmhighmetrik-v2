@@ -1,7 +1,9 @@
 import { useQuery } from '@tanstack/react-query';
-import { Download, Loader2, Printer, X } from 'lucide-react';
+import { Check, Download, Loader2, Paperclip, Printer, Receipt, X } from 'lucide-react';
 import { useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { api } from '@/lib/api.js';
+import { printSheet } from '@/lib/printSheet.js';
 
 // Emisor real · MM HIGH METRIK ENGINEERS (de v1 data.js)
 const EMISOR = {
@@ -26,63 +28,67 @@ export function OcPdfPreview({ ocId, onClose }: { ocId: string; onClose: () => v
   const sheetRef = useRef<HTMLDivElement>(null);
 
   const printPdf = () => {
-    const sheet = sheetRef.current;
-    if (!sheet) return;
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) return;
-    // Convertir img relative path a absolute para iframe nuevo
-    const logoAbs = `${window.location.origin}${EMISOR.logoUrl}`;
-    const html = sheet.outerHTML.replace(/src="\/logo-mm\.png"/g, `src="${logoAbs}"`);
-    printWindow.document.write(`
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <meta charset="utf-8" />
-          <title>${data?.oc.numero ?? 'OC'}</title>
-          <style>${PRINT_STYLES}</style>
-        </head>
-        <body>${html}</body>
-      </html>
-    `);
-    printWindow.document.close();
-    printWindow.focus();
-    // Wait for image load before print
-    setTimeout(() => printWindow.print(), 500);
+    // fitHeightMm = 297 - margenes @page (14 + 12) → escala a 1 pagina si desborda
+    if (sheetRef.current) printSheet(sheetRef.current, { title: data?.oc.numero ?? 'OC', styles: PRINT_STYLES, logoUrl: EMISOR.logoUrl, fitHeightMm: 271 });
   };
 
-  return (
+  return createPortal(
     <div
-      className="fixed inset-0 z-50 flex flex-col bg-black/60"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-gradient-to-br from-black/45 to-black/65 backdrop-blur-sm p-4 sm:p-8"
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
+      {/* Card contenedora · dialog flotante */}
+      <div
+        className="w-full max-w-4xl max-h-[90vh] overflow-hidden rounded-xl border border-line bg-bg-elev shadow-2xl flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
       {/* Toolbar */}
-      <div className="flex items-center justify-between border-b border-line px-5 py-2.5 bg-bg-elev shadow-sm shrink-0">
-        <div>
-          <h2 className="text-[13px] font-semibold">
-            Vista previa OC · {data?.oc.numero ?? '...'}
-          </h2>
-          <p className="text-[10.5px] text-ink-3 mt-0.5">
-            {data ? `${data.proveedor?.razonSocial ?? '—'} · ${data.proyecto?.codigo ?? '—'}` : 'Cargando...'}
-          </p>
+      <div className="flex items-center justify-between border-b border-line px-5 py-2.5 bg-bg-elev shrink-0">
+        <div className="flex items-center gap-3 min-w-0">
+          {data && <EstadoChip estado={data.oc.estado} />}
+          <div className="min-w-0">
+            <h2 className="text-[13px] font-bold tracking-[0.02em] truncate">
+              {data ? `${data.oc.concepto === 'SERVICIO' ? 'ORDEN DE SERVICIO' : 'ORDEN DE COMPRA'} N° ${data.oc.numero}` : 'Cargando...'}
+            </h2>
+            {data && (
+              <p className="text-[10.5px] text-ink-3 mt-0.5 truncate">
+                {data.proveedor?.razonSocial ?? '—'} · {data.proyecto?.codigo ?? 'Oficina/empresa'}
+              </p>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-2">
+          {/* Documentos en NAS · cotización · OC.pdf oficial · comprobante de pago */}
+          {data?.oc.cotizacionNasPath && (
+            <a href={api.logistica.ocDocUrl(ocId, 'cotizacion')} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-line text-[11.5px] text-ink-2 hover:bg-bg-sunken" title="Cotización adjunta (NAS)">
+              <Paperclip className="h-3.5 w-3.5" /> Cotización
+            </a>
+          )}
+          {data?.oc.comprobantePagoNasPath && (
+            <a href={api.logistica.ocDocUrl(ocId, 'comprobante')} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-emerald-500/40 bg-emerald-50 dark:bg-emerald-950/30 text-[11.5px] text-emerald-700 dark:text-emerald-400 hover:opacity-90" title="Comprobante de pago (NAS)">
+              <Receipt className="h-3.5 w-3.5" /> Comprobante
+            </a>
+          )}
+          {/* Descargar OC.pdf oficial del NAS · directo, icon-only (solo si aprobada) */}
+          {data?.oc.pdfNasPath && (
+            <a
+              href={api.logistica.ocDocUrl(ocId, 'oc', true)}
+              className="inline-flex items-center justify-center h-8 w-8 rounded-md border border-line text-ink-2 hover:bg-bg-sunken"
+              title="Descargar OC.pdf oficial (NAS)"
+            >
+              <Download className="h-3.5 w-3.5" />
+            </a>
+          )}
+          {/* Imprimir / Guardar PDF · diálogo del navegador */}
           <button
             type="button"
             onClick={printPdf}
             disabled={isLoading}
-            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-line text-[11.5px] text-ink-2 hover:bg-bg-sunken disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 h-8 px-3.5 rounded-md bg-primary text-primary-foreground text-[11.5px] font-medium hover:opacity-90 disabled:opacity-50"
+            title="Imprimir o guardar como PDF"
           >
             <Printer className="h-3.5 w-3.5" />
-            Imprimir
-          </button>
-          <button
-            type="button"
-            onClick={printPdf}
-            disabled={isLoading}
-            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md bg-primary text-primary-foreground text-[11.5px] font-medium hover:opacity-90 disabled:opacity-50"
-          >
-            <Download className="h-3.5 w-3.5" />
-            Guardar PDF
+            Imprimir / Guardar PDF
           </button>
           <button
             type="button"
@@ -107,7 +113,29 @@ export function OcPdfPreview({ ocId, onClose }: { ocId: string; onClose: () => v
           </div>
         )}
       </div>
-    </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+const ESTADO_INFO: Record<string, { label: string; cls: string; check?: boolean }> = {
+  borrador: { label: 'BORRADOR', cls: 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300' },
+  pendiente_aprobacion: { label: 'PENDIENTE', cls: 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300' },
+  aprobada: { label: 'APROBADA', cls: 'bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300', check: true },
+  emitida: { label: 'EMITIDA', cls: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300', check: true },
+  en_transito: { label: 'EN TRÁNSITO', cls: 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300' },
+  entregada: { label: 'ENTREGADA', cls: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300', check: true },
+  anulada: { label: 'ANULADA', cls: 'bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300' },
+  rechazada: { label: 'RECHAZADA', cls: 'bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300' },
+};
+function EstadoChip({ estado }: { estado: string }) {
+  const info = ESTADO_INFO[estado] ?? { label: estado.toUpperCase(), cls: 'bg-zinc-100 text-zinc-600' };
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10.5px] font-bold tracking-wide ${info.cls}`}>
+      {info.check && <Check className="h-3 w-3" />}
+      {info.label}
+    </span>
   );
 }
 
@@ -136,7 +164,7 @@ function OcSheet({ data }: { data: NonNullable<Awaited<ReturnType<typeof api.log
       </div>
 
       {/* Título */}
-      <div className="oc-title">ORDEN DE COMPRA N° {oc.numero}</div>
+      <div className="oc-title">{oc.concepto === 'SERVICIO' ? 'ORDEN DE SERVICIO' : 'ORDEN DE COMPRA'} N° {oc.numero}</div>
 
       {/* Facturar a */}
       <div className="oc-section-title">Facturar a</div>
@@ -392,8 +420,9 @@ const PRINT_STYLES = `
   align-items: flex-start;
 }
 .oc-print-sheet {
+  /* sin min-height · hoja crece con contenido (min-height:297mm + margenes @page
+     forzaban 2da pagina fantasma · fix portado de v1 styles.css) */
   width: 210mm;
-  min-height: 297mm;
   margin: 0 auto;
   padding: 12mm 16mm 10mm;
   background: #FFFFFF;
@@ -585,7 +614,7 @@ const PRINT_STYLES = `
 }
 .oc-firma-box {
   width: 55mm;
-  height: 22mm;
+  height: 18mm;
   border: 1pt dashed #6B6B68;
   display: flex;
   align-items: center;
@@ -659,8 +688,9 @@ const PRINT_STYLES = `
     margin: 0;
     padding: 0;
   }
-  @page { size: A4; margin: 0; }
+  @page { size: A4; margin: 14mm 16mm 12mm 16mm; }
   .oc-preview-scroll { background: white !important; padding: 0 !important; }
-  .oc-print-sheet { box-shadow: none !important; margin: 0; }
+  /* margenes via @page · hoja fluida que cabe en area imprimible (no 210mm fijo → no corte) */
+  .oc-print-sheet { box-shadow: none !important; margin: 0; padding: 0; width: auto; min-height: 0; }
 }
 `;

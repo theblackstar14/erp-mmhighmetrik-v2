@@ -149,3 +149,25 @@
   border: 2px solid hsl(var(--background));
 }
 ::-webkit-scrollbar-thumb:hover { background: hsl(var(--line-strong)); }
+
+/* OC emitting · spinner → check animado (igual al v1) */
+@keyframes ocSpin { to { transform: rotate(360deg); } }
+.oc-spinner {
+  width: 72px; height: 72px; border-radius: 50%;
+  border: 2.5px solid transparent;
+  border-top-color: hsl(var(--ok));
+  border-left-color: hsl(var(--ok) / 0.2);
+  animation: ocSpin 1.1s linear infinite;
+}
+@keyframes drawCircle { from { stroke-dashoffset: 264; } to { stroke-dashoffset: 0; } }
+@keyframes drawCheck { from { stroke-dashoffset: 80; } to { stroke-dashoffset: 0; } }
+.oc-check-circle { stroke-dasharray: 264; stroke-dashoffset: 264; animation: drawCircle .7s cubic-bezier(.2,.6,.2,1) .1s forwards; }
+.oc-check-path { stroke-dasharray: 80; stroke-dashoffset: 80; animation: drawCheck .45s cubic-bezier(.2,.6,.2,1) .65s forwards; }
+
+/* FX-6 · hoja de etiquetas QR: al imprimir solo se ve .print-sheet */
+@media print {
+  body * { visibility: hidden !important; }
+  .print-sheet, .print-sheet * { visibility: visible !important; }
+  .print-sheet { position: absolute !important; inset: 0 !important; margin: 0 !important; }
+  .print-hide { display: none !important; }
+}

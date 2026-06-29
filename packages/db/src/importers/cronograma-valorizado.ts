@@ -81,8 +81,13 @@ export interface CvParseResult {
   pctIgv: number | null;
   montoIgv: number | null;
   presupuestoTotal: number | null;
-  supervision: number | null;
-  valorReferencial: number | null;
+  documentoTrabajo: number | null; // expediente técnico
+  supervisionDocTrabajo: number | null;
+  supervision: number | null; // supervisión de obra
+  valorReferencial: number | null; // = monto de inversión total
+  // Plan financiero-inversión · distribución mensual del MONTO DE INVERSIÓN (todos componentes)
+  // base = valorReferencial. NO es obra-CD (eso va en partidas.distribucionMensual).
+  distribucionInversion: Array<{ ym: string; monto: number }>;
   // Validación
   totalPartidasHoja: number;
   totalTitulos: number;
@@ -167,11 +172,62 @@ function parseMesHeader(text: string): {
   };
 }
 
-/** Encuentra fila por descripción case-insensitive en primera columna B (idx 1) */
+/** Días declarados en header genérico tipo '30 Días' / '16 Dias' (sin fechas). */
+function parseDiasGenerico(text: string): number | null {
+  const t = text.trim();
+  // Debe contener 'dia(s)' y un número · NO debe parsear como fecha (sin guiones de mes)
+  if (!/d[íi]as?/i.test(t)) return null;
+  if (/total/i.test(t)) return null;
+  const m = t.match(/(\d{1,4})/);
+  if (!m) return null;
+  return Number.parseInt(m[1]!, 10);
+}
+
+/**
+ * Sintetiza un mes anclado a fechaBase + offset de meses calendario.
+ * Period 0 = mes de fechaBase. Cada periodo avanza 1 mes calendario (valorización mensual).
+ */
+function buildMesFromBase(
+  fechaBase: string,
+  offset: number,
+  diasDuracion: number,
+): CvParsedMes {
+  const [by, bm] = fechaBase.split('-').map((x) => Number.parseInt(x, 10)) as [number, number, number];
+  // avanzar offset meses
+  const totalMonth0 = (by * 12 + (bm - 1)) + offset;
+  const year = Math.floor(totalMonth0 / 12);
+  const month = (totalMonth0 % 12) + 1;
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate(); // día 0 del mes+1 = último del mes
+  const monthNames = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Set', 'Oct', 'Nov', 'Dic'];
+  return {
+    idx: offset,
+    year,
+    month,
+    diasDuracion,
+    fechaInicio: `${year}-${String(month).padStart(2, '0')}-01`,
+    fechaFin: `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`,
+    label: `${monthNames[month - 1]}-${String(year).slice(-2)}`,
+  };
+}
+
+/** Mes → 'YYYY-MM' */
+function mesToYm(m: CvParsedMes): string {
+  return `${m.year}-${String(m.month).padStart(2, '0')}`;
+}
+
+/** Normaliza para comparación: mayúsculas + sin tildes (SUPERVISIÓN → SUPERVISION) */
+function normKey(s: string): string {
+  return s
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toUpperCase();
+}
+
+/** Encuentra fila por descripción case/acento-insensitive en primera columna B (idx 1) */
 function findRowByDesc(rows: unknown[][], descKeyword: string): unknown[] | null {
-  const kw = descKeyword.toUpperCase();
+  const kw = normKey(descKeyword);
   for (const row of rows) {
-    const desc = cleanText(row[1]).toUpperCase();
+    const desc = normKey(cleanText(row[1]));
     if (desc.includes(kw) && !cleanText(row[0])) return row;
   }
   return null;
@@ -197,8 +253,11 @@ export function parseCronogramaValorizado(buffer: Buffer): CvParseResult {
     pctIgv: null,
     montoIgv: null,
     presupuestoTotal: null,
+    documentoTrabajo: null,
+    supervisionDocTrabajo: null,
     supervision: null,
     valorReferencial: null,
+    distribucionInversion: [],
     totalPartidasHoja: 0,
     totalTitulos: 0,
     sumaParcialesHoja: 0,
@@ -255,24 +314,51 @@ export function parseCronogramaValorizado(buffer: Buffer): CvParseResult {
   }
 
   const headerRow = rows[headerRowIdx]!;
-  // Cols meses · empiezan en col 6 (G) · terminan antes de 'TOTAL'
+  // Cols meses · empiezan en col 6 (G) · terminan en/antes de 'TOTAL'.
+  // Dos formatos soportados:
+  //   (a) Fechado: '15-Abr-26 / 30-Abr-26 / 30 Dias' → parseMesHeader da year/month exactos.
+  //   (b) Genérico: '30 Días' sin fecha → se anclan a fechaBase (Costo A) + offset mensual.
   const mesCols: number[] = [];
+  const genericoDias: number[] = []; // paralelo a mesCols · días si es header genérico, -1 si fechado
+  let hayFechado = false;
   for (let j = 6; j < headerRow.length; j++) {
     const txt = cleanText(headerRow[j]);
     if (!txt) continue;
-    if (/total/i.test(txt) && !/d[íi]as/i.test(txt)) break;
-    const parsed = parseMesHeader(txt);
-    if (parsed) {
+    // 'TOTAL' (sin días en su línea) marca fin de columnas mensuales
+    if (/total/i.test(txt)) break;
+    const fechado = parseMesHeader(txt);
+    if (fechado) {
+      hayFechado = true;
       mesCols.push(j);
+      genericoDias.push(-1);
       result.meses.push({
         idx: result.meses.length,
-        year: parsed.year,
-        month: parsed.month,
-        diasDuracion: parsed.diasDuracion,
-        fechaInicio: parsed.fechaInicio,
-        fechaFin: parsed.fechaFin,
-        label: parsed.label,
+        year: fechado.year,
+        month: fechado.month,
+        diasDuracion: fechado.diasDuracion,
+        fechaInicio: fechado.fechaInicio,
+        fechaFin: fechado.fechaFin,
+        label: fechado.label,
       });
+      continue;
+    }
+    const dias = parseDiasGenerico(txt);
+    if (dias !== null) {
+      mesCols.push(j);
+      genericoDias.push(dias);
+    }
+  }
+
+  // Si todas las columnas son genéricas (sin fecha) · anclar a fechaBase + offset mensual.
+  if (!hayFechado && mesCols.length > 0) {
+    if (result.fechaBase) {
+      for (let k = 0; k < mesCols.length; k++) {
+        result.meses.push(buildMesFromBase(result.fechaBase, k, genericoDias[k] ?? 30));
+      }
+    } else {
+      result.warnings.push(
+        `Columnas mensuales genéricas (${mesCols.length}) pero sin 'Costo A' base · distribución mensual sin fechas`,
+      );
     }
   }
 
@@ -316,8 +402,8 @@ export function parseCronogramaValorizado(buffer: Buffer): CvParseResult {
       }
     }
 
-    const fechaInicio = firstNonZero >= 0 ? result.meses[firstNonZero]!.fechaInicio : null;
-    const fechaFin = lastNonZero >= 0 ? result.meses[lastNonZero]!.fechaFin : null;
+    const fechaInicio = firstNonZero >= 0 ? result.meses[firstNonZero]?.fechaInicio ?? null : null;
+    const fechaFin = lastNonZero >= 0 ? result.meses[lastNonZero]?.fechaFin ?? null : null;
 
     result.partidas.push({
       codigo,
@@ -534,7 +620,7 @@ export function parseCronogramaValorizado(buffer: Buffer): CvParseResult {
     result.montoUtilidad = toNumber(utilRow[5]);
   }
 
-  const subRow = findTotal('SUB TOTAL');
+  const subRow = findTotal('SUB TOTAL') ?? findTotal('SUBTOTAL');
   if (subRow) result.subTotal = toNumber(subRow[5]);
 
   const mobRow = findTotal('MOBILIARIO');
@@ -552,8 +638,46 @@ export function parseCronogramaValorizado(buffer: Buffer): CvParseResult {
   const supRow = findTotal('SUPERVISION DE OBRA') ?? findTotal('SUPERVISION');
   if (supRow) result.supervision = toNumber(supRow[5]);
 
-  const vrRow = findTotal('VALOR REFERENCIAL');
+  // Expediente técnico (documento de trabajo) + su supervisión · componentes inversión
+  const docRow = findTotal('DOCUMENTO DE TRABAJO');
+  if (docRow) result.documentoTrabajo = toNumber(docRow[5]);
+  const supDocRow = findTotal('SUPERVISION DE DOCUMENTO');
+  if (supDocRow) result.supervisionDocTrabajo = toNumber(supDocRow[5]);
+
+  // ─── Plan financiero-inversión · distribución mensual MONTO DE INVERSIÓN ──
+  // Fila 'TOTAL ACUMULADO' trae el acumulado de inversión por mes en mesCols.
+  // De-acumular → monto por periodo. Fallback: sumar componentes mensuales.
+  const invAcumRow = findTotal('TOTAL ACUMULADO');
+  const componentRows = [cdRow, mobRow, igvRow, docRow, supDocRow, supRow].filter(Boolean) as unknown[][];
+  if (mesCols.length > 0 && result.meses.length === mesCols.length) {
+    if (invAcumRow) {
+      let prev = 0;
+      for (let k = 0; k < mesCols.length; k++) {
+        const acum = toNumber(invAcumRow[mesCols[k]!]) ?? prev;
+        const periodo = new Decimal(acum).minus(prev).toDecimalPlaces(2).toNumber();
+        prev = acum;
+        if (periodo !== 0) result.distribucionInversion.push({ ym: mesToYm(result.meses[k]!), monto: periodo });
+      }
+    } else if (componentRows.length > 0) {
+      for (let k = 0; k < mesCols.length; k++) {
+        let suma = new Decimal(0);
+        for (const cr of componentRows) suma = suma.plus(toNumber(cr[mesCols[k]!]) ?? 0);
+        const monto = suma.toDecimalPlaces(2).toNumber();
+        if (monto !== 0) result.distribucionInversion.push({ ym: mesToYm(result.meses[k]!), monto });
+      }
+    }
+  }
+
+  // Valor referencial / total MEF · fila explícita o último acumulado de inversión
+  const vrRow = findTotal('VALOR REFERENCIAL') ?? findTotal('MONTO DE INVERSION');
   if (vrRow) result.valorReferencial = toNumber(vrRow[5]);
+  if (result.valorReferencial == null && invAcumRow) {
+    // último valor no-vacío de la fila acumulada
+    for (let k = mesCols.length - 1; k >= 0; k--) {
+      const v = toNumber(invAcumRow[mesCols[k]!]);
+      if (v != null) { result.valorReferencial = v; break; }
+    }
+  }
 
   // ─── Cuadre ─────────────────────────────────────────────────
   if (result.costoDirecto !== null) {

@@ -6,6 +6,7 @@ import {
   FileText,
   Globe,
   HardHat,
+  Layers,
   LayoutDashboard,
   Package,
   Truck,
@@ -24,6 +25,7 @@ const NAV_GROUPS = [
       { to: '/licitaciones', icon: Briefcase, label: 'Licitaciones', badge: '9' },
       { to: '/seace', icon: Globe, label: 'SEACE', badge: '3' },
       { to: '/proyectos', icon: Building2, label: 'Proyectos', badge: '4' },
+      { to: '/inversiones', icon: Layers, label: 'Inversiones' },
     ],
   },
   {
@@ -34,10 +36,11 @@ const NAV_GROUPS = [
       { to: '/logistica', icon: Truck, label: 'Logística' },
       { to: '/inventario', icon: Package, label: 'Inventario' },
       { to: '/personal', icon: HardHat, label: 'Personal' },
+      { to: '/oficina', icon: Briefcase, label: 'Oficina' },
     ],
   },
   {
-    label: 'Archivo',
+    label: 'Archivos',
     items: [{ to: '/documentos', icon: FileText, label: 'Documentos' }],
   },
 ];

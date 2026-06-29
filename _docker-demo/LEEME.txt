@@ -1,0 +1,86 @@
+========================================================
+  ERP MM HIGH METRIK · DEMO (Docker)  ·  Instructivo
+========================================================
+
+Que es: la app completa (backend + frontend) + base de datos
+Postgres con TODA la data ya cargada. Un solo comando la levanta.
+
+--------------------------------------------------------
+REQUISITOS (solo la primera vez)
+--------------------------------------------------------
+1. Docker Desktop instalado y ABIERTO (que el icono ballena
+   este corriendo, no en rojo).
+      https://www.docker.com/products/docker-desktop/
+2. Internet la PRIMERA vez (descarga node + postgres + libs).
+   Despues ya corre offline.
+
+--------------------------------------------------------
+PASOS
+--------------------------------------------------------
+1. Copia TODA la carpeta del proyecto a la PC
+   (la carpeta "erp-mmhighmetrik-v2" entera).
+
+2. Entra a la subcarpeta  _docker-demo
+
+3. Copia el archivo   .env.example   y renombralo a   .env
+   (no hace falta editar nada para que arranque).
+
+4. Abre una terminal (PowerShell o CMD) DENTRO de _docker-demo
+   y corre:
+
+        docker compose up -d --build
+
+   La primera vez tarda 5-15 min (compila e instala). Paciencia.
+
+5. Cuando termine, abre el navegador en:
+
+        http://localhost:3001
+
+   Login:
+        usuario:  admin@mmhighmetrik.com
+        clave:    admin
+
+--------------------------------------------------------
+COMANDOS UTILES  (siempre dentro de _docker-demo)
+--------------------------------------------------------
+Ver que esta corriendo:     docker compose ps
+Ver logs / errores:         docker compose logs -f app
+Apagar (conserva data):     docker compose down
+Apagar y BORRAR la data:    docker compose down -v
+Volver a prender:           docker compose up -d
+
+--------------------------------------------------------
+NOTAS
+--------------------------------------------------------
+- La data ya esta cargada (se restaura sola la 1ra vez desde
+  demo.dump). No hay que importar nada.
+- La conciliacion de abril y todos los modulos funcionan SIN
+  llaves de IA. Las keys GEMINI/ANTHROPIC en .env son OPCIONALES
+  (solo para leer PDFs nuevos en vivo).
+- Si el puerto 3001 esta ocupado, cambia en docker-compose.yml
+  la linea  "3001:3001"  por ej  "8080:3001"  y entra a
+  http://localhost:8080
+- Si "docker compose up" falla con "Cannot connect to the Docker
+  daemon": Docker Desktop NO esta abierto. Abrelo y reintenta.
+
+--------------------------------------------------------
+SI ALGO NO CARGA / EL LOGIN SE QUEDA GIRANDO
+--------------------------------------------------------
+1. Reinicio limpio (borra data a medias y reconstruye):
+
+        docker compose down -v
+        docker compose up -d --build
+
+2. En el navegador, refresco DURO para limpiar cache vieja:
+        Mac:      Cmd + Shift + R
+        Windows:  Ctrl + Shift + R
+   O abre en ventana incognito.
+
+3. Ver el log del backend para la causa exacta:
+        docker compose logs app --tail 60
+   Si dice  ECONNREFUSED 127.0.0.1:5432  -> rehacer paso 1
+   (la BD debe ser "db", no localhost).
+
+4. Confirmar que los dos contenedores estan arriba:
+        docker compose ps
+   db = healthy , app = running.

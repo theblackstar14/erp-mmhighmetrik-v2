@@ -1,7 +1,9 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { AlertTriangle, Check, Loader2, Plus, Sparkles, X, Zap } from 'lucide-react';
 import { useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { api } from '@/lib/api.js';
+import { EmittingOverlay } from '@/components/ui/EmittingOverlay.js';
 import { cn, fmtPEN } from '@/lib/utils.js';
 
 const UNIDADES_SUNAT = [
@@ -128,12 +130,19 @@ export function NuevaOcModal({ onClose, onSuccess }: { onClose: () => void; onSu
   });
   const [error, setError] = useState<string | null>(null);
   const [showAutocomplete, setShowAutocomplete] = useState(false);
+  const [esOficina, setEsOficina] = useState(false); // OC sin proyecto (oficina/empresa MM)
+  const [cotizacionFile, setCotizacionFile] = useState<File | null>(null);
+  // Animación emitir · spinner → check → preview (estilo v1)
+  const [emitting, setEmitting] = useState(false);
+  const [emitDone, setEmitDone] = useState(false);
+  const [emitNum, setEmitNum] = useState<string | null>(null);
 
+  // Flujo: crear (borrador) → subir cotización (obligatoria) → enviar a aprobación
   const createMut = useMutation({
-    mutationFn: () =>
-      api.logistica.createOc({
-        proyectoId: form.proyectoInternoId,
-        proveedorId: matchedProveedor?.id ?? undefined, // si null · backend crea proveedor desde form
+    mutationFn: async () => {
+      const { oc } = await api.logistica.createOc({
+        proyectoId: esOficina ? undefined : form.proyectoInternoId,
+        proveedorId: matchedProveedor?.id ?? undefined,
         ruc: form.sinRuc ? undefined : form.ruc,
         sinRuc: form.sinRuc,
         proveedorRazonSocial: form.proveedorRazonSocial,
@@ -153,18 +162,24 @@ export function NuevaOcModal({ onClose, onSuccess }: { onClose: () => void; onSu
         gestorEmail: form.gestorEmail || null,
         gestorNombre: form.gestorNombre || null,
         terminos: form.terminos,
-        estado: 'pendiente_aprobacion',
+        estado: 'borrador',
         lineas: form.lineas
           .filter((l) => l.descripcion.trim() && l.cantidad && l.precioUnitario)
-          .map((l) => ({
-            descripcion: l.descripcion.trim(),
-            unidad: l.unidad,
-            cantidad: l.cantidad,
-            precioUnitario: l.precioUnitario,
-          })),
-      }),
-    onSuccess: (r) => onSuccess(r.oc.id),
-    onError: (e: Error) => setError(e.message),
+          .map((l) => ({ descripcion: l.descripcion.trim(), unidad: l.unidad, cantidad: l.cantidad, precioUnitario: l.precioUnitario })),
+      });
+      // cotización obligatoria → NAS
+      await api.logistica.uploadCotizacion(oc.id, cotizacionFile!);
+      // enviar a aprobación (Finanzas)
+      await api.logistica.enviarAprobacion(oc.id);
+      return oc;
+    },
+    onSuccess: (oc) => {
+      setEmitNum(oc.numero ?? null);
+      setEmitDone(true);
+      // deja ver el check ~900ms antes de abrir el preview
+      setTimeout(() => onSuccess(oc.id), 950);
+    },
+    onError: (e: Error) => { setEmitting(false); setEmitDone(false); setError(e.message); },
   });
 
   const proveedores = proveedoresQ.data?.proveedores ?? [];
@@ -269,9 +284,10 @@ export function NuevaOcModal({ onClose, onSuccess }: { onClose: () => void; onSu
   // Validación
   const validRuc = form.sinRuc || /^\d{11}$/.test(form.ruc);
   const validProv = form.proveedorRazonSocial.trim().length > 0 && validRuc;
-  const validProyecto = !!form.proyectoInternoId;
+  const validProyecto = esOficina || !!form.proyectoInternoId;
   const validItems = totales.itemsValidos > 0;
-  const isValid = validProv && validProyecto && validItems;
+  const validCotiz = !!cotizacionFile;
+  const isValid = validProv && validProyecto && validItems && validCotiz;
 
   const fillTest = () => setForm({ ...form, ...TEST_OC_DATA });
   const fillTestBig = () => setForm({ ...form, ...TEST_OC_DATA_BIG });
@@ -291,22 +307,39 @@ export function NuevaOcModal({ onClose, onSuccess }: { onClose: () => void; onSu
   const onSave = () => {
     setError(null);
     if (!validProv) return setError('Razón social y RUC (o checkbox sin RUC) obligatorios');
-    if (!validProyecto) return setError('Selecciona el proyecto interno (mapeo ERP)');
+    if (!validProyecto) return setError('Selecciona proyecto o marca "Oficina/empresa"');
     if (!validItems) return setError('Al menos 1 ítem con descripción + cantidad + precio');
+    if (!validCotiz) return setError('Cotización obligatoria · adjunta el archivo (PDF/imagen)');
+    setEmitting(true);
+    setEmitDone(false);
     createMut.mutate();
   };
 
-  const correlativoPreview = '0010'; // placeholder · backend asigna real
+  const esServicio = form.concepto === 'SERVICIO';
+  const docLabel = esServicio ? 'Orden de Servicio' : 'Orden de Compra';
+  const docPrefix = esServicio ? 'OS' : 'OC';
+  const correlativoPreview = '00XX'; // placeholder · backend asigna real
   const anioPreview = new Date().getFullYear();
-  const ocNumPreview = `${anioPreview} - ${correlativoPreview}`;
+  const ocNumPreview = `${docPrefix}-${anioPreview}-${correlativoPreview}`;
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="w-full max-w-4xl max-h-[95vh] overflow-hidden rounded-lg border border-line bg-bg-elev shadow-2xl flex flex-col">
+  if (emitting) {
+    return (
+      <EmittingOverlay
+        done={emitDone}
+        titulo={emitDone ? `${docLabel} emitida` : `Procesando ${docLabel}…`}
+        refLabel={`N° ${emitNum ?? ocNumPreview}`}
+        subtitulo={emitDone ? 'Abriendo vista previa del documento...' : 'Subiendo cotización y enviando a aprobación'}
+      />
+    );
+  }
+
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 sm:p-6 animate-backdropIn" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="w-full max-w-3xl max-h-[85vh] overflow-hidden rounded-xl border border-line bg-bg-elev shadow-2xl flex flex-col animate-modalPop">
         {/* Header · estilo screenshot */}
-        <div className="flex items-start justify-between border-b border-line px-6 py-4">
+        <div className="shrink-0 flex items-start justify-between border-b border-line px-6 py-4">
           <div>
-            <h2 className="text-[17px] font-bold tracking-[-0.01em]">Nueva Orden de Compra</h2>
+            <h2 className="text-[17px] font-bold tracking-[-0.01em]">Nueva {docLabel}</h2>
             <p className="text-[11.5px] text-ink-3 mt-0.5 font-mono">
               N° {ocNumPreview} · {new Date().toLocaleDateString('es-PE')}
             </p>
@@ -337,13 +370,45 @@ export function NuevaOcModal({ onClose, onSuccess }: { onClose: () => void; onSu
         </div>
 
         {/* Body scroll */}
-        <div className="flex-1 overflow-y-auto bg-bg-sunken/30">
+        <div className="flex-1 overflow-y-auto bg-bg-sunken/40 pb-5">
+          {/* ─── Tipo de orden · OC (bien) / OS (servicio) ─── */}
+          <div className="px-5 pt-4">
+            <div className="grid grid-cols-2 gap-2 p-1 rounded-lg border border-line bg-bg-sunken">
+              {([
+                { v: 'BIEN', t: 'Orden de Compra', s: 'Bienes · materiales · equipos', pfx: 'OC' },
+                { v: 'SERVICIO', t: 'Orden de Servicio', s: 'Servicios · mano de obra · alquiler', pfx: 'OS' },
+              ] as const).map((opt) => {
+                const active = form.concepto === opt.v;
+                return (
+                  <button
+                    key={opt.v}
+                    type="button"
+                    onClick={() => setForm({ ...form, concepto: opt.v })}
+                    className={cn(
+                      'flex flex-col items-start rounded-md px-3.5 py-2.5 text-left transition-colors border',
+                      active ? 'bg-bg-elev border-primary shadow-sm' : 'border-transparent hover:bg-bg-elev/60',
+                    )}
+                  >
+                    <span className="flex items-center gap-2">
+                      <span className={cn('font-mono text-[10px] font-bold px-1.5 py-0.5 rounded', active ? 'bg-primary text-primary-foreground' : 'bg-bg-elev text-ink-3 border border-line')}>{opt.pfx}</span>
+                      <span className={cn('text-[13px] font-semibold', active ? 'text-foreground' : 'text-ink-3')}>{opt.t}</span>
+                    </span>
+                    <span className="text-[10.5px] text-ink-4 mt-1">{opt.s}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           {/* ─── Sección 1 · DATOS COMERCIALES ─── */}
           <SectionHeader>Datos comerciales</SectionHeader>
           <SectionBody>
             <div className="grid grid-cols-3 gap-4">
               <Field label="Fecha emisión">
                 <input type="date" value={form.fechaEmision} onChange={(e) => setForm({ ...form, fechaEmision: e.target.value })} className="oc-input" />
+              </Field>
+              <Field label="Fecha entrega" right="opcional">
+                <input type="date" value={form.fechaEntrega} onChange={(e) => setForm({ ...form, fechaEntrega: e.target.value })} className="oc-input" />
               </Field>
               <Field label="Moneda">
                 <select value={form.moneda} onChange={(e) => setForm({ ...form, moneda: e.target.value as 'PEN' | 'USD' })} className="oc-input">
@@ -371,12 +436,6 @@ export function NuevaOcModal({ onClose, onSuccess }: { onClose: () => void; onSu
               </Field>
               <Field label="Cotización (ref.)" right="opcional">
                 <input value={form.cotizacion} onChange={(e) => setForm({ ...form, cotizacion: e.target.value })} placeholder="COT-2026-XXXX" className="oc-input" />
-              </Field>
-              <Field label="Concepto">
-                <select value={form.concepto} onChange={(e) => setForm({ ...form, concepto: e.target.value as 'BIEN' | 'SERVICIO' })} className="oc-input">
-                  <option value="BIEN">BIEN</option>
-                  <option value="SERVICIO">SERVICIO</option>
-                </select>
               </Field>
             </div>
           </SectionBody>
@@ -463,7 +522,18 @@ export function NuevaOcModal({ onClose, onSuccess }: { onClose: () => void; onSu
           </SectionBody>
 
           {/* ─── Sección 3 · ENTREGA Y PROYECTO ─── */}
-          <SectionHeader>Entrega y proyecto</SectionHeader>
+          <SectionHeader>
+            Entrega y proyecto
+            <label className="ml-auto flex items-center gap-1.5 text-[10.5px] font-normal text-ink-3 cursor-pointer normal-case tracking-normal">
+              <input
+                type="checkbox"
+                checked={esOficina}
+                onChange={(e) => setEsOficina(e.target.checked)}
+                className="rounded border-line"
+              />
+              OC de oficina/empresa (sin proyecto)
+            </label>
+          </SectionHeader>
           <SectionBody>
             <div className="grid grid-cols-3 gap-4">
               <Field label="Lugar de entrega">
@@ -474,12 +544,13 @@ export function NuevaOcModal({ onClose, onSuccess }: { onClose: () => void; onSu
                   value={form.codigoProyecto}
                   onChange={(e) => onCodigoProyectoChange(e.target.value)}
                   placeholder="PG0005"
+                  disabled={esOficina}
                   className="oc-input font-mono"
                 />
               </Field>
-              <Field label="Proyecto interno *" right="mapeo ERP">
-                <select value={form.proyectoInternoId} onChange={(e) => onProyectoInternoChange(e.target.value)} className="oc-input">
-                  <option value="">— elegir proyecto —</option>
+              <Field label={esOficina ? 'Proyecto' : 'Proyecto interno *'} right={esOficina ? 'oficina/empresa' : 'mapeo ERP'}>
+                <select value={form.proyectoInternoId} onChange={(e) => onProyectoInternoChange(e.target.value)} disabled={esOficina} className="oc-input">
+                  <option value="">{esOficina ? '— Oficina / empresa (MM) —' : '— elegir proyecto —'}</option>
                   {proyectos.map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.codigo} — {p.nombre.slice(0, 38)}
@@ -488,6 +559,18 @@ export function NuevaOcModal({ onClose, onSuccess }: { onClose: () => void; onSu
                 </select>
               </Field>
             </div>
+            {/* Cotización obligatoria · archivo → NAS */}
+            <Field label="Cotización (archivo) *" right="PDF o imagen · obligatoria · va al NAS">
+              <div className="flex items-center gap-2">
+                <input
+                  type="file"
+                  accept=".pdf,.jpg,.jpeg,.png,.webp"
+                  onChange={(e) => setCotizacionFile(e.target.files?.[0] ?? null)}
+                  className="block w-full text-[11.5px] text-ink-3 file:mr-3 file:h-8 file:rounded-md file:border-0 file:bg-primary file:px-3 file:text-[11.5px] file:font-medium file:text-primary-foreground hover:file:opacity-90"
+                />
+                {cotizacionFile && <Check className="h-4 w-4 text-emerald-600 shrink-0" />}
+              </div>
+            </Field>
           </SectionBody>
 
           {/* ─── Sección 4 · ÍTEMS ─── */}
@@ -515,7 +598,7 @@ export function NuevaOcModal({ onClose, onSuccess }: { onClose: () => void; onSu
                       <input
                         value={l.descripcion}
                         onChange={(e) => setLinea(i, 'descripcion', e.target.value)}
-                        placeholder="Descripción del ítem (producto o servicio)..."
+                        placeholder={esServicio ? 'Descripción del servicio...' : 'Descripción del ítem (producto)...'}
                         className="oc-input flex-1"
                       />
                     </div>
@@ -621,7 +704,7 @@ export function NuevaOcModal({ onClose, onSuccess }: { onClose: () => void; onSu
         </div>
 
         {/* Footer · sticky */}
-        <div className="border-t border-line bg-bg-elev px-5 py-3">
+        <div className="shrink-0 border-t border-line bg-bg-elev px-5 py-3">
           {error && (
             <div className="mb-2 rounded-md border border-destructive/30 bg-destructive-soft px-3 py-2 text-[11.5px] text-destructive">
               {error}
@@ -648,9 +731,10 @@ export function NuevaOcModal({ onClose, onSuccess }: { onClose: () => void; onSu
               <div className="flex items-center gap-1.5 text-[11px] text-amber-700 dark:text-amber-400 flex-1">
                 <AlertTriangle className="h-3.5 w-3.5" />
                 <span>
-                  Completa {!validProv && 'proveedor + RUC'}{!validProv && (!validProyecto || !validItems) && ', '}
-                  {!validProyecto && 'proyecto'}{!validProyecto && !validItems && ', '}
-                  {!validItems && 'al menos 1 ítem con cantidad+precio'}
+                  Completa {!validProv && 'proveedor + RUC'}{!validProv && (!validProyecto || !validItems || !validCotiz) && ', '}
+                  {!validProyecto && 'proyecto'}{!validProyecto && (!validItems || !validCotiz) && ', '}
+                  {!validItems && 'al menos 1 ítem'}{!validItems && !validCotiz && ', '}
+                  {!validCotiz && 'cotización (archivo)'}
                 </span>
               </div>
             )}
@@ -665,7 +749,7 @@ export function NuevaOcModal({ onClose, onSuccess }: { onClose: () => void; onSu
                 className="inline-flex items-center gap-1.5 h-9 px-4 rounded-md bg-primary text-primary-foreground text-[12px] font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {createMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-                Emitir OC y ver preview
+                Crear {docPrefix} y enviar a aprobación
               </button>
             </div>
           </div>
@@ -712,20 +796,21 @@ export function NuevaOcModal({ onClose, onSuccess }: { onClose: () => void; onSu
           line-height: 1.5;
         }
       `}</style>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
 function SectionHeader({ children }: { children: React.ReactNode }) {
   return (
-    <div className="px-6 pt-5 pb-2 flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-3 font-bold">
+    <div className="mx-5 mt-4 flex items-center gap-2 rounded-t-lg border border-b-0 border-line bg-bg-elev px-4 pt-3 pb-2 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-3 font-bold">
       {children}
     </div>
   );
 }
 
 function SectionBody({ children }: { children: React.ReactNode }) {
-  return <div className="px-6 pb-3 space-y-3">{children}</div>;
+  return <div className="mx-5 rounded-b-lg border border-t-0 border-line bg-bg-elev px-4 pb-4 pt-2 space-y-3">{children}</div>;
 }
 
 function Field({ label, right, children }: { label: string; right?: string; children: React.ReactNode }) {

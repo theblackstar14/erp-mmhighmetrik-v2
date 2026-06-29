@@ -23,7 +23,7 @@ flowchart TB
     style AMP fill:#cce5ff
 ```
 
-## Caso PG0005 · Resolución Gerencial 35-2026
+## Caso PG0005 · ResoluAción Gerencial 35-2026
 
 ```mermaid
 flowchart LR

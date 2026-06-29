@@ -46,7 +46,10 @@ export function AutoClasificarModal({ onClose }: { onClose: () => void }) {
       .finally(() => clearInterval(interval));
 
     return () => clearInterval(interval);
-  }, [stage]);
+    // 1 sola vez al montar · antes dependía de [stage] → re-disparaba la clasificación IA (Gemini)
+    // en cada transición de estado (preview/applying/done) · llamadas duplicadas + timers colgados.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const aplicarMut = useMutation({
     mutationFn: (sugs: Sugerencia[]) =>

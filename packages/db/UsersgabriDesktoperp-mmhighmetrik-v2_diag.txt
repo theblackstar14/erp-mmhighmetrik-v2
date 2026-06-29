@@ -1,0 +1,3 @@
+CONEXIONES erp_mmh (0):
+
+LOCKS sobre tablas conciliacion:

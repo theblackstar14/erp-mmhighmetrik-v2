@@ -1,18 +1,40 @@
-import { db, parseCronogramaValorizado, parseValorizacionXlsx, schema } from '@erp/db';
+import { db, parseCronogramaValorizado, parseValInversionTotales, parseValorizacionXlsx, valEsFormatoSimple, schema } from '@erp/db';
 import { proyectoCreateSchema } from '@erp/shared';
 import { and, asc, desc, eq, inArray, isNull } from 'drizzle-orm';
 import { Router } from 'express';
 import multer from 'multer';
 import { env } from '../env.js';
+import { computeCurvaS } from '../lib/curvaS.js';
+import { clasificarSalud, construirForecast, type SerieProy } from '../lib/dashboard.js';
 import { crossValidate, parseLlmTotalesFromXlsx } from '../lib/llmTotales.js';
 import { parseMSProjectXML, tasksToPartidas } from '../lib/mppParser.js';
 import { convertMppToXml } from '../lib/mppToXml.js';
+import { nasArchivarProyecto } from '../lib/nas.js';
 import { parseValorizacionLlm, validateValLlm } from '../lib/valorizacionLlm.js';
 import { requireAuth } from '../middleware/auth.js';
+import { periodoCerradoDeFecha } from '../lib/periodos.js';
+import { audit } from '../lib/audit.js';
 
 const router = Router();
 
 router.use(requireAuth);
+
+// F3 · Detectar cómo se calculan GG+Utilidad en el presupuesto del colegio.
+//   embebido_cd · CD ya incluye GG+UT (no hay líneas GG/UT desglosadas) → pctGg/pctUtilidad NULL
+//   separado    · GG+UT como % sobre CD + mobiliario/adicionales (S10 completo)
+//   simple_pct  · GG+UT como % sobre CD pero sin mobiliario (desglose simple)
+type GgUtModo = 'separado' | 'embebido_cd' | 'simple_pct';
+function detectGgUtModo(p: {
+  pctGg: number | null;
+  pctUtilidad: number | null;
+  montoGg: number | null;
+  montoUtilidad: number | null;
+  mobiliario: number | null;
+}): GgUtModo {
+  const tieneGgUt = !!(p.pctGg || p.pctUtilidad || p.montoGg || p.montoUtilidad);
+  if (!tieneGgUt) return 'embebido_cd';
+  return (p.mobiliario ?? 0) > 0 ? 'separado' : 'simple_pct';
+}
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -73,6 +95,193 @@ router.post('/_ius', async (req, res) => {
   res.status(201).json({ iu: created });
 });
 
+// GET /api/proyectos/_dashboard · KPIs baratos (cartera, P&L, conteos, tabla) · SIN curva-S.
+// La salud/forecast (caro: curva-S por obra) vive en /_dashboard/salud aparte → KPIs salen al toque.
+router.get('/_dashboard', async (_req, res) => {
+  const [proys, clientesAll, valsAll, ocsAll, usersAll] = await Promise.all([
+    db.select().from(schema.proyectos).where(isNull(schema.proyectos.deletedAt)).orderBy(desc(schema.proyectos.createdAt)),
+    db.select({ id: schema.clientes.id, razonSocial: schema.clientes.razonSocial }).from(schema.clientes),
+    db.select({ proyectoId: schema.valorizaciones.proyectoId, numero: schema.valorizaciones.numero, montoCd: schema.valorizaciones.montoCd, pctAvance: schema.valorizaciones.pctAvance }).from(schema.valorizaciones),
+    db.select({ proyectoId: schema.ordenesCompra.proyectoId, estado: schema.ordenesCompra.estado, subtotalSinIgv: schema.ordenesCompra.subtotalSinIgv }).from(schema.ordenesCompra),
+    db.select({ id: schema.users.id, nombres: schema.users.nombres, apellidos: schema.users.apellidos }).from(schema.users),
+  ]);
+  const cliMap = new Map(clientesAll.map((c) => [c.id, c.razonSocial]));
+  const userName = new Map(usersAll.map((u) => [u.id, `${u.nombres} ${u.apellidos}`.trim()]));
+  const EG = new Set(['aprobada', 'emitida', 'en_transito', 'entregada']);
+  const ACTIVAS = new Set(['adjudicado', 'ejecucion', 'liquidacion']);
+
+  const valsByP = new Map<string, typeof valsAll>();
+  for (const v of valsAll) { const arr = valsByP.get(v.proyectoId) ?? []; arr.push(v); valsByP.set(v.proyectoId, arr); }
+  const ocsByP = new Map<string, typeof ocsAll>();
+  for (const o of ocsAll) {
+    if (!o.proyectoId) continue; // OC de oficina/empresa · no entra al rollup por-proyecto
+    const arr = ocsByP.get(o.proyectoId) ?? [];
+    arr.push(o);
+    ocsByP.set(o.proyectoId, arr);
+  }
+
+  const obras = proys.map((p) => {
+    const vs = valsByP.get(p.id) ?? [];
+    const os = (ocsByP.get(p.id) ?? []).filter((o) => EG.has(o.estado));
+    const ingresos = vs.reduce((s, v) => s + Number(v.montoCd ?? 0), 0);
+    const egresos = os.reduce((s, o) => s + Number(o.subtotalSinIgv ?? 0), 0);
+    const miPct = p.pctParticipacionPropia != null ? Number(p.pctParticipacionPropia) : 1;
+    const miUtilidad = ingresos * miPct - egresos;
+    // avance físico ACUMULADO = Σ pctAvance de todas las valos
+    // (cada pctAvance ya es montoCd_periodo / subtotal · sumarlas da el acumulado · antes tomaba
+    //  solo la última valo = % del periodo, no el acumulado → mostraba mal)
+    const avanceFisico = vs.reduce((s, v) => s + Number(v.pctAvance ?? 0), 0);
+    const presupuesto = Number(p.montoContractual ?? 0) || Number(p.costoDirecto ?? 0);
+    return {
+      id: p.id,
+      codigo: p.codigo,
+      nombre: p.nombre,
+      cliente: p.clienteId ? cliMap.get(p.clienteId) ?? null : null,
+      status: p.status,
+      ubicacion: p.ubicacion ?? null,
+      fechaInicio: p.fechaInicio ?? null,
+      fechaFin: p.fechaFin ?? null,
+      montoContractual: Number(p.montoContractual ?? 0),
+      presupuesto,
+      avanceFisico,
+      ingresos,
+      egresos,
+      miPct,
+      miUtilidad,
+      responsableUserId: p.responsableUserId ?? null,
+      responsable: p.responsableUserId ? userName.get(p.responsableUserId) ?? null : null,
+    };
+  });
+
+  const totales = {
+    cartera: obras.reduce((s, o) => s + o.presupuesto, 0),
+    ingresos: obras.reduce((s, o) => s + o.ingresos, 0),
+    egresos: obras.reduce((s, o) => s + o.egresos, 0),
+    miUtilidad: obras.reduce((s, o) => s + o.miUtilidad, 0),
+    obrasActivas: obras.filter((o) => ACTIVAS.has(o.status)).length,
+    obrasTotal: obras.length,
+    licitacion: obras.filter((o) => o.status === 'licitacion').length,
+    avanceFisicoProm: obras.length > 0 ? obras.reduce((s, o) => s + o.avanceFisico, 0) / obras.length : 0,
+  };
+  res.json({ totales, obras });
+});
+
+// GET /api/proyectos/_dashboard/salud · curva-S por obra (CPI/SPI/salud) + forecast.
+// Caro (computeCurvaS por proyecto) → query separada con su propio skeleton en el front.
+router.get('/_dashboard/salud', async (_req, res) => {
+  // select narrow · solo columnas que computeCurvaS lee (ver PartidaCS/AvanceCS/ValorizacionCS).
+  // valorizacionesPartidas NO se consulta · computeCurvaS lo ignora (void) → se pasa [].
+  const [proys, valsAll, partidasAll, gastosAll] = await Promise.all([
+    db.select({ id: schema.proyectos.id, codigo: schema.proyectos.codigo, nombre: schema.proyectos.nombre, montoContractual: schema.proyectos.montoContractual, montoSubtotal: schema.proyectos.montoSubtotal, costoDirecto: schema.proyectos.costoDirecto, montoReferencial: schema.proyectos.montoReferencial, distribucionInversion: schema.proyectos.distribucionInversion, responsableUserId: schema.proyectos.responsableUserId }).from(schema.proyectos).where(isNull(schema.proyectos.deletedAt)),
+    db.select({ proyectoId: schema.valorizaciones.proyectoId, fechaDesde: schema.valorizaciones.fechaDesde, fechaHasta: schema.valorizaciones.fechaHasta, montoCd: schema.valorizaciones.montoCd, montoReajuste: schema.valorizaciones.montoReajuste, montoInversionPeriodo: schema.valorizaciones.montoInversionPeriodo, mesPeriodo: schema.valorizaciones.mesPeriodo, montoInversionAcumulado: schema.valorizaciones.montoInversionAcumulado }).from(schema.valorizaciones),
+    db.select({ id: schema.partidas.id, proyectoId: schema.partidas.proyectoId, codigo: schema.partidas.codigo, parentCodigo: schema.partidas.parentCodigo, fechaInicio: schema.partidas.fechaInicio, fechaFin: schema.partidas.fechaFin, presupuestoContractual: schema.partidas.presupuestoContractual, presupuesto: schema.partidas.presupuesto, distribucionMensual: schema.partidas.distribucionMensual }).from(schema.partidas),
+    db.select({ proyectoId: schema.gastos.proyectoId, total: schema.gastos.total }).from(schema.gastos),
+  ]);
+  const avancesAll = partidasAll.length
+    ? await db.select({ partidaId: schema.avances.partidaId, fecha: schema.avances.fecha, avancePct: schema.avances.avancePct, realCost: schema.avances.realCost }).from(schema.avances).where(inArray(schema.avances.partidaId, partidasAll.map((p) => p.id)))
+    : [];
+
+  const valsByP = new Map<string, typeof valsAll>();
+  for (const v of valsAll) { const arr = valsByP.get(v.proyectoId) ?? []; arr.push(v); valsByP.set(v.proyectoId, arr); }
+  const partidaProy = new Map(partidasAll.map((p) => [p.id, p.proyectoId]));
+  const partidasByP = new Map<string, typeof partidasAll>();
+  for (const p of partidasAll) { const arr = partidasByP.get(p.proyectoId) ?? []; arr.push(p); partidasByP.set(p.proyectoId, arr); }
+  const avancesByP = new Map<string, typeof avancesAll>();
+  for (const a of avancesAll) {
+    const pid = partidaProy.get(a.partidaId);
+    if (!pid) continue;
+    const arr = avancesByP.get(pid) ?? [];
+    arr.push(a);
+    avancesByP.set(pid, arr);
+  }
+  const gastoByP = new Map<string, number>();
+  for (const g of gastosAll) {
+    if (!g.proyectoId) continue;
+    gastoByP.set(g.proyectoId, (gastoByP.get(g.proyectoId) ?? 0) + Number(g.total ?? 0));
+  }
+
+  const hoy = new Date();
+  const series: SerieProy[] = [];
+
+  const obras = proys.map((p) => {
+    const vs = valsByP.get(p.id) ?? [];
+    const presupuesto = Number(p.montoContractual ?? 0) || Number(p.costoDirecto ?? 0);
+    // EVM: SPI de curva-S (físico-obra) · CPI = EV / costo real (gastos importados)
+    const parts = partidasByP.get(p.id) ?? [];
+    const acReal = gastoByP.get(p.id) ?? 0;
+    let cpi: number | null = null, spi: number | null = null, ev = 0;
+    const cs = parts.length
+      ? computeCurvaS(parts, avancesByP.get(p.id) ?? [], vs, [], hoy,
+          p.distribucionInversion?.length ? { bac: Number(p.montoReferencial ?? 0), distribucion: p.distribucionInversion } : null,
+          Number(p.montoSubtotal ?? 0) || null)
+      : null;
+    if (cs) {
+      spi = cs.evm.SPI;
+      ev = cs.evm.EV;
+      // CPI = EV / costo real. Solo es fiable si el costo capturado es plausible (>=10% del
+      // presupuesto); con gastos incompletos AC≈0 dispara CPI a miles → lo dejamos sin dato.
+      // ponytail: umbral simple; subir cuando todas las obras tengan compras+planilla ligadas.
+      cpi = acReal >= presupuesto * 0.1 ? ev / acReal : null;
+      series.push({ keys: cs.buckets.map((b) => b.key), planAcum: cs.planAcum, earnedAcum: cs.earnedAcum });
+    }
+    const salud = clasificarSalud(cpi, spi);
+    const desviacionPct = cpi != null ? Math.round((cpi - 1) * 1000) / 10 : null; // CV% relativo
+    return {
+      id: p.id,
+      codigo: p.codigo,
+      nombre: p.nombre,
+      cpi: cpi != null ? Math.round(cpi * 100) / 100 : null,
+      spi: spi != null ? Math.round(spi * 100) / 100 : null,
+      salud,
+      desviacionPct,
+      responsableUserId: p.responsableUserId ?? null,
+    };
+  });
+
+  const salud = {
+    critico: obras.filter((o) => o.salud === 'critico').length,
+    observacion: obras.filter((o) => o.salud === 'observacion').length,
+    saludable: obras.filter((o) => o.salud === 'saludable').length,
+    sinDatos: obras.filter((o) => o.salud === 'sin_datos').length,
+  };
+  const forecast = construirForecast(series, hoy);
+  res.json({ salud, forecast, obras });
+});
+
+// PATCH /api/proyectos/:id/responsable · asigna residente/gerente de obra
+router.patch('/:id/responsable', async (req, res) => {
+  const responsableUserId = (req.body?.responsableUserId ?? null) as string | null;
+  const [p] = await db.update(schema.proyectos)
+    .set({ responsableUserId })
+    .where(and(eq(schema.proyectos.id, String(req.params.id)), isNull(schema.proyectos.deletedAt)))
+    .returning({ id: schema.proyectos.id, responsableUserId: schema.proyectos.responsableUserId });
+  if (!p) return res.status(404).json({ error: 'Proyecto no encontrado' });
+  res.json({ proyecto: p });
+});
+
+// ─── Equipo del proyecto (profesionales asignados del padrón) ─
+router.get('/:id/equipo', async (req, res) => {
+  const rows = await db
+    .select({ profesionalId: schema.equipoProyecto.profesionalId, rol: schema.equipoProyecto.rol, asignadoEn: schema.equipoProyecto.asignadoEn, nombre: schema.profesionales.nombre, profesion: schema.profesionales.profesion })
+    .from(schema.equipoProyecto)
+    .leftJoin(schema.profesionales, eq(schema.profesionales.id, schema.equipoProyecto.profesionalId))
+    .where(eq(schema.equipoProyecto.proyectoId, req.params.id!));
+  const equipo = rows.map((r) => ({ profesionalId: r.profesionalId, rol: r.rol, asignadoEn: r.asignadoEn, nombre: r.nombre ?? '', profesion: r.profesion }));
+  res.json({ equipo });
+});
+router.post('/:id/equipo', async (req, res) => {
+  const b = req.body as { profesionalId?: string; rol?: string };
+  if (!b.profesionalId || !b.rol) return res.status(400).json({ error: 'profesionalId y rol obligatorios' });
+  // delete+insert · evita depender de constraint único exacto para onConflict
+  await db.delete(schema.equipoProyecto).where(and(eq(schema.equipoProyecto.proyectoId, req.params.id!), eq(schema.equipoProyecto.profesionalId, b.profesionalId)));
+  await db.insert(schema.equipoProyecto).values({ proyectoId: req.params.id!, profesionalId: b.profesionalId, rol: b.rol });
+  res.json({ ok: true });
+});
+router.delete('/:id/equipo/:profesionalId', async (req, res) => {
+  await db.delete(schema.equipoProyecto).where(and(eq(schema.equipoProyecto.proyectoId, req.params.id!), eq(schema.equipoProyecto.profesionalId, req.params.profesionalId!)));
+  res.json({ ok: true });
+});
+
 // GET /api/proyectos/:id
 router.get('/:id', async (req, res) => {
   const [proyecto] = await db
@@ -127,6 +336,17 @@ router.post('/', async (req, res) => {
 });
 
 // POST /api/proyectos/preview-xlsx · parse + return preview (no DB write)
+// P2 · default inteligente del tipo de entidad a partir del nombre del cliente (municipalidad != gobierno_regional)
+function inferirTipoEntidad(cliente: string | null | undefined): string {
+  const c = (cliente ?? '').toUpperCase();
+  if (/MUNICIPALIDAD|MUNICIPAL/.test(c)) return 'municipalidad';
+  if (/GOBIERNO\s+REGIONAL|REGION\b|GORE/.test(c)) return 'gobierno_regional';
+  if (/MINISTERIO|MINEDU|MINSA|MTC|GOBIERNO\s+NACIONAL/.test(c)) return 'ministerio';
+  if (/UNIVERSIDAD|UGEL|EDUCACION/.test(c)) return 'gobierno_regional';
+  if (c && !/MUNICI|GOBIERNO|MINISTERIO|UNIVERS|UGEL/.test(c)) return 'privado';
+  return 'gobierno_regional';
+}
+
 // Estrategia híbrida: deterministic + LLM totales en paralelo · cross-validation
 router.post('/preview-xlsx', upload.single('file'), async (req, res) => {
   try {
@@ -154,7 +374,15 @@ router.post('/preview-xlsx', upload.single('file'), async (req, res) => {
       return res.status(400).json({ error: parsed.errors.join(' · '), parsed });
     }
 
-    // Validación cruzada
+    // Si el Excel trae el MONTO pero no el % (caso "Desglose simple"), derivar el % del monto
+    // (evita mostrar/persistir 0% con monto != 0). En "embebido_cd" montoGg=null → queda null (correcto).
+    const _cd = parsed.costoDirecto ?? 0;
+    const _baseIgv = (parsed.subTotal ?? 0) + (parsed.mobiliario ?? 0);
+    const pctGgRes = parsed.pctGg ?? (_cd > 0 && parsed.montoGg ? parsed.montoGg / _cd : null);
+    const pctUtilRes = parsed.pctUtilidad ?? (_cd > 0 && parsed.montoUtilidad ? parsed.montoUtilidad / _cd : null);
+    const pctIgvRes = parsed.pctIgv ?? (_baseIgv > 0 && parsed.montoIgv ? parsed.montoIgv / _baseIgv : null);
+
+    // Validación cruzada (con los % ya derivados → no genera falsas discrepancias por % null vs IA)
     let validation: ReturnType<typeof crossValidate> | null = null;
     let llmMeta: { modelUsed: string; latencyMs: number; costUsd: number } | null = null;
     if (llmResult.status === 'fulfilled') {
@@ -162,13 +390,13 @@ router.post('/preview-xlsx', upload.single('file'), async (req, res) => {
       validation = crossValidate(
         {
           costoDirecto: parsed.costoDirecto,
-          pctGg: parsed.pctGg,
+          pctGg: pctGgRes,
           montoGg: parsed.montoGg,
-          pctUtilidad: parsed.pctUtilidad,
+          pctUtilidad: pctUtilRes,
           montoUtilidad: parsed.montoUtilidad,
           subTotal: parsed.subTotal,
           mobiliario: parsed.mobiliario,
-          pctIgv: parsed.pctIgv,
+          pctIgv: pctIgvRes,
           montoIgv: parsed.montoIgv,
           presupuestoTotal: parsed.presupuestoTotal,
           supervision: parsed.supervision,
@@ -198,7 +426,8 @@ router.post('/preview-xlsx', upload.single('file'), async (req, res) => {
     const sugCodigo = `PG${String(next).padStart(4, '0')}`;
     res.json({
       ok: true,
-      sugerencia: { codigo: sugCodigo },
+      sugerencia: { codigo: sugCodigo, tipoEntidad: inferirTipoEntidad(parsed.cliente) }, // P2 · default inteligente del tipo
+      ggUtModo: detectGgUtModo(parsed), // F3 · estructura GG+UT detectada (preview HITL)
       header: {
         obra: parsed.obra,
         ubicacion: parsed.ubicacion,
@@ -210,13 +439,13 @@ router.post('/preview-xlsx', upload.single('file'), async (req, res) => {
       meses: parsed.meses,
       totales: {
         costoDirecto: parsed.costoDirecto,
-        pctGg: parsed.pctGg,
+        pctGg: pctGgRes,           // % derivado del monto si el Excel no lo traía
         montoGg: parsed.montoGg,
-        pctUtilidad: parsed.pctUtilidad,
+        pctUtilidad: pctUtilRes,
         montoUtilidad: parsed.montoUtilidad,
         subTotal: parsed.subTotal,
         mobiliario: parsed.mobiliario,
-        pctIgv: parsed.pctIgv,
+        pctIgv: pctIgvRes,
         montoIgv: parsed.montoIgv,
         presupuestoTotal: parsed.presupuestoTotal,
         supervision: parsed.supervision,
@@ -262,6 +491,8 @@ router.post('/import-xlsx', upload.single('file'), async (req, res) => {
     const codigo = (body.codigo ?? '').trim();
     const nombreOverride = (body.nombre ?? '').trim();
     const tipoEntidad = (body.tipoEntidad ?? 'gobierno_regional').trim();
+    const inversionId = (body.inversionId ?? '').trim() || null; // F3 · vincular colegio a inversión-padre
+    const codigoIe = (body.codigoIe ?? '').trim() || null; // F3 · nº institución educativa
     if (!codigo) return res.status(400).json({ error: 'codigo es obligatorio (ej: PG0010)' });
 
     const existingCodigo = await db
@@ -270,6 +501,18 @@ router.post('/import-xlsx', upload.single('file'), async (req, res) => {
       .where(eq(schema.proyectos.codigo, codigo))
       .limit(1);
     if (existingCodigo.length) return res.status(409).json({ error: `Código ${codigo} ya existe` });
+
+    // Validar inversión-padre si se envió (no crear colegio huérfano apuntando a CUI inexistente)
+    let inversionCui: string | null = null;
+    if (inversionId) {
+      const [inv] = await db
+        .select({ cui: schema.inversiones.cui })
+        .from(schema.inversiones)
+        .where(and(eq(schema.inversiones.id, inversionId), isNull(schema.inversiones.deletedAt)))
+        .limit(1);
+      if (!inv) return res.status(400).json({ error: `Inversión ${inversionId} no existe` });
+      inversionCui = inv.cui;
+    }
 
     // Auto-crear o reutilizar cliente por razón social
     let clienteId: string | null = null;
@@ -299,17 +542,20 @@ router.post('/import-xlsx', upload.single('file'), async (req, res) => {
     const fechaFin = lastMes?.fechaFin ?? null;
     const fechaInicio = parsed.fechaBase ?? parsed.meses[0]?.fechaInicio ?? null;
 
-    // Detectar indirectos embebidos · cronograma contractual sin GG/Util desglosado
-    // Si parser NO detectó pctGg ni pctUtilidad · asume 0 (embebidos en CD)
-    // NO usa 15% default · sería invención
+    // F3 · Detectar estructura GG+Utilidad del expediente
+    //   embebido_cd → CD ya incluye GG+UT · pctGg/pctUtilidad van NULL (no inventar)
+    //   separado    → GG+UT como % + mobiliario · simple_pct → GG+UT % sin mobiliario
     const cd = parsed.costoDirecto ?? 0;
-    const pctGgFinal = parsed.pctGg ?? 0;
-    const pctUtilFinal = parsed.pctUtilidad ?? 0;
     const pctIgvFinal = parsed.pctIgv ?? 0.18;
-    const indirectosEmbebidos = !parsed.pctGg && !parsed.pctUtilidad && !parsed.montoGg && !parsed.montoUtilidad;
+    const ggUtModo = detectGgUtModo(parsed);
+    const indirectosEmbebidos = ggUtModo === 'embebido_cd';
+    // pct NULL si embebido (no hay % real). Si NO embebido y el Excel trajo el MONTO pero no el %,
+    // derivar el % del monto (montoGg/CD) → nunca persistir 0% con monto != 0 (riesgo contable).
+    const pctGgFinal = indirectosEmbebidos ? null : (parsed.pctGg ?? (cd > 0 && parsed.montoGg ? parsed.montoGg / cd : 0));
+    const pctUtilFinal = indirectosEmbebidos ? null : (parsed.pctUtilidad ?? (cd > 0 && parsed.montoUtilidad ? parsed.montoUtilidad / cd : 0));
 
-    // Derivar montos si parser no los extrajo
-    const subtotalCalc = parsed.subTotal ?? cd * (1 + pctGgFinal + pctUtilFinal);
+    // Derivar montos si parser no los extrajo (embebido → factor 1, GG+UT ya en CD)
+    const subtotalCalc = parsed.subTotal ?? cd * (1 + (pctGgFinal ?? 0) + (pctUtilFinal ?? 0));
     const mobiliarioCalc = parsed.mobiliario ?? 0;
     const igvBase = subtotalCalc + mobiliarioCalc;
     const montoIgvCalc = parsed.montoIgv ?? igvBase * pctIgvFinal;
@@ -331,14 +577,25 @@ router.post('/import-xlsx', upload.single('file'), async (req, res) => {
           costoDirecto: cd.toString(),
           costoDirectoSinIgv: cd.toString(),
           igvEnXml: false,
-          pctGg: pctGgFinal.toString(),
-          pctUtilidad: pctUtilFinal.toString(),
+          ggUtModo,
+          inversionId,
+          cui: inversionCui,
+          codigoIe,
+          fuenteMontos: 'cronograma_valorizado',
+          pctGg: pctGgFinal === null ? null : pctGgFinal.toString(),
+          pctUtilidad: pctUtilFinal === null ? null : pctUtilFinal.toString(),
           pctIgv: pctIgvFinal.toString(),
           montoSubtotal: subtotalCalc.toFixed(2),
           montoIgv: montoIgvCalc.toFixed(2),
           montoReferencial: vrCalc.toFixed(2),
           montoContractual: presupTotalCalc.toFixed(2),
           montoVigente: presupTotalCalc.toFixed(2),
+          // Componentes inversión + plan financiero-inversión mensual (PV)
+          montoMobiliario: parsed.mobiliario != null ? parsed.mobiliario.toFixed(2) : null,
+          montoExpedienteTecnico: parsed.documentoTrabajo != null ? parsed.documentoTrabajo.toFixed(2) : null,
+          montoSupervisionExpediente: parsed.supervisionDocTrabajo != null ? parsed.supervisionDocTrabajo.toFixed(2) : null,
+          montoSupervisionObra: parsed.supervision != null ? parsed.supervision.toFixed(2) : null,
+          distribucionInversion: parsed.distribucionInversion,
           fechaInicio,
           fechaFin,
           diasPlazo: parsed.diasPlazo,
@@ -392,9 +649,14 @@ router.post('/import-xlsx', upload.single('file'), async (req, res) => {
       return proyId;
     });
 
+    // Auto-archivar el cronograma valorizado al NAS (best-effort · crea la carpeta base de la obra)
+    await nasArchivarProyecto(codigo, '02_Expediente_Tecnico', 'Cronograma_Valorizado.xlsx', req.file.buffer);
+
     res.status(201).json({
       ok: true,
       proyectoId,
+      ggUtModo,
+      inversionId,
       stats: {
         partidas: parsed.partidas.length,
         hojas: parsed.totalPartidasHoja,
@@ -541,6 +803,19 @@ router.delete('/:id', async (req, res) => {
   res.json({ ok: true });
 });
 
+// POST /api/proyectos/:id/contrato · archiva el PDF del contrato al NAS (01_Contrato)
+router.post('/:id/contrato', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    const [pc] = await db.select({ codigo: schema.proyectos.codigo }).from(schema.proyectos).where(eq(schema.proyectos.id, req.params.id!)).limit(1);
+    if (!pc) return res.status(404).json({ error: 'Proyecto no encontrado' });
+    const ok = await nasArchivarProyecto(pc.codigo, '01_Contrato', 'Contrato.pdf', req.file.buffer);
+    res.json({ ok });
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});
+
 // ─── Cronograma · upload + extract partidas ────────────────
 // POST /api/proyectos/:id/cronograma · acepta .xml o .mpp
 router.post('/:id/cronograma', upload.single('file'), async (req, res) => {
@@ -621,6 +896,13 @@ router.post('/:id/cronograma', upload.single('file'), async (req, res) => {
         .where(eq(schema.proyectos.id, req.params.id!));
     });
 
+    // Auto-archivar el cronograma original (.mpp/.xml) al NAS (best-effort)
+    {
+      const [pc] = await db.select({ codigo: schema.proyectos.codigo }).from(schema.proyectos).where(eq(schema.proyectos.id, req.params.id!)).limit(1);
+      const e = req.file!.originalname.slice(req.file!.originalname.lastIndexOf('.')) || '.mpp';
+      if (pc) await nasArchivarProyecto(pc.codigo, '02_Expediente_Tecnico', `Cronograma${e}`, req.file!.buffer);
+    }
+
     res.json({
       ok: true,
       stats: {
@@ -641,24 +923,18 @@ router.post('/:id/cronograma', upload.single('file'), async (req, res) => {
 // GET /api/proyectos/:id/partidas
 router.get('/:id/partidas', async (req, res) => {
   const proyectoId = req.params.id!;
-  const list = await db
-    .select()
-    .from(schema.partidas)
-    .where(eq(schema.partidas.proyectoId, proyectoId))
-    .orderBy(asc(schema.partidas.orden));
-
-  // Mergear acumulado de valorizaciones · última fila por partida (mayor val.numero)
-  const vals = await db
-    .select()
-    .from(schema.valorizaciones)
-    .where(eq(schema.valorizaciones.proyectoId, proyectoId));
+  // partidas (UI necesita filas completas) + valos (solo id/numero) en paralelo
+  const [list, vals] = await Promise.all([
+    db.select().from(schema.partidas).where(eq(schema.partidas.proyectoId, proyectoId)).orderBy(asc(schema.partidas.orden)),
+    db.select({ id: schema.valorizaciones.id, numero: schema.valorizaciones.numero }).from(schema.valorizaciones).where(eq(schema.valorizaciones.proyectoId, proyectoId)),
+  ]);
   if (vals.length === 0) {
     return res.json({ partidas: list });
   }
   const valIds = vals.map((v) => v.id);
   const valNumMap = new Map(vals.map((v) => [v.id, v.numero]));
   const valpart = await db
-    .select()
+    .select({ partidaId: schema.valorizacionesPartidas.partidaId, valorizacionId: schema.valorizacionesPartidas.valorizacionId, metradoAcumulado: schema.valorizacionesPartidas.metradoAcumulado, montoAcumulado: schema.valorizacionesPartidas.montoAcumulado, pctAvance: schema.valorizacionesPartidas.pctAvance })
     .from(schema.valorizacionesPartidas)
     .where(inArray(schema.valorizacionesPartidas.valorizacionId, valIds));
 
@@ -731,8 +1007,7 @@ router.get('/:id/recursos', async (req, res) => {
     return res.json({ recursos: [], cronograma: [], stats: null });
   }
 
-  const recursosList = await db.select().from(schema.recursos);
-  const recursosFiltered = recursosList.filter((r) => recursoIds.includes(r.id));
+  const recursosFiltered = await db.select().from(schema.recursos).where(inArray(schema.recursos.id, recursoIds));
 
   // Stats
   const stats = {
@@ -786,7 +1061,10 @@ router.post('/:id/valorizaciones', upload.single('file'), async (req, res) => {
       return res.status(400).json({ error: 'Solo .xlsx/.xls soportados' });
 
     // ─── Estrategia híbrida · LLM primero · fallback determinista ─
-    const useDeterministic = req.body?.forceDeterministic === 'true' || !env.ANTHROPIC_API_KEY;
+    // Formato simple (1 hoja "VAL SMP") → parser determinista exacto, sin gastar LLM
+    // (la IA no es confiable extrayendo 500+ partidas de una sola hoja).
+    const formatoSimple = valEsFormatoSimple(req.file.buffer);
+    const useDeterministic = formatoSimple || req.body?.forceDeterministic === 'true' || !env.ANTHROPIC_API_KEY;
     let parsed: ReturnType<typeof parseValorizacionXlsx>;
     let llmMeta: { modelUsed: string; latencyMs: number; costUsd: number; warnings: string[] } | null = null;
 
@@ -914,6 +1192,9 @@ router.post('/:id/valorizaciones', upload.single('file'), async (req, res) => {
       }
     }
 
+    // Bloque totales inversión (financiero-inversión real) · parser-agnóstico sobre buffer
+    const inversion = parseValInversionTotales(req.file.buffer);
+
     // Verificar proyecto existe
     const [proy] = await db
       .select()
@@ -929,19 +1210,19 @@ router.post('/:id/valorizaciones', upload.single('file'), async (req, res) => {
       .where(eq(schema.formulasPolinomicas.proyectoId, proyectoId));
     const fpGlobal = fps.find((f) => f.subpresupuestoCodigo === 'GLOBAL') ?? fps[0];
 
-    // Mapear partidas Excel ↔ partidas DB por código
+    // Mapear partidas Excel ↔ partidas DB por código (narrow · solo lo usado abajo)
     const dbPartidas = await db
-      .select()
+      .select({ id: schema.partidas.id, codigo: schema.partidas.codigo, precioUnitarioContractual: schema.partidas.precioUnitarioContractual, presupuestoContractual: schema.partidas.presupuestoContractual })
       .from(schema.partidas)
       .where(eq(schema.partidas.proyectoId, proyectoId));
     const partidasMap = new Map(dbPartidas.map((p) => [p.codigo, p]));
 
-    // Idempotencia · borrar valorización previa con mismo número (cascade limpia detalle)
-    const existentes = await db
-      .select()
+    // Idempotencia · borrar valo previa con mismo número (filtro en SQL · cascade limpia detalle)
+    const [prev] = await db
+      .select({ id: schema.valorizaciones.id })
       .from(schema.valorizaciones)
-      .where(eq(schema.valorizaciones.proyectoId, proyectoId));
-    const prev = existentes.find((v) => v.numero === parsed.numero);
+      .where(and(eq(schema.valorizaciones.proyectoId, proyectoId), eq(schema.valorizaciones.numero, parsed.numero)))
+      .limit(1);
     if (prev) {
       await db.delete(schema.valorizaciones).where(eq(schema.valorizaciones.id, prev.id));
     }
@@ -987,6 +1268,11 @@ router.post('/:id/valorizaciones', upload.single('file'), async (req, res) => {
         montoTotalConIgv: String(parsed.montoTotalConIgv),
         montoRetencion: String(parsed.retencion),
         totalContratista: String(parsed.totalContratista),
+        // Inversión (financiero-inversión real · bloque totales Excel)
+        montoInversionPeriodo: inversion.montoInversion ? inversion.montoInversion.periodo.toFixed(2) : null,
+        montoInversionAcumulado: inversion.montoInversion ? inversion.montoInversion.acumulado.toFixed(2) : null,
+        pctInversionAcumulado:
+          inversion.pctAvanceInversionAcum != null ? (inversion.pctAvanceInversionAcum * 100).toFixed(2) : null,
         archivoXlsx: req.file.originalname,
         status: 'aprobada',
         snapshot: {
@@ -1000,6 +1286,7 @@ router.post('/:id/valorizaciones', upload.single('file'), async (req, res) => {
           monomios: parsed.monomios,
           curvaS: parsed.curvaS,
           warnings: parsed.warnings,
+          inversion, // breakdown completo: CD/mob/ET/superv/montoInversión base·período·acum
         },
         observaciones: `Importado desde ${req.file.originalname}`,
       })
@@ -1008,9 +1295,9 @@ router.post('/:id/valorizaciones', upload.single('file'), async (req, res) => {
     // Insertar valorizaciones_partidas (solo las que matchean con DB)
     // Además sincronizar partida.precio_unitario_contractual y presupuesto_contractual
     // con valores Excel S10 (source of truth · evita drift de rounding)
-    let partidasInsertadas = 0;
     let partidasSinMatch = 0;
-    let partidasSincronizadas = 0;
+    const vpRows: (typeof schema.valorizacionesPartidas.$inferInsert)[] = [];
+    const syncs: { id: string; pu: string; budget: string }[] = [];
     for (const p of parsed.partidas) {
       const dbP = partidasMap.get(p.codigo);
       if (!dbP) {
@@ -1018,7 +1305,7 @@ router.post('/:id/valorizaciones', upload.single('file'), async (req, res) => {
         continue;
       }
       const subp = p.codigo.split('.')[0] ?? '';
-      await db.insert(schema.valorizacionesPartidas).values({
+      vpRows.push({
         valorizacionId: valRow!.id,
         partidaId: dbP.id,
         subpresupuestoCodigo: subp,
@@ -1031,26 +1318,23 @@ router.post('/:id/valorizaciones', upload.single('file'), async (req, res) => {
         montoAcumulado: String(p.valorAcumulado),
         pctAvance: String((p.pctAcumulado * 100).toFixed(2)),
       });
-      partidasInsertadas++;
-
-      // Sync partida con valores S10 si difieren
+      // Sync partida con valores S10 si difieren (acumular · se aplica en lote abajo)
       const dbPu = Number(dbP.precioUnitarioContractual ?? 0);
       const dbBudget = Number(dbP.presupuestoContractual ?? 0);
       const excelSubTotal = p.subTotal > 0 ? p.subTotal : p.precioUnitario * p.metradoContractual;
-      if (
-        Math.abs(dbPu - p.precioUnitario) > 0.0001 ||
-        Math.abs(dbBudget - excelSubTotal) > 0.01
-      ) {
-        await db
-          .update(schema.partidas)
-          .set({
-            precioUnitarioContractual: String(p.precioUnitario),
-            presupuestoContractual: String(excelSubTotal.toFixed(2)),
-          })
-          .where(eq(schema.partidas.id, dbP.id));
-        partidasSincronizadas++;
+      if (Math.abs(dbPu - p.precioUnitario) > 0.0001 || Math.abs(dbBudget - excelSubTotal) > 0.01) {
+        syncs.push({ id: dbP.id, pu: String(p.precioUnitario), budget: excelSubTotal.toFixed(2) });
       }
     }
+    // 1 INSERT batch en vez de N round-trips (antes: 1 insert por partida · cientos)
+    // ponytail: sin transacción explícita (el código previo tampoco la tenía); envolver header+
+    // detalle+sync en db.transaction si se necesita atomicidad ante fallo parcial.
+    if (vpRows.length) await db.insert(schema.valorizacionesPartidas).values(vpRows);
+    const partidasInsertadas = vpRows.length;
+    for (const s of syncs) {
+      await db.update(schema.partidas).set({ precioUnitarioContractual: s.pu, presupuestoContractual: s.budget }).where(eq(schema.partidas.id, s.id));
+    }
+    const partidasSincronizadas = syncs.length;
 
     // Insertar reajuste · 1 fila (FP global)
     if (fpGlobal && parsed.kCalculado != null) {
@@ -1075,12 +1359,23 @@ router.post('/:id/valorizaciones', upload.single('file'), async (req, res) => {
       });
     }
 
+    // Auto-archivar la valorización original (XLSX) al NAS (best-effort)
+    await nasArchivarProyecto(proy.codigo, '03_Valorizaciones', `Valorizacion_V${String(parsed.numero).padStart(2, '0')}.xlsx`, req.file.buffer);
+
     return res.json({
       ok: true,
       valorizacion: valRow,
       partidasInsertadas,
       partidasSinMatch,
       partidasSincronizadas,
+      inversion: inversion.found
+        ? {
+            montoInversionPeriodo: inversion.montoInversion?.periodo ?? null,
+            montoInversionAcumulado: inversion.montoInversion?.acumulado ?? null,
+            pctAvanceInversion:
+              inversion.pctAvanceInversionAcum != null ? inversion.pctAvanceInversionAcum * 100 : null,
+          }
+        : null,
       warnings: parsed.warnings,
       llmMeta,
       strategy: llmMeta ? 'llm' : 'deterministic',
@@ -1092,6 +1387,65 @@ router.post('/:id/valorizaciones', upload.single('file'), async (req, res) => {
 });
 
 // GET /api/proyectos/:id/valorizaciones · cabeceras + reajustes + partidas resumen
+// PATCH /api/proyectos/:id/valorizaciones/:valId/estado · avanzar workflow de valo
+const VALO_ESTADOS = ['borrador', 'emitida', 'conformidad_supervision', 'aprobada', 'facturada', 'cobrada', 'rechazada'] as const;
+router.patch('/:id/valorizaciones/:valId/estado', async (req, res) => {
+  const body = req.body as { estado?: unknown; cuentaId?: unknown; fechaCobro?: unknown };
+  const estado = String(body.estado ?? '');
+  if (!VALO_ESTADOS.includes(estado as (typeof VALO_ESTADOS)[number])) {
+    return res.status(400).json({ error: `estado inválido · usar: ${VALO_ESTADOS.join(', ')}` });
+  }
+  // F2 · al marcar COBRADA nace el movimiento Ingreso de caja (mismo patrón que pago OC)
+  const esCobro = estado === 'cobrada';
+  const cuentaId = body.cuentaId ? String(body.cuentaId) : null;
+  if (esCobro && !cuentaId) return res.status(400).json({ error: 'cuenta de destino requerida para marcar cobrada' });
+  if (esCobro) {
+    const fechaCobroEff = (body.fechaCobro ? String(body.fechaCobro) : '') || new Date().toISOString().slice(0, 10);
+    const cerrado = await periodoCerradoDeFecha(fechaCobroEff); // H1.1 · no cobrar en periodo cerrado
+    if (cerrado) return res.status(423).json({ error: `Periodo ${cerrado} cerrado · no se permite cobrar con fecha retroactiva` });
+  }
+
+  const val = await db.transaction(async (tx) => {
+    const [v] = await tx
+      .update(schema.valorizaciones)
+      .set({ status: estado as (typeof VALO_ESTADOS)[number], updatedAt: new Date() })
+      .where(eq(schema.valorizaciones.id, req.params.valId!))
+      .returning();
+    if (!v) return null;
+    if (esCobro) {
+      // idempotente · no recrear si la valo ya tiene movimiento de cobro
+      const [movPrev] = await tx.select({ id: schema.movimientos.id }).from(schema.movimientos).where(eq(schema.movimientos.valorizacionId, v.id)).limit(1);
+      if (!movPrev) {
+        const cliRow = v.proyectoId
+          ? (await tx.select({ cli: schema.clientes.razonSocial }).from(schema.proyectos).leftJoin(schema.clientes, eq(schema.proyectos.clienteId, schema.clientes.id)).where(eq(schema.proyectos.id, v.proyectoId)).limit(1))[0]
+          : null;
+        const fecha = (body.fechaCobro ? String(body.fechaCobro) : '') || new Date().toISOString().slice(0, 10);
+        await tx.insert(schema.movimientos).values({
+          fecha,
+          proyectoId: v.proyectoId,
+          tipoMovimiento: 'Ingreso',
+          cuentaId,
+          fuenteMovimiento: 'Cliente',
+          clienteNombre: cliRow?.cli ?? null,
+          moneda: 'PEN',
+          monto: v.totalContratista ?? v.montoTotalConIgv ?? v.montoTotal,
+          descripcion: `Cobro Valorización N°${v.numero}`,
+          subtipo: 'Cobro valorización',
+          naturalezaContable: 'COBRO_CLIENTE',
+          valorizacionId: v.id,
+          estado: 'Cobrada',
+          userId: req.user!.id, // H1.2 · trazabilidad
+          tipoCambio: '1', montoBase: String(v.totalContratista ?? v.montoTotalConIgv ?? v.montoTotal), // H3.1 · valos en PEN
+        });
+      }
+    }
+    return v;
+  });
+  if (!val) return res.status(404).json({ error: 'Valorización no encontrada' });
+  if (esCobro) await audit(req, { action: 'cobro_valo', entityType: 'valorizacion', entityId: val.id, after: { numero: val.numero, total: val.totalContratista ?? val.montoTotalConIgv, cuentaId } });
+  res.json({ ok: true, valorizacion: val });
+});
+
 router.get('/:id/valorizaciones', async (req, res) => {
   const proyectoId = req.params.id!;
 
@@ -1149,6 +1503,470 @@ router.get('/:id/valorizaciones', async (req, res) => {
       porSubpresupuesto: porSubp,
     },
   });
+});
+
+// ─── F5 · Reconciliación de montos · GET /api/proyectos/:id/reconciliacion ──
+// Cruza el Costo Directo entre las 3 fuentes que viven en DB:
+//   1. Expediente (proyecto.costoDirecto · viene del Cronograma Valorizado)
+//   2. Σ partidas hoja (presupuesto actual en DB · el desglose real)
+//   3. Σ valorizaciones (montoCd acumulado ejecutado)
+// Epsilon S/ 1.00 · NADA se modifica · solo reporta para revisión (HITL).
+const EPSILON_CD = 1.0;
+router.get('/:id/reconciliacion', async (req, res) => {
+  const proyectoId = req.params.id!;
+  const [proyecto] = await db
+    .select()
+    .from(schema.proyectos)
+    .where(and(eq(schema.proyectos.id, proyectoId), isNull(schema.proyectos.deletedAt)))
+    .limit(1);
+  if (!proyecto) return res.status(404).json({ error: 'Proyecto no encontrado' });
+
+  // Fuente 1 · CD del expediente (cronograma)
+  const expedienteCd = proyecto.costoDirecto ? Number(proyecto.costoDirecto) : null;
+
+  // Fuente 2 · Σ partidas hoja (no summaries · evita doble conteo de títulos)
+  const partidas = await db
+    .select({ presupuesto: schema.partidas.presupuesto, isSummary: schema.partidas.isSummary })
+    .from(schema.partidas)
+    .where(eq(schema.partidas.proyectoId, proyectoId));
+  const partidasHoja = partidas.filter((p) => !p.isSummary);
+  const partidasCd = partidasHoja.length
+    ? partidasHoja.reduce((s, p) => s + Number(p.presupuesto ?? 0), 0)
+    : null;
+
+  // Fuente 3 · Σ valorizaciones (CD acumulado ejecutado)
+  const vals = await db
+    .select({
+      montoCd: schema.valorizaciones.montoCd,
+      pctAvance: schema.valorizaciones.pctAvance,
+      numero: schema.valorizaciones.numero,
+      montoInversionAcumulado: schema.valorizaciones.montoInversionAcumulado,
+      pctInversionAcumulado: schema.valorizaciones.pctInversionAcumulado,
+    })
+    .from(schema.valorizaciones)
+    .where(eq(schema.valorizaciones.proyectoId, proyectoId))
+    .orderBy(asc(schema.valorizaciones.numero));
+  const valorizadoCd = vals.length ? vals.reduce((s, v) => s + Number(v.montoCd), 0) : null;
+  const pctAvanceUltima = vals.length ? Number(vals[vals.length - 1]!.pctAvance) : null;
+
+  type Check = {
+    nombre: string;
+    descripcion: string;
+    grupo: 'obra' | 'inversion';
+    a: { fuente: string; valor: number | null };
+    b: { fuente: string; valor: number | null };
+    diff: number | null;
+    ok: boolean | null; // null = no evaluable (falta una fuente)
+    severidad: 'ok' | 'warn' | 'error' | 'na';
+  };
+  const checks: Check[] = [];
+
+  // Check 1 · Cuadre presupuesto: expediente CD == Σ partidas hoja
+  {
+    const evaluable = expedienteCd != null && partidasCd != null;
+    const diff = evaluable ? Math.abs(expedienteCd! - partidasCd!) : null;
+    const ok = evaluable ? diff! <= EPSILON_CD : null;
+    checks.push({
+      nombre: 'cuadre_presupuesto',
+      descripcion: 'CD del expediente debe igualar la suma de partidas hoja',
+      grupo: 'obra',
+      a: { fuente: 'Expediente (cronograma)', valor: expedienteCd },
+      b: { fuente: 'Σ partidas hoja (DB)', valor: partidasCd },
+      diff,
+      ok,
+      severidad: ok === null ? 'na' : ok ? 'ok' : 'error',
+    });
+  }
+
+  // Check 2 · No sobre-valorización: Σ valorizado CD <= expediente CD (+epsilon)
+  {
+    const evaluable = expedienteCd != null && valorizadoCd != null;
+    const diff = evaluable ? valorizadoCd! - expedienteCd! : null; // >0 = sobre-valorizado
+    const ok = evaluable ? valorizadoCd! <= expedienteCd! + EPSILON_CD : null;
+    checks.push({
+      nombre: 'no_sobre_valorizacion',
+      descripcion: 'El CD valorizado acumulado no debe superar el CD del expediente',
+      grupo: 'obra',
+      a: { fuente: 'Σ valorizaciones CD', valor: valorizadoCd },
+      b: { fuente: 'Expediente CD', valor: expedienteCd },
+      diff,
+      ok,
+      severidad: ok === null ? 'na' : ok ? 'ok' : 'error',
+    });
+  }
+
+  // Check 3 · Coherencia % avance reportado vs CD valorizado/expediente
+  {
+    const evaluable = expedienteCd != null && valorizadoCd != null && pctAvanceUltima != null && expedienteCd! > 0;
+    const pctCalculado = evaluable ? (valorizadoCd! / expedienteCd!) * 100 : null;
+    // pctAvance puede venir como fracción (0.42) o porcentaje (42) · normalizar
+    const pctReportado = pctAvanceUltima != null ? (pctAvanceUltima <= 1 ? pctAvanceUltima * 100 : pctAvanceUltima) : null;
+    const diff = evaluable && pctReportado != null ? Math.abs(pctCalculado! - pctReportado) : null;
+    const ok = diff != null ? diff <= 1.0 : null; // 1 punto porcentual de tolerancia
+    checks.push({
+      nombre: 'coherencia_pct_avance',
+      descripcion: '% avance reportado debe coincidir con Σ valorizado / CD expediente',
+      grupo: 'obra',
+      a: { fuente: '% avance reportado (última val)', valor: pctReportado },
+      b: { fuente: '% calculado (Σ val CD / expediente)', valor: pctCalculado },
+      diff,
+      ok,
+      severidad: ok === null ? 'na' : ok ? 'ok' : 'warn',
+    });
+  }
+
+  // ─── Checks INVERSIÓN (monto inversión = obra + mobiliario + ET + supervisiones) ──
+  const montoInversion = proyecto.montoReferencial != null ? Number(proyecto.montoReferencial) : null;
+  const compCD = proyecto.costoDirecto != null ? Number(proyecto.costoDirecto) : null;
+  const compSubtotal = proyecto.montoSubtotal != null ? Number(proyecto.montoSubtotal) : compCD; // CD+GG+UT (=CD si embebido)
+  const compIgv = proyecto.montoIgv != null ? Number(proyecto.montoIgv) : null;
+  const compMob = proyecto.montoMobiliario != null ? Number(proyecto.montoMobiliario) : 0;
+  const compET = proyecto.montoExpedienteTecnico != null ? Number(proyecto.montoExpedienteTecnico) : 0;
+  const compSupDoc = proyecto.montoSupervisionExpediente != null ? Number(proyecto.montoSupervisionExpediente) : 0;
+  const compSupObra = proyecto.montoSupervisionObra != null ? Number(proyecto.montoSupervisionObra) : 0;
+  const distInv = (proyecto.distribucionInversion ?? []) as Array<{ ym: string; monto: number }>;
+  const sumDistInv = distInv.length ? distInv.reduce((s, d) => s + Number(d.monto ?? 0), 0) : null;
+  const ultVal = vals.length ? vals[vals.length - 1]! : null;
+  const inversionAcum = ultVal?.montoInversionAcumulado != null ? Number(ultVal.montoInversionAcumulado) : null;
+  const pctInversionReportado = ultVal?.pctInversionAcumulado != null ? Number(ultVal.pctInversionAcumulado) : null;
+
+  // Check 4 · Cuadre estructura inversión
+  {
+    const sumaComp =
+      compSubtotal != null && compIgv != null
+        ? compSubtotal + compIgv + compMob + compET + compSupDoc + compSupObra
+        : null;
+    const evaluable = sumaComp != null && montoInversion != null && montoInversion > 0;
+    const diff = evaluable ? Math.abs(sumaComp! - montoInversion!) : null;
+    const ok = evaluable ? diff! <= EPSILON_CD : null;
+    checks.push({
+      nombre: 'cuadre_inversion',
+      descripcion: 'Σ componentes (subtotal+IGV+mobiliario+ET+superv) debe igualar el monto de inversión',
+      grupo: 'inversion',
+      a: { fuente: 'Σ componentes inversión', valor: sumaComp },
+      b: { fuente: 'Monto de inversión', valor: montoInversion },
+      diff,
+      ok,
+      severidad: ok === null ? 'na' : ok ? 'ok' : 'error',
+    });
+  }
+
+  // Check 5 · Plan inversión completo (Σ distribución = monto inversión)
+  {
+    const evaluable = sumDistInv != null && montoInversion != null && montoInversion > 0;
+    const diff = evaluable ? Math.abs(sumDistInv! - montoInversion!) : null;
+    const ok = evaluable ? diff! <= EPSILON_CD : null;
+    checks.push({
+      nombre: 'plan_inversion_completo',
+      descripcion: 'La distribución mensual de inversión (PV) debe sumar el monto de inversión total',
+      grupo: 'inversion',
+      a: { fuente: 'Σ distribución inversión', valor: sumDistInv },
+      b: { fuente: 'Monto de inversión', valor: montoInversion },
+      diff,
+      ok,
+      severidad: ok === null ? 'na' : ok ? 'ok' : 'error',
+    });
+  }
+
+  // Check 6 · No sobre-ejecución inversión
+  {
+    const evaluable = inversionAcum != null && montoInversion != null && montoInversion > 0;
+    const diff = evaluable ? inversionAcum! - montoInversion! : null; // >0 = sobre-ejecutado
+    const ok = evaluable ? inversionAcum! <= montoInversion! + EPSILON_CD : null;
+    checks.push({
+      nombre: 'no_sobre_ejecucion_inversion',
+      descripcion: 'El monto de inversión ejecutado acumulado no debe superar el monto de inversión total',
+      grupo: 'inversion',
+      a: { fuente: 'Inversión ejecutada (última val)', valor: inversionAcum },
+      b: { fuente: 'Monto de inversión', valor: montoInversion },
+      diff,
+      ok,
+      severidad: ok === null ? 'na' : ok ? 'ok' : 'error',
+    });
+  }
+
+  // Check 7 · Coherencia % inversión oficial
+  {
+    const evaluable = inversionAcum != null && montoInversion != null && montoInversion > 0 && pctInversionReportado != null;
+    const pctCalculado = evaluable ? (inversionAcum! / montoInversion!) * 100 : null;
+    const diff = evaluable ? Math.abs(pctCalculado! - pctInversionReportado!) : null;
+    const ok = diff != null ? diff <= 1.0 : null; // 1 punto de tolerancia
+    checks.push({
+      nombre: 'coherencia_pct_inversion',
+      descripcion: '% avance de inversión reportado (Excel) debe coincidir con ejecutado / monto de inversión',
+      grupo: 'inversion',
+      a: { fuente: '% inversión reportado (Excel)', valor: pctInversionReportado },
+      b: { fuente: '% calculado (ejec / monto inversión)', valor: pctCalculado },
+      diff,
+      ok,
+      severidad: ok === null ? 'na' : ok ? 'ok' : 'warn',
+    });
+  }
+
+  // Check 8 · Inversión ⊇ obra (sanity · inversión ejecutada incluye la obra)
+  {
+    const evaluable = inversionAcum != null && valorizadoCd != null;
+    const diff = evaluable ? inversionAcum! - valorizadoCd! : null; // >=0 esperado
+    const ok = evaluable ? inversionAcum! >= valorizadoCd! - EPSILON_CD : null;
+    checks.push({
+      nombre: 'inversion_incluye_obra',
+      descripcion: 'La inversión ejecutada debe ser mayor o igual al CD de obra ejecutado (lo incluye)',
+      grupo: 'inversion',
+      a: { fuente: 'Inversión ejecutada', valor: inversionAcum },
+      b: { fuente: 'Σ valorizaciones CD (obra)', valor: valorizadoCd },
+      diff,
+      ok,
+      severidad: ok === null ? 'na' : ok ? 'ok' : 'warn',
+    });
+  }
+
+  const discrepancias = checks.filter((c) => c.ok === false);
+  res.json({
+    ok: discrepancias.length === 0,
+    epsilon: EPSILON_CD,
+    proyecto: { id: proyecto.id, codigo: proyecto.codigo, nombre: proyecto.nombre, ggUtModo: proyecto.ggUtModo },
+    fuentes: {
+      expedienteCd,
+      partidasCd,
+      partidasHoja: partidasHoja.length,
+      valorizadoCd,
+      pctAvanceUltima,
+      valorizaciones: vals.length,
+      inversion: {
+        montoInversion,
+        componentes: {
+          subtotal: compSubtotal,
+          igv: compIgv,
+          mobiliario: compMob,
+          expedienteTecnico: compET,
+          supervisionExpediente: compSupDoc,
+          supervisionObra: compSupObra,
+        },
+        sumDistribucion: sumDistInv,
+        inversionAcum,
+        pctInversionReportado,
+      },
+    },
+    checks,
+    discrepancias: discrepancias.map((d) => d.nombre),
+  });
+});
+
+// ─── P&L por obra · "mi bolsillo" · GET /api/proyectos/:id/pnl ──
+// Ingreso = Σ valorizaciones montoCd (V sin IGV) · Egreso = Σ OC comprometidas (subtotal sin IGV)
+// Utilidad = ingreso − egreso · Mi utilidad = utilidad × pctParticipacionPropia
+const OC_EGRESO_ESTADOS = new Set(['aprobada', 'emitida', 'en_transito', 'entregada']);
+router.get('/:id/pnl', async (req, res) => {
+  const proyectoId = req.params.id!;
+  const [proyecto] = await db
+    .select()
+    .from(schema.proyectos)
+    .where(and(eq(schema.proyectos.id, proyectoId), isNull(schema.proyectos.deletedAt)))
+    .limit(1);
+  if (!proyecto) return res.status(404).json({ error: 'Proyecto no encontrado' });
+
+  // Ingresos (valos) · egresos (OC) · costo real (gastos) · 3 queries independientes en paralelo
+  const [vals, ocs, gs] = await Promise.all([
+    db.select({ montoCd: schema.valorizaciones.montoCd, numero: schema.valorizaciones.numero }).from(schema.valorizaciones).where(eq(schema.valorizaciones.proyectoId, proyectoId)),
+    db.select({ subtotal: schema.ordenesCompra.subtotalSinIgv, total: schema.ordenesCompra.total, estado: schema.ordenesCompra.estado, concepto: schema.ordenesCompra.concepto }).from(schema.ordenesCompra).where(eq(schema.ordenesCompra.proyectoId, proyectoId)),
+    db.select({ subtotal: schema.gastos.subtotal, tipoGasto: schema.gastos.tipoGasto }).from(schema.gastos).where(eq(schema.gastos.proyectoId, proyectoId)),
+  ]);
+  const ingresos = vals.reduce((s, v) => s + Number(v.montoCd ?? 0), 0);
+  const ocsComprometidas = ocs.filter((o) => OC_EGRESO_ESTADOS.has(o.estado));
+  const comprometido = ocsComprometidas.reduce((s, o) => s + Number(o.subtotal ?? 0), 0);
+  const egresosBien = ocsComprometidas.filter((o) => o.concepto === 'BIEN').reduce((s, o) => s + Number(o.subtotal ?? 0), 0);
+  const egresosServicio = ocsComprometidas.filter((o) => o.concepto === 'SERVICIO').reduce((s, o) => s + Number(o.subtotal ?? 0), 0);
+  const costoReal = gs.reduce((s, g) => s + Number(g.subtotal ?? 0), 0);
+  // Desglose de costo real por rubro (tipoGasto) · drill-down en el tab Financiero
+  const costoPorTipo: Record<string, number> = {};
+  for (const g of gs) {
+    const t = (g.tipoGasto && String(g.tipoGasto).trim()) || 'Otros';
+    costoPorTipo[t] = (costoPorTipo[t] ?? 0) + Number(g.subtotal ?? 0);
+  }
+
+  // Utilidad sobre COSTO REAL (no compromiso) · si no hay gastos aún, costoReal=0
+  const utilidad = ingresos - costoReal;
+  const miPct = proyecto.pctParticipacionPropia != null ? Number(proyecto.pctParticipacionPropia) : 1;
+  // Modelo B · "mi bolsillo": ingreso mi% − costo real completo
+  const miUtilidad = ingresos * miPct - costoReal;
+  const margenPct = ingresos > 0 ? (utilidad / ingresos) * 100 : 0;
+  // Índice de rentabilidad · ingreso / costo real (>1 = ganando)
+  const indiceRent = costoReal > 0 ? ingresos / costoReal : null;
+
+  res.json({
+    proyecto: { id: proyecto.id, codigo: proyecto.codigo, nombre: proyecto.nombre },
+    ingresos: { total: ingresos, valorizaciones: vals.length },
+    costoReal: { total: costoReal, gastos: gs.length, porTipo: costoPorTipo },
+    comprometido: { total: comprometido, ordenes: ocsComprometidas.length, bien: egresosBien, servicio: egresosServicio, ordenesTotal: ocs.length },
+    // egresos mantenido para compat · ahora = costo real
+    egresos: { total: costoReal, ordenes: ocsComprometidas.length, bien: egresosBien, servicio: egresosServicio, ordenesTotal: ocs.length },
+    utilidad,
+    margenPct,
+    indiceRent,
+    miPct,
+    miUtilidad,
+  });
+});
+
+// GET /api/proyectos/:id/partidas-costos · ejecutado (valos) + comprometido (OC) por partida
+// Para control de costos en PartidasTab: presupuesto vs ejecutado vs comprometido
+router.get('/:id/partidas-costos', async (req, res) => {
+  const proyectoId = req.params.id!;
+  // 2 cadenas independientes (valos→vparts · ocs→líneas) en paralelo
+  const [vparts, { ocs, lineas }] = await Promise.all([
+    (async () => {
+      const vals = await db.select({ id: schema.valorizaciones.id }).from(schema.valorizaciones).where(eq(schema.valorizaciones.proyectoId, proyectoId));
+      const valIds = vals.map((v) => v.id);
+      return valIds.length
+        ? db.select({ partidaId: schema.valorizacionesPartidas.partidaId, montoAcumulado: schema.valorizacionesPartidas.montoAcumulado }).from(schema.valorizacionesPartidas).where(inArray(schema.valorizacionesPartidas.valorizacionId, valIds))
+        : [];
+    })(),
+    (async () => {
+      const ocs = await db.select({ id: schema.ordenesCompra.id, estado: schema.ordenesCompra.estado }).from(schema.ordenesCompra).where(eq(schema.ordenesCompra.proyectoId, proyectoId));
+      const ocIds = ocs.map((o) => o.id);
+      const lineas = ocIds.length
+        ? await db.select({ partidaId: schema.ocLineas.partidaId, ordenCompraId: schema.ocLineas.ordenCompraId, subtotal: schema.ocLineas.subtotal }).from(schema.ocLineas).where(inArray(schema.ocLineas.ordenCompraId, ocIds))
+        : [];
+      return { ocs, lineas };
+    })(),
+  ]);
+  const EG = new Set(['aprobada', 'emitida', 'en_transito', 'entregada']);
+  const ocComprometidas = new Set(ocs.filter((o) => EG.has(o.estado)).map((o) => o.id));
+
+  // ejecutado = MAX(montoAcumulado) por partida (acumulado es monótono)
+  const ejecutado = new Map<string, number>();
+  for (const vp of vparts) {
+    const cur = ejecutado.get(vp.partidaId) ?? 0;
+    ejecutado.set(vp.partidaId, Math.max(cur, Number(vp.montoAcumulado ?? 0)));
+  }
+  // comprometido = Σ subtotal de líneas OC comprometidas, por partida
+  const comprometido = new Map<string, number>();
+  for (const l of lineas) {
+    if (!l.partidaId || !ocComprometidas.has(l.ordenCompraId)) continue;
+    comprometido.set(l.partidaId, (comprometido.get(l.partidaId) ?? 0) + Number(l.subtotal ?? 0));
+  }
+
+  const partidaIds = new Set([...ejecutado.keys(), ...comprometido.keys()]);
+  const costos: Record<string, { ejecutado: number; comprometido: number }> = {};
+  for (const pid of partidaIds) {
+    costos[pid] = { ejecutado: ejecutado.get(pid) ?? 0, comprometido: comprometido.get(pid) ?? 0 };
+  }
+  res.json({ costos });
+});
+
+// GET /api/proyectos/:id/cashflow · flujo de caja real (con IGV) mensual + saldo acumulado
+// Entradas: adelantos + valos (totalContratista) + devolución retención (en hito liquidación)
+// Salidas: OC comprometidas (total c/IGV) + IGV neto a SUNAT (IGV ventas − IGV compras)
+router.get('/:id/cashflow', async (req, res) => {
+  const proyectoId = req.params.id!;
+  const [proyecto] = await db
+    .select()
+    .from(schema.proyectos)
+    .where(and(eq(schema.proyectos.id, proyectoId), isNull(schema.proyectos.deletedAt)))
+    .limit(1);
+  if (!proyecto) return res.status(404).json({ error: 'Proyecto no encontrado' });
+
+  const [adelantos, vals, ocs, hitos] = await Promise.all([
+    db.select().from(schema.adelantos).where(eq(schema.adelantos.proyectoId, proyectoId)),
+    db.select().from(schema.valorizaciones).where(eq(schema.valorizaciones.proyectoId, proyectoId)),
+    db.select().from(schema.ordenesCompra).where(eq(schema.ordenesCompra.proyectoId, proyectoId)),
+    db.select().from(schema.hitosObra).where(eq(schema.hitosObra.proyectoId, proyectoId)),
+  ]);
+
+  const EG = new Set(['aprobada', 'emitida', 'en_transito', 'entregada']);
+  const ADEL_OK = new Set(['aprobado', 'pagado', 'amortizado']);
+  const ym = (d: string | null | undefined) => (d ? String(d).slice(0, 7) : null);
+
+  type Bucket = { ym: string; adelantos: number; valos: number; devolucionRetencion: number; compras: number; igvSunat: number };
+  const map = new Map<string, Bucket>();
+  const bk = (k: string): Bucket => {
+    let b = map.get(k);
+    if (!b) { b = { ym: k, adelantos: 0, valos: 0, devolucionRetencion: 0, compras: 0, igvSunat: 0 }; map.set(k, b); }
+    return b;
+  };
+
+  // Adelantos (entrada)
+  for (const a of adelantos) {
+    if (!ADEL_OK.has(a.estado)) continue;
+    const k = ym(a.fechaPago) ?? ym(a.fechaSolicitud);
+    if (k) bk(k).adelantos += Number(a.monto ?? 0);
+  }
+
+  // Valos · entrada neta (totalContratista) + IGV ventas para SUNAT
+  // El flujo es PROYECTADO (se ubica por mesPeriodo, no por fecha de cobro real).
+  // Separamos cuánto ya está cobrado (status=cobrada) vs por cobrar, para mostrarlo honesto.
+  let retencionAcum = 0;
+  let valosCobrado = 0;
+  let valosPendiente = 0;
+  for (const v of vals) {
+    const k = v.mesPeriodo ?? ym(v.fechaHasta);
+    if (!k) continue;
+    const neto = Number(v.totalContratista ?? 0) || Number(v.montoTotalConIgv ?? 0) || Number(v.montoCd ?? 0) * 1.18;
+    bk(k).valos += neto;
+    bk(k).igvSunat += Number(v.montoIgv ?? 0); // IGV ventas (lo debes a SUNAT)
+    retencionAcum += Number(v.montoRetencion ?? 0);
+    if (v.status === 'cobrada') valosCobrado += neto;
+    else valosPendiente += neto;
+  }
+
+  // OC · salida (total c/IGV) − IGV compras (crédito fiscal reduce SUNAT)
+  for (const o of ocs) {
+    if (!EG.has(o.estado)) continue;
+    const k = ym(o.fechaEmision);
+    if (!k) continue;
+    bk(k).compras += Number(o.total ?? 0);
+    bk(k).igvSunat -= Number(o.igv ?? 0); // crédito fiscal
+  }
+
+  // Devolución de retención · en hito liquidación/consentimiento
+  const hitoLiq = hitos.find((h) => h.tipo === 'consentimiento_liquidacion') ?? hitos.find((h) => h.tipo === 'liquidacion');
+  if (hitoLiq && retencionAcum > 0) {
+    const k = ym(hitoLiq.fecha);
+    if (k) bk(k).devolucionRetencion += retencionAcum;
+  }
+
+  // Ordenar + rellenar meses + saldo acumulado
+  const keys = [...map.keys()].sort();
+  const buckets: Array<Bucket & { entradas: number; salidas: number; neto: number; saldoAcum: number }> = [];
+  let saldo = 0;
+  for (const k of keys) {
+    const b = map.get(k)!;
+    const igvOut = Math.max(0, b.igvSunat); // solo si neto positivo se paga
+    const entradas = b.adelantos + b.valos + b.devolucionRetencion;
+    const salidas = b.compras + igvOut;
+    const neto = entradas - salidas;
+    saldo += neto;
+    buckets.push({ ...b, igvSunat: igvOut, entradas, salidas, neto, saldoAcum: saldo });
+  }
+
+  res.json({
+    proyecto: { id: proyecto.id, codigo: proyecto.codigo, nombre: proyecto.nombre },
+    buckets,
+    totales: {
+      entradas: buckets.reduce((s, b) => s + b.entradas, 0),
+      salidas: buckets.reduce((s, b) => s + b.salidas, 0),
+      saldoFinal: saldo,
+      retencionAcum,
+      retencionDevuelta: hitoLiq != null && retencionAcum > 0,
+      valosCobrado,
+      valosPendiente,
+    },
+  });
+});
+
+// PATCH /api/proyectos/:id/participacion · setear mi % de participación (0..1)
+router.patch('/:id/participacion', async (req, res) => {
+  const pct = Number((req.body as { pct?: unknown }).pct);
+  if (!Number.isFinite(pct) || pct < 0 || pct > 1) {
+    return res.status(400).json({ error: 'pct debe estar entre 0 y 1 (ej. 0.5 = 50%)' });
+  }
+  const [proyecto] = await db
+    .update(schema.proyectos)
+    .set({ pctParticipacionPropia: pct.toFixed(4), updatedAt: new Date() })
+    .where(eq(schema.proyectos.id, req.params.id))
+    .returning();
+  if (!proyecto) return res.status(404).json({ error: 'Proyecto no encontrado' });
+  res.json({ ok: true, pctParticipacionPropia: proyecto.pctParticipacionPropia });
 });
 
 export default router;

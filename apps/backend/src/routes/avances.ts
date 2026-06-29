@@ -148,7 +148,24 @@ router.get('/proyectos/:proyectoId/curva-s', async (req, res) => {
             .where(inArray(schema.valorizacionesPartidas.valorizacionId, valorizacionIds))
         : [];
 
-    const data = computeCurvaS(partidas, allAvances, valorizaciones, valpartidas);
+    // Plan financiero-inversión · BAC = montoReferencial · PV = distribucionInversion
+    const [proy] = await db
+      .select({
+        montoReferencial: schema.proyectos.montoReferencial,
+        montoSubtotal: schema.proyectos.montoSubtotal,
+        distribucionInversion: schema.proyectos.distribucionInversion,
+      })
+      .from(schema.proyectos)
+      .where(eq(schema.proyectos.id, proyectoId))
+      .limit(1);
+    const inversionPlan =
+      proy && proy.distribucionInversion && proy.distribucionInversion.length > 0
+        ? { bac: Number(proy.montoReferencial ?? 0), distribucion: proy.distribucionInversion }
+        : null;
+    // Avance-obra contra el subtotal contratado (incluye GG+UT, = montoCd) · % oficial del informe
+    const bacObra = Number(proy?.montoSubtotal ?? 0) || null;
+
+    const data = computeCurvaS(partidas, allAvances, valorizaciones, valpartidas, new Date(), inversionPlan, bacObra);
     return res.json({ data });
   } catch (e) {
     console.error('curva-s error:', e);

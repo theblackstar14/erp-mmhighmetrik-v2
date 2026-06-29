@@ -134,9 +134,8 @@ function dateToMonth(v: unknown): string | null {
   return null;
 }
 
-export function parseValorizacionXlsx(buffer: Buffer): ValParseResult {
-  const wb = XLSX.read(buffer, { type: 'buffer', cellDates: true });
-  const result: ValParseResult = {
+function blankVal(): ValParseResult {
+  return {
     numero: 0,
     mesPeriodo: '',
     fechaDesde: null,
@@ -179,6 +178,23 @@ export function parseValorizacionXlsx(buffer: Buffer): ValParseResult {
     warnings: [],
     errors: [],
   };
+}
+
+// Hojas que delatan el template S10 rico (9 hojas). Si faltan todas → formato simple (1 hoja).
+const HOJAS_S10_RICO = ['RES. VALO', 'K', 'Reajuste', 'CURVA S'];
+
+/** true si el .xlsx es valorización de 1 hoja (formato MM "VAL SMP"), no el S10 rico de 9 hojas. */
+export function valEsFormatoSimple(buffer: Buffer): boolean {
+  const wb = XLSX.read(buffer, { type: 'buffer', bookSheets: true });
+  return !HOJAS_S10_RICO.some((n) => wb.SheetNames.includes(n));
+}
+
+export function parseValorizacionXlsx(buffer: Buffer): ValParseResult {
+  const wb = XLSX.read(buffer, { type: 'buffer', cellDates: true });
+  // Formato simple (1 hoja "VAL SMP") · sin las hojas del S10 rico → parser dedicado.
+  if (!HOJAS_S10_RICO.some((n) => wb.Sheets[n])) return parseValSmp(wb);
+
+  const result: ValParseResult = blankVal();
 
   // ─── 1. RES. VALO ──────────────────────────────────────────
   const sResVal = wb.Sheets['RES. VALO'];
@@ -479,4 +495,220 @@ export function parseValorizacionXlsx(buffer: Buffer): ValParseResult {
   if (result.partidas.length === 0) result.errors.push('sin partidas detectadas en VALO N');
 
   return result;
+}
+
+// ─── Parser formato simple · 1 hoja "VAL SMP" ───────────────────
+// Layout (cols 0-index): 0=marcador nivel (14=partida hoja), 1=código, 2=descr,
+//   3=unid, 4=metrado, 5=PU, 6=parcial · ant 7/8/9 · actual 10/11/12 ·
+//   acum 13/14/15 · saldo 16/17/18 (metrado/parcial/%). Bloque totales al final:
+//   ( A ) COSTO DIRECTO … MONTO DE INVERSIÓN, label en col2, base[6]/período[11]/acum[14].
+const MESES_ES: Record<string, string> = {
+  ENERO: '01', FEBRERO: '02', MARZO: '03', ABRIL: '04', MAYO: '05', JUNIO: '06',
+  JULIO: '07', AGOSTO: '08', SETIEMBRE: '09', SEPTIEMBRE: '09', OCTUBRE: '10',
+  NOVIEMBRE: '11', DICIEMBRE: '12',
+};
+
+function parseValSmp(wb: XLSX.WorkBook): ValParseResult {
+  const result = blankVal();
+
+  // Hoja de datos: la que contiene el bloque totales (COSTO DIRECTO en col2).
+  const dataSheet =
+    wb.SheetNames.find((n) => {
+      const s = wb.Sheets[n];
+      if (!s) return false;
+      const rows = XLSX.utils.sheet_to_json<unknown[]>(s, { header: 1, defval: null, raw: true });
+      return rows.some((r) => /COSTO DIRECTO/i.test(String(r?.[2] ?? '')));
+    }) ??
+    wb.SheetNames.find((n) => !/CARATULA/i.test(n)) ??
+    wb.SheetNames[0];
+  if (!dataSheet || !wb.Sheets[dataSheet]) {
+    result.errors.push('VAL simple: sin hoja de datos');
+    return result;
+  }
+  const a = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[dataSheet], { header: 1, defval: null, raw: true });
+
+  // ── Cabecera: número, período, metadata (primeras ~15 filas) ──
+  const headRows = a.slice(0, 15);
+  const flatHead = headRows.map((r) => (r ?? []).map((c) => String(c ?? '')).join(' ')).join('\n');
+
+  const mNum = flatHead.match(/VALORIZACI[ÓO]N\s+(?:MENSUAL\s+DE\s+OBRA\s+)?N[°º]\s*0*(\d+)/i);
+  if (mNum?.[1]) result.numero = Number(mNum[1]);
+
+  // Período: "Del 27 al 30 del Abril 2026" → rango exacto; sino "ABRIL 2026" → mes.
+  const mRango = flatHead.match(/del?\s+(\d{1,2})\s+al\s+(\d{1,2})\s+del?\s+([A-Za-zÁÉÍÓÚñ]+)\s+(\d{4})/i);
+  if (mRango) {
+    const mm = MESES_ES[mRango[3]!.toUpperCase()];
+    if (mm) {
+      result.mesPeriodo = `${mRango[4]}-${mm}`;
+      result.fechaDesde = `${mRango[4]}-${mm}-${mRango[1]!.padStart(2, '0')}`;
+      result.fechaHasta = `${mRango[4]}-${mm}-${mRango[2]!.padStart(2, '0')}`;
+    }
+  }
+  if (!result.mesPeriodo) {
+    const mMes = flatHead.match(/\b([A-Za-zÁÉÍÓÚñ]+)\s+(\d{4})\b/);
+    const mm = mMes ? MESES_ES[mMes[1]!.toUpperCase()] : undefined;
+    if (mMes && mm) result.mesPeriodo = `${mMes[2]}-${mm}`;
+  }
+
+  for (const r of headRows) {
+    const lbl = String(r?.[1] ?? '').trim().toUpperCase();
+    if (lbl.startsWith('ENTIDAD')) result.entidad = toStr(r?.[2]);
+    else if (lbl.startsWith('CONTRATISTA')) result.contratista = toStr(r?.[2]);
+    else if (lbl.startsWith('OBRA')) result.obra = (toStr(r?.[1]) ?? '').replace(/^OBRA:\s*/i, '') || null;
+  }
+
+  // ── Partidas (filas marcador 14) ──
+  for (const r of a) {
+    if (Number(r?.[0]) !== 14) continue;
+    const codigo = toStr(r?.[1]);
+    const desc = toStr(r?.[2]);
+    if (!codigo || !desc) continue;
+    result.partidas.push({
+      codigo,
+      descripcion: desc,
+      unidad: toStr(r?.[3]),
+      metradoContractual: toNum(r?.[4]),
+      precioUnitario: toNum(r?.[5]),
+      subTotal: toNum(r?.[6]),
+      metradoAnterior: toNum(r?.[7]),
+      valorAnterior: toNum(r?.[8]),
+      pctAnterior: toNum(r?.[9]),
+      metradoActual: toNum(r?.[10]),
+      valorActual: toNum(r?.[11]),
+      pctActual: toNum(r?.[12]),
+      metradoAcumulado: toNum(r?.[13]),
+      valorAcumulado: toNum(r?.[14]),
+      pctAcumulado: toNum(r?.[15]),
+      metradoSaldo: toNum(r?.[16]),
+      valorSaldo: toNum(r?.[17]),
+      pctSaldo: toNum(r?.[18]),
+    });
+  }
+
+  // ── Totales (bloque final, label col2, período col11) ──
+  const tot = (re: RegExp): { base: number; per: number } | null => {
+    for (const r of a) {
+      const lbl = String(r?.[2] ?? r?.[1] ?? '').trim().toUpperCase();
+      if (lbl && re.test(lbl)) return { base: toNum(r?.[6]), per: toNum(r?.[11]) };
+    }
+    return null;
+  };
+  const cd = tot(/COSTO DIRECTO/);
+  const sub = tot(/SUBTOTAL/);
+  const mob = tot(/MOBILIARIO\s+Y\s+EQUIP/);
+  const igv = tot(/^IGV/);
+  const pte = tot(/PRESUPUESTO TOTAL DE EJECUCI/);
+
+  // V = costo directo del período (montoCd). GG/UT van embebidos o en 0 en este formato.
+  result.valorizacion = cd?.per ?? 0;
+  result.valorizacionBruta = cd?.per ?? 0;
+  result.valorizacionNeta = cd?.per ?? 0;
+  result.igv = igv?.per ?? 0;
+  result.montoTotalConIgv =
+    pte?.per ?? ((sub?.per ?? cd?.per ?? 0) + (mob?.per ?? 0) + (igv?.per ?? 0));
+  result.montoPagarSinIgv = result.montoTotalConIgv - result.igv;
+  result.totalContratista = result.montoTotalConIgv;
+  result.pptoBase = cd?.base ?? null;
+  result.pptoContratado = pte?.base ?? null;
+
+  if (result.valorizacion === 0) result.errors.push('VAL simple: COSTO DIRECTO período = 0');
+  if (result.numero === 0) result.errors.push('VAL simple: número de valorización no detectado');
+  if (result.partidas.length === 0) result.errors.push('VAL simple: sin partidas (marcador 14)');
+
+  return result;
+}
+
+// ─── Bloque totales inversión (financiero-inversión real) ────────
+// Parser-agnóstico · corre sobre el buffer crudo, independiente del path LLM/determinista.
+// El Excel MM trae al final un bloque "totales de inversión":
+//   ( A ) COSTO DIRECTO · MOBILIARIO Y EQUIPAMENTO · IGV · PRESUPUESTO TOTAL DE EJECUCIÓN
+//   DOCUMENTO DE TRABAJO · SUPERVISIÓN DE DOCUMENTO · SUPERVISIÓN DE OBRA
+//   MONTO DE INVERSIÓN · PORCENTAJE DE AVANCE
+// Layout observado (template SMP): label[2], base[6], anterior[8], período[11], acum[14], saldo[17];
+// fila %avance usa fracciones en período[12]/acum[15].
+export interface ValTotalLinea {
+  base: number;
+  periodo: number;
+  acumulado: number;
+}
+
+export interface ValInversionTotales {
+  costoDirecto: ValTotalLinea | null;
+  mobiliario: ValTotalLinea | null;
+  igv: ValTotalLinea | null;
+  presupuestoEjecucion: ValTotalLinea | null; // PRESUPUESTO TOTAL DE EJECUCIÓN (CD+GG+UT+IGV+mob)
+  documentoTrabajo: ValTotalLinea | null; // expediente técnico
+  supervisionDocTrabajo: ValTotalLinea | null;
+  supervisionObra: ValTotalLinea | null;
+  montoInversion: ValTotalLinea | null; // total inversión
+  pctAvanceInversionPeriodo: number | null; // fracción 0-1
+  pctAvanceInversionAcum: number | null; // fracción 0-1
+  found: boolean;
+}
+
+// Columnas de valor en el bloque totales (offset por celdas combinadas en header)
+const COL_BASE = 6;
+const COL_PERIODO = 11;
+const COL_ACUM = 14;
+const COL_PCT_PERIODO = 12;
+const COL_PCT_ACUM = 15;
+
+function readTotalLinea(row: unknown[]): ValTotalLinea {
+  return {
+    base: toNum(row[COL_BASE]),
+    periodo: toNum(row[COL_PERIODO]),
+    acumulado: toNum(row[COL_ACUM]),
+  };
+}
+
+export function parseValInversionTotales(buffer: Buffer): ValInversionTotales {
+  const wb = XLSX.read(buffer, { type: 'buffer', cellDates: true });
+  const out: ValInversionTotales = {
+    costoDirecto: null,
+    mobiliario: null,
+    igv: null,
+    presupuestoEjecucion: null,
+    documentoTrabajo: null,
+    supervisionDocTrabajo: null,
+    supervisionObra: null,
+    montoInversion: null,
+    pctAvanceInversionPeriodo: null,
+    pctAvanceInversionAcum: null,
+    found: false,
+  };
+
+  for (const sn of wb.SheetNames) {
+    const sheet = wb.Sheets[sn];
+    if (!sheet) continue;
+    const a = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: null, raw: true });
+    for (let i = 0; i < a.length; i++) {
+      const row = a[i] ?? [];
+      // label puede estar en col 2 (totales) o col 1
+      const label = String(row[2] ?? row[1] ?? '').trim().toUpperCase();
+      if (!label) continue;
+
+      if (/COSTO DIRECTO/.test(label) && !out.costoDirecto) out.costoDirecto = readTotalLinea(row);
+      else if (/MOBILIARIO\s+Y\s+EQUIP/.test(label) && !out.mobiliario) out.mobiliario = readTotalLinea(row);
+      else if (/^IGV/.test(label) && !out.igv) out.igv = readTotalLinea(row);
+      else if (/PRESUPUESTO TOTAL DE EJECUCI/.test(label) && !out.presupuestoEjecucion)
+        out.presupuestoEjecucion = readTotalLinea(row);
+      else if (/SUPERVISI[ÓO]N DE DOCUMENTO/.test(label) && !out.supervisionDocTrabajo)
+        out.supervisionDocTrabajo = readTotalLinea(row);
+      else if (/DOCUMENTO DE TRABAJO/.test(label) && !out.documentoTrabajo)
+        out.documentoTrabajo = readTotalLinea(row);
+      else if (/SUPERVISI[ÓO]N DE OBRA/.test(label) && !out.supervisionObra)
+        out.supervisionObra = readTotalLinea(row);
+      else if (/MONTO DE INVERSI[ÓO]N/.test(label) && !out.montoInversion)
+        out.montoInversion = readTotalLinea(row);
+      else if (/PORCENTAJE DE AVANCE/.test(label) && out.pctAvanceInversionAcum === null) {
+        out.pctAvanceInversionPeriodo = toNum(row[COL_PCT_PERIODO]) || null;
+        out.pctAvanceInversionAcum = toNum(row[COL_PCT_ACUM]) || null;
+      }
+    }
+    // si encontró el bloque en esta hoja, no sigas a otras
+    if (out.montoInversion) break;
+  }
+
+  out.found = out.montoInversion != null;
+  return out;
 }

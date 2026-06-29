@@ -1,5 +1,5 @@
 import { ArrowRight, Loader2 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api.js';
 import { useAuthStore } from '@/lib/auth-store.js';

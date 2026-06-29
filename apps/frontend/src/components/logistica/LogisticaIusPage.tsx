@@ -3,6 +3,7 @@ import { AlertTriangle, Check, Loader2, Pencil, Plus, Search, Trash2, X } from '
 import { useMemo, useState } from 'react';
 import { api } from '@/lib/api.js';
 import { cn } from '@/lib/utils.js';
+import { SkelRows } from '@/components/ui/Skeleton.js';
 
 export function LogisticaIusPage() {
   const qc = useQueryClient();
@@ -63,7 +64,7 @@ export function LogisticaIusPage() {
     );
   }, [ius, search]);
 
-  if (isLoading) return <div className="text-[12px] text-ink-3">Cargando IUs...</div>;
+  if (isLoading) return <SkelRows rows={6} />;
 
   return (
     <div className="space-y-4">

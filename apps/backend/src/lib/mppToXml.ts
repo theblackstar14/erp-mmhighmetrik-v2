@@ -2,8 +2,14 @@ import { spawn } from 'node:child_process';
 import { mkdtemp, readFile, rm, writeFile, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { env } from '../env.js';
+
+// MPXJ vive en el repo (tools/mpxj · 34 jars). Por defecto se usa esa copia → portable
+// a cualquier PC/servidor sin configurar nada. MPXJ_LIB_PATH en .env solo si quieres override.
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const MPXJ_LIB = env.MPXJ_LIB_PATH || path.resolve(__dirname, '../../../../tools/mpxj');
 
 /**
  * Convierte un buffer .mpp a XML usando MPXJ (Java).
@@ -42,10 +48,6 @@ async function runJava(args: string[]): Promise<{ stdout: string; stderr: string
 }
 
 export async function convertMppToXml(buffer: Buffer): Promise<string> {
-  if (!env.MPXJ_LIB_PATH) {
-    throw new Error('MPXJ_LIB_PATH no configurado en .env');
-  }
-
   const sessionId = randomUUID();
   const tmpDir = await mkdtemp(path.join(tmpdir(), `mpxj-${sessionId}-`));
   const inFile = path.join(tmpDir, 'input.mpp');
@@ -57,18 +59,18 @@ export async function convertMppToXml(buffer: Buffer): Promise<string> {
     // Detectar estructura: si MPXJ_LIB_PATH contiene mpxj.jar al root + carpeta lib/,
     // necesitamos AMBOS en classpath. Si solo hay lib/, ese alcanza.
     const sep = process.platform === 'win32' ? ';' : ':';
-    const rootJar = path.join(env.MPXJ_LIB_PATH, '*');
-    const libJars = path.join(env.MPXJ_LIB_PATH, 'lib', '*');
+    const rootJar = path.join(MPXJ_LIB, '*');
+    const libJars = path.join(MPXJ_LIB, 'lib', '*');
     const classpath = `${rootJar}${sep}${libJars}`;
 
     // Intentar 1: si existe mpxjconvert.bat (Win) o mpxjconvert.sh (Unix), usarlo
     const isWin = process.platform === 'win32';
     const scriptName = isWin ? 'mpxjconvert.bat' : 'mpxjconvert.sh';
     const scriptCandidates = [
-      path.join(env.MPXJ_LIB_PATH, scriptName),
-      path.join(env.MPXJ_LIB_PATH, 'script', scriptName),
-      path.join(env.MPXJ_LIB_PATH, 'bin', scriptName),
-      path.join(env.MPXJ_LIB_PATH, '..', scriptName),
+      path.join(MPXJ_LIB, scriptName),
+      path.join(MPXJ_LIB, 'script', scriptName),
+      path.join(MPXJ_LIB, 'bin', scriptName),
+      path.join(MPXJ_LIB, '..', scriptName),
     ];
     let scriptPath: string | null = null;
     for (const c of scriptCandidates) {

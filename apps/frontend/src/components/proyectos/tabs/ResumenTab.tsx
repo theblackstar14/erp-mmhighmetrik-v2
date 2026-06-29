@@ -1,6 +1,18 @@
 import { useQuery } from '@tanstack/react-query';
-import { type Proyecto, api } from '@/lib/api.js';
-import { fmtDate, fmtPEN } from '@/lib/utils.js';
+import { AlertTriangle, Sparkles } from 'lucide-react';
+import { Suspense, lazy } from 'react';
+import { Link } from 'react-router-dom';
+import { type HitoObra, type Proyecto, api } from '@/lib/api.js';
+import { cn, fmtDate, fmtPEN } from '@/lib/utils.js';
+
+const ResumenCurvaS = lazy(() => import('./ResumenCurvaS.js'));
+
+const HITO_LABEL: Record<string, string> = {
+  entrega_terreno: 'Entrega de terreno', inicio_plazo: 'Inicio de plazo', ampliacion_plazo: 'Ampliación de plazo',
+  culminacion: 'Culminación', recepcion: 'Recepción', liquidacion: 'Liquidación', consentimiento_liquidacion: 'Consentimiento liquidación',
+};
+const AVATAR = ['#3B5BDB', '#2F7D5C', '#7C3AED', '#D1453B', '#B45309', '#0891B2'];
+const ini = (s: string) => s.split(' ').slice(0, 2).map((x) => x[0]).join('').toUpperCase();
 
 export function ResumenTab({ proyecto }: { proyecto: Proyecto }) {
   const avancesQ = useQuery({
@@ -11,6 +23,10 @@ export function ResumenTab({ proyecto }: { proyecto: Proyecto }) {
     queryKey: ['valorizaciones', proyecto.id],
     queryFn: () => api.proyectos.getValorizaciones(proyecto.id),
   });
+  const curvaQ = useQuery({ queryKey: ['curva-s', proyecto.id], queryFn: () => api.proyectos.getCurvaS(proyecto.id) });
+  const hitosQ = useQuery({ queryKey: ['hitos', proyecto.id], queryFn: () => api.contractual.listHitos(proyecto.id) });
+  const equipoQ = useQuery({ queryKey: ['equipo', proyecto.id], queryFn: () => api.proyectos.getEquipo(proyecto.id) });
+  const notifsQ = useQuery({ queryKey: ['notificaciones'], queryFn: () => api.notificaciones.list() });
 
   const contrato = Number.parseFloat(proyecto.montoContractual ?? '0');
   // costoDirecto en DB YA es contractual (CD real empresa) · NO multiplicar otra vez
@@ -127,6 +143,13 @@ export function ResumenTab({ proyecto }: { proyecto: Proyecto }) {
     },
   ];
 
+  const equipo = equipoQ.data?.equipo ?? [];
+  const hitos = (hitosQ.data?.hitos ?? []).slice().sort((a, b) => a.fecha.localeCompare(b.fecha));
+  const alertas = (notifsQ.data?.items ?? []).filter((nt) => nt.proyectoId === proyecto.id && !nt.leidoEn).slice(0, 4);
+  const curva = curvaQ.data?.data ?? null;
+  const hoyStr = new Date().toISOString().slice(0, 10);
+  const hitosPendientes = hitos.filter((h) => h.fecha > hoyStr).length;
+
   return (
     <div className="space-y-5">
       {/* KPIs · 7 cards */}
@@ -162,8 +185,100 @@ export function ResumenTab({ proyecto }: { proyecto: Proyecto }) {
         ))}
       </div>
 
-      {/* Datos contrato + económicos + identificación */}
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_1fr_300px] gap-3">
+      {/* Curva S + Hitos (izq) · Equipo + Alertas (der) · estilo v1 */}
+      <div className="grid grid-cols-1 lg:grid-cols-[1.6fr_1fr] gap-3">
+        <div className="space-y-3">
+          {/* Curva S grande interactiva */}
+          <div className="rounded-md border border-line bg-bg-elev">
+            <div className="flex items-center justify-between border-b border-line px-4 py-3">
+              <h3 className="text-[13px] font-semibold">Curva S — avance acumulado</h3>
+              <Link to={`/proyectos/${proyecto.id}/avance`} className="text-[11px] text-primary hover:underline">Ver detalle →</Link>
+            </div>
+            <div className="p-3">
+              {curva && curva.buckets.length > 1 ? (
+                <Suspense fallback={<div className="h-[300px] animate-pulse rounded bg-bg-sunken/50" />}>
+                  <ResumenCurvaS data={curva} />
+                </Suspense>
+              ) : (
+                <p className="py-12 text-center text-[12px] text-ink-3">Sin curva S · sube cronograma con partidas (fecha + costo)</p>
+              )}
+            </div>
+          </div>
+
+          {/* Hitos del proyecto */}
+          <div className="rounded-md border border-line bg-bg-elev">
+            <div className="flex items-center justify-between border-b border-line px-4 py-2.5">
+              <h3 className="text-[13px] font-semibold">Hitos del proyecto</h3>
+              {hitosPendientes > 0 && <span className="chip blue">{hitosPendientes} pendientes</span>}
+            </div>
+            {hitos.length === 0 ? (
+              <p className="p-4 text-[11.5px] text-ink-3">Sin hitos registrados · agrégalos en Contractual</p>
+            ) : (
+              <div className="divide-y divide-line">
+                {hitos.map((h: HitoObra) => {
+                  const listo = h.fecha <= hoyStr;
+                  return (
+                    <div key={h.id} className="flex items-center gap-3 px-4 py-2.5 text-[12px]">
+                      <span className={cn('h-2 w-2 shrink-0 rounded-full', listo ? 'bg-emerald-500' : 'bg-amber-500')} />
+                      <span className="font-mono text-[10px] uppercase text-ink-4 w-[60px] shrink-0">{fmtDate(h.fecha)}</span>
+                      <span className={cn('flex-1 truncate', listo && 'text-ink-4 line-through')}>{HITO_LABEL[h.tipo] ?? h.tipo}{h.numeroDocumento ? ` · ${h.numeroDocumento}` : ''}</span>
+                      <span className={cn('chip', listo ? 'green' : 'amber')}>{listo ? '✓ Listo' : 'Pendiente'}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Equipo + Alertas */}
+        <div className="space-y-3">
+          <div className="rounded-md border border-line bg-bg-elev">
+            <div className="flex items-center justify-between border-b border-line px-4 py-2.5">
+              <h3 className="text-[13px] font-semibold">Equipo asignado</h3>
+              <Link to={`/proyectos/${proyecto.id}/equipo`} className="text-[11px] text-primary hover:underline">{equipo.length} personas</Link>
+            </div>
+            {equipo.length === 0 ? (
+              <p className="p-4 text-[11.5px] text-ink-3">Sin equipo asignado</p>
+            ) : (
+              <div className="p-3 space-y-2.5">
+                {equipo.slice(0, 6).map((m, i) => (
+                  <div key={m.profesionalId} className="flex items-center gap-2.5">
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white" style={{ background: AVATAR[i % AVATAR.length] }}>{ini(m.nombre || '?')}</div>
+                    <div className="min-w-0 flex-1"><div className="truncate text-[12px] font-medium">{m.nombre}</div><div className="text-[10.5px] text-ink-3">{m.rol}{m.profesion ? ` · ${m.profesion}` : ''}</div></div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-md border border-line bg-bg-elev">
+            <div className="flex items-center justify-between border-b border-line px-4 py-2.5">
+              <h3 className="text-[13px] font-semibold">Alertas activas</h3>
+              <span className="inline-flex items-center gap-1 chip blue"><Sparkles className="h-3 w-3" /> IA</span>
+            </div>
+            {alertas.length === 0 ? (
+              <p className="p-4 text-[11.5px] text-ink-3">Sin alertas activas</p>
+            ) : (
+              <div className="p-3 space-y-2">
+                {alertas.map((a) => (
+                  <div key={a.id} className={cn('rounded-md border-l-[3px] px-2.5 py-2', a.severidad === 'alta' ? 'border-l-rose-500 bg-rose-500/5' : a.severidad === 'media' ? 'border-l-amber-500 bg-amber-500/5' : 'border-l-ink-4 bg-bg-sunken/40')}>
+                    <div className="flex items-center gap-1.5 text-[11.5px] font-semibold">
+                      <AlertTriangle className={cn('h-3.5 w-3.5', a.severidad === 'alta' ? 'text-rose-500' : 'text-amber-500')} />
+                      {a.titulo}
+                    </div>
+                    {a.detalle && <div className="text-[10.5px] text-ink-3 mt-0.5 leading-snug">{a.detalle}</div>}
+                  </div>
+                ))}
+                <Link to={`/proyectos/${proyecto.id}/ia`} className="block pt-1 text-center text-[11.5px] text-primary hover:underline">Ver análisis completo →</Link>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Identificación + Estructura económica */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
         {/* Identificación contractual */}
         <div className="rounded-md border border-line bg-bg-elev">
           <div className="border-b border-line px-4 py-3">
@@ -260,19 +375,6 @@ export function ResumenTab({ proyecto }: { proyecto: Proyecto }) {
           </div>
         </div>
 
-        {/* Próximos pasos */}
-        <div className="rounded-md border border-line bg-bg-elev">
-          <div className="border-b border-line px-4 py-3">
-            <h3 className="text-[13px] font-semibold">Próximos pasos</h3>
-          </div>
-          <ol className="p-4 space-y-2 text-[11.5px] text-ink-3 list-decimal list-inside">
-            <li>Importar calendario adquisiciones (recursos · F1.C)</li>
-            <li>Importar fórmulas polinómicas (F1.D)</li>
-            <li>Conectar NAS y subir documentos firmados</li>
-            <li>Registrar avances físicos partidas</li>
-            <li>Generar primera valorización mensual</li>
-          </ol>
-        </div>
       </div>
     </div>
   );

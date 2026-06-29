@@ -3,6 +3,7 @@ import { Check, Loader2, Pencil, Search, Star, Trash2, Truck, X } from 'lucide-r
 import { useMemo, useState } from 'react';
 import { type Proveedor, api } from '@/lib/api.js';
 import { cn, fmtPEN } from '@/lib/utils.js';
+import { SkelRows } from '@/components/ui/Skeleton.js';
 
 type ProveedorForm = {
   ruc: string;
@@ -175,8 +176,9 @@ export function LogisticaProveedoresPage() {
       );
     });
   }, [proveedores, search, categoria]);
+  const volumenTotal = useMemo(() => proveedores.reduce((s, p) => s + p.volumenAnual, 0), [proveedores]);
 
-  if (isLoading) return <div className="text-[12px] text-ink-3">Cargando proveedores...</div>;
+  if (isLoading) return <SkelRows rows={6} />;
 
   return (
     <div className="space-y-4">
@@ -185,7 +187,7 @@ export function LogisticaProveedoresPage() {
         <Stat lbl="Total" val={String(stats?.total ?? 0)} accent />
         <Stat lbl="Con rating ≥ 4★" val={String(stats?.conRating ?? 0)} />
         <Stat lbl="Categorías" val={String(stats?.categorias.length ?? 0)} />
-        <Stat lbl="Volumen año" val={fmtPEN(proveedores.reduce((s, p) => s + p.volumenAnual, 0))} sub="Σ OCs emitidas" />
+        <Stat lbl="Volumen año" val={fmtPEN(volumenTotal)} sub="Σ OCs emitidas" />
       </div>
 
       {/* Toolbar */}

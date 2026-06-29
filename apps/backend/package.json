@@ -3,11 +3,11 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "main": "./dist/server.js",
+  "main": "./src/server.ts",
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "tsc",
-    "start": "node dist/server.js",
+    "build": "echo 'backend: sin compilar · prod corre con tsx (ver start). typecheck aparte.'",
+    "start": "tsx src/server.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -17,6 +17,7 @@
     "@google/generative-ai": "^0.21.0",
     "@lucia-auth/adapter-drizzle": "^1.1.0",
     "@node-rs/argon2": "^2.0.2",
+    "compression": "^1.8.1",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "drizzle-orm": "^0.38.4",
@@ -24,19 +25,22 @@
     "fast-xml-parser": "^4.5.1",
     "lucia": "^3.2.2",
     "multer": "^1.4.5-lts.1",
+    "pdfkit": "^0.19.1",
     "pino": "^9.6.0",
     "pino-http": "^10.4.0",
     "pino-pretty": "^13.0.0",
     "postgres": "^3.4.5",
-    "webdav": "^5.7.1",
+    "tsx": "^4.21.0",
+    "webdav": "^5.10.0",
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@types/compression": "^1.8.1",
     "@types/cors": "^2.8.17",
-    "@types/express": "^5.0.0",
+    "@types/express": "^5.0.6",
     "@types/multer": "^1.4.12",
     "@types/node": "^22.10.5",
-    "tsx": "^4.19.2",
+    "@types/pdfkit": "^0.17.6",
     "typescript": "^5.7.3"
   }
 }

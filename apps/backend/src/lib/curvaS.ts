@@ -31,6 +31,27 @@ export type CurvaSResult = {
     EAC: number; // BAC × AC/EV
     pctCompletado: number; // EV/BAC
   };
+  // Métrica financiero-inversión (base = monto de inversión, NO obra-CD).
+  // PV = plan distribucionInversion · EV = montoInversionAcumulado de valorizaciones
+  // (bloque totales del Excel: CD+mobiliario+ET+supervisión ejecutado).
+  inversion?: {
+    BAC: number; // monto de inversión total
+    plan: number[]; // PV inversión mensual
+    planAcum: number[]; // PV inversión acumulado
+    ev: number[]; // EV inversión mensual (real ejecutado)
+    evAcum: number[]; // EV inversión acumulado
+    PV: number; // PV inversión acumulado al hoy
+    EV: number; // EV inversión acumulado al hoy
+    pctPlanHoy: number; // PV/BAC × 100
+    pctRealHoy: number; // EV/BAC × 100
+    spi: number; // EV/PV (cronograma inversión)
+    evIngestado: boolean; // true = hay avance real de inversión en valorizaciones
+  };
+};
+
+export type InversionPlan = {
+  bac: number; // montoReferencial · monto de inversión total
+  distribucion: Array<{ ym: string; monto: number }>; // plan mensual inversión
 };
 
 /**
@@ -41,12 +62,23 @@ export type CurvaSResult = {
  *
  * Fuente prioridad: valorizaciones > avances > plan-only
  */
+// Subsets mínimos que computeCurvaS realmente lee · permiten `select({...})` narrow en los
+// callers (menos memoria). El compilador fuerza la sincronía: agregar un campo aquí → el caller
+// con select narrow rompe el build hasta incluirlo. Filas completas (Partida/Avance/…) calzan igual.
+type PartidaCS = Pick<Partida, 'id' | 'codigo' | 'parentCodigo' | 'fechaInicio' | 'fechaFin' | 'presupuestoContractual' | 'presupuesto' | 'distribucionMensual'>;
+type AvanceCS = Pick<Avance, 'partidaId' | 'fecha' | 'avancePct' | 'realCost'>;
+type ValorizacionCS = Pick<Valorizacion, 'fechaDesde' | 'fechaHasta' | 'montoCd' | 'montoReajuste' | 'montoInversionPeriodo' | 'mesPeriodo' | 'montoInversionAcumulado'>;
+
 export function computeCurvaS(
-  partidas: Partida[],
-  latestAvances: Avance[],
-  valorizaciones: Valorizacion[] = [],
+  partidas: PartidaCS[],
+  latestAvances: AvanceCS[],
+  valorizaciones: ValorizacionCS[] = [],
   valorizacionesPartidas: ValorizacionPartida[] = [],
   today: Date = new Date(),
+  inversionPlan: InversionPlan | null = null,
+  // Subtotal contratado (incluye GG+UT). Las partidas son CD puro; la valorización (montoCd) YA
+  // trae GG+UT. Si se pasa, el avance-obra se mide contra esta base (= % oficial del informe).
+  bacObraContractual: number | null = null,
 ): CurvaSResult | null {
   // Solo hojas con fechas + presupuesto contractual > 0 (fallback referencial)
   const parents = new Set(partidas.map((p) => p.parentCodigo).filter(Boolean) as string[]);
@@ -128,6 +160,14 @@ export function computeCurvaS(
       });
     }
   }
+  // Re-base del plan al subtotal contratado (CD+GG+UT). Las partidas suman solo CD; como la
+  // valorización (EV=montoCd) ya incluye GG+UT, se escala el plan a la misma base para comparar
+  // manzanas con manzanas. El % de plan no cambia (num y den escalan igual) y la curva llega a 100%.
+  const planTotalCd = plan.reduce((s, v) => s + v, 0);
+  if (bacObraContractual && bacObraContractual > 0 && planTotalCd > 0) {
+    const factorContrato = bacObraContractual / planTotalCd;
+    for (let k = 0; k < plan.length; k++) plan[k]! *= factorContrato;
+  }
   const planAcum: number[] = [];
   {
     let acc = 0;
@@ -160,13 +200,14 @@ export function computeCurvaS(
   } else if (latestAvances.length > 0) {
     fuente = 'avances';
     // Fallback: usar avances histórico (legacy)
-    const avancesPorPartida = new Map<string, Avance[]>();
+    const avancesPorPartida = new Map<string, AvanceCS[]>();
     for (const a of latestAvances) {
       if (!avancesPorPartida.has(a.partidaId)) avancesPorPartida.set(a.partidaId, []);
       avancesPorPartida.get(a.partidaId)!.push(a);
     }
+    const leafById = new Map(leaves.map((p) => [p.id, p]));
     for (const [pid, avs] of avancesPorPartida) {
-      const partida = leaves.find((p) => p.id === pid);
+      const partida = leafById.get(pid);
       if (!partida) continue;
       const budget = Number(partida.presupuestoContractual ?? 0) || Number(partida.presupuesto ?? 0);
       const sorted = avs.sort((x, y) => new Date(x.fecha).getTime() - new Date(y.fecha).getTime());
@@ -212,13 +253,90 @@ export function computeCurvaS(
   const PV = idxCorte >= 0 ? planAcum[idxCorte]! : 0;
   const AC = idxCorte >= 0 ? realAcum[idxCorte]! : 0;
   const EV = idxCorte >= 0 ? earnedAcum[idxCorte]! : 0;
-  const BAC = leaves.reduce((s, p) => s + (Number(p.presupuestoContractual ?? 0) || Number(p.presupuesto ?? 0)), 0);
+  const BAC =
+    bacObraContractual && bacObraContractual > 0
+      ? bacObraContractual
+      : leaves.reduce((s, p) => s + (Number(p.presupuestoContractual ?? 0) || Number(p.presupuesto ?? 0)), 0);
   const SPI = PV > 0 ? EV / PV : 0;
   const CPI = AC > 0 ? EV / AC : 0;
   const SV = EV - PV;
   const CV = EV - AC;
   const EAC = AC > 0 && EV > 0 ? BAC * (AC / EV) : BAC;
   const pctCompletado = BAC > 0 ? (EV / BAC) * 100 : 0;
+
+  // ─── Métrica financiero-inversión (plan-only por ahora) ────────────
+  let inversion: CurvaSResult['inversion'];
+  if (inversionPlan && inversionPlan.distribucion.length > 0) {
+    const planInv = buckets.map(() => 0);
+    for (const d of inversionPlan.distribucion) {
+      const idx = bucketByYm.get(d.ym);
+      if (idx != null) planInv[idx]! += d.monto;
+    }
+    const planInvAcum: number[] = [];
+    {
+      let acc = 0;
+      planInv.forEach((v) => {
+        acc += v;
+        planInvAcum.push(acc);
+      });
+    }
+    const bacInv = inversionPlan.bac > 0 ? inversionPlan.bac : planInvAcum[planInvAcum.length - 1] ?? 0;
+    const pvInv = idxCorte >= 0 ? planInvAcum[idxCorte]! : 0;
+
+    // EV inversión real · montoInversionPeriodo de valorizaciones, bucketeado por mesPeriodo
+    const evInv = buckets.map(() => 0);
+    let hayEvInv = false;
+    for (const v of valorizaciones) {
+      const periodo = Number(v.montoInversionPeriodo ?? 0);
+      if (!periodo) continue;
+      const ym = v.mesPeriodo ?? (v.fechaHasta ? String(v.fechaHasta).slice(0, 7) : null);
+      const idx = ym ? bucketByYm.get(ym) : undefined;
+      if (idx != null) {
+        evInv[idx]! += periodo;
+        hayEvInv = true;
+      }
+    }
+    const evInvAcum: number[] = [];
+    {
+      let acc = 0;
+      evInv.forEach((vv) => {
+        acc += vv;
+        evInvAcum.push(acc);
+      });
+    }
+    // Si una valorización trae acumulado directo, úsalo como ancla del último bucket con avance
+    if (hayEvInv) {
+      const lastAcum = valorizaciones
+        .filter((v) => Number(v.montoInversionAcumulado ?? 0) > 0)
+        .map((v) => ({
+          ym: v.mesPeriodo ?? (v.fechaHasta ? String(v.fechaHasta).slice(0, 7) : ''),
+          acum: Number(v.montoInversionAcumulado),
+        }))
+        .filter((x) => bucketByYm.get(x.ym) != null)
+        .sort((a, b) => bucketByYm.get(a.ym)! - bucketByYm.get(b.ym)!)
+        .pop();
+      if (lastAcum) {
+        const idx = bucketByYm.get(lastAcum.ym)!;
+        // re-ancla acumulado a partir del idx (corrige drift de de-cumulación)
+        for (let k = idx; k < evInvAcum.length; k++) evInvAcum[k] = lastAcum.acum;
+      }
+    }
+    const evInvHoy = idxCorte >= 0 ? evInvAcum[idxCorte]! : 0;
+
+    inversion = {
+      BAC: bacInv,
+      plan: planInv,
+      planAcum: planInvAcum,
+      ev: evInv,
+      evAcum: evInvAcum,
+      PV: pvInv,
+      EV: evInvHoy,
+      pctPlanHoy: bacInv > 0 ? (pvInv / bacInv) * 100 : 0,
+      pctRealHoy: bacInv > 0 ? (evInvHoy / bacInv) * 100 : 0,
+      spi: pvInv > 0 ? evInvHoy / pvInv : 0,
+      evIngestado: hayEvInv,
+    };
+  }
 
   return {
     buckets,
@@ -231,5 +349,6 @@ export function computeCurvaS(
     hoyIdx: idxCorte,
     fuente,
     evm: { BAC, PV, AC, EV, SPI, CPI, SV, CV, EAC, pctCompletado },
+    inversion,
   };
 }

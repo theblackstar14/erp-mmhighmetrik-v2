@@ -1,28 +1,33 @@
 import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, Calendar, Sparkles } from 'lucide-react';
+import { Suspense, lazy } from 'react';
 import { Link, NavLink, Navigate, Route, Routes, useParams } from 'react-router-dom';
-import { CronogramaTab } from '@/components/proyectos/tabs/CronogramaTab.js';
-import { CurvaSTab } from '@/components/proyectos/tabs/CurvaSTab.js';
-import { PartidasTab } from '@/components/proyectos/tabs/PartidasTab.js';
-import { RecursosTab } from '@/components/proyectos/tabs/RecursosTab.js';
-import { ResumenTab } from '@/components/proyectos/tabs/ResumenTab.js';
 import { TabPlaceholder } from '@/components/proyectos/tabs/TabPlaceholder.js';
-import { ValorizacionesTab } from '@/components/proyectos/tabs/ValorizacionesTab.js';
 import { api } from '@/lib/api.js';
 import { cn } from '@/lib/utils.js';
+
+// Tabs lazy · cada una (+ sus deps: gantt, echarts, modales) en su chunk. Solo baja al abrirla.
+const AvanceTab = lazy(() => import('@/components/proyectos/tabs/AvanceTab.js').then((m) => ({ default: m.AvanceTab })));
+const ContractualTab = lazy(() => import('@/components/proyectos/tabs/ContractualTab.js').then((m) => ({ default: m.ContractualTab })));
+const CronogramaTab = lazy(() => import('@/components/proyectos/tabs/CronogramaTab.js').then((m) => ({ default: m.CronogramaTab })));
+const DocumentosTab = lazy(() => import('@/components/proyectos/tabs/DocumentosTab.js').then((m) => ({ default: m.DocumentosTab })));
+const EconomicoTab = lazy(() => import('@/components/proyectos/tabs/EconomicoTab.js').then((m) => ({ default: m.EconomicoTab })));
+const EquipoTab = lazy(() => import('@/components/proyectos/tabs/EquipoTab.js').then((m) => ({ default: m.EquipoTab })));
+const PartidasTab = lazy(() => import('@/components/proyectos/tabs/PartidasTab.js').then((m) => ({ default: m.PartidasTab })));
+const RecursosTab = lazy(() => import('@/components/proyectos/tabs/RecursosTab.js').then((m) => ({ default: m.RecursosTab })));
+const ResumenTab = lazy(() => import('@/components/proyectos/tabs/ResumenTab.js').then((m) => ({ default: m.ResumenTab })));
 
 const TABS = [
   { key: 'resumen', label: 'Resumen' },
   { key: 'partidas', label: 'Partidas' },
   { key: 'cronograma', label: 'Cronograma' },
-  { key: 'curva-s', label: 'Curva S' },
-  { key: 'recursos', label: 'Recursos' },
-  { key: 'documentos', label: 'Documentos' },
-  { key: 'valorizaciones', label: 'Valorizaciones' },
-  { key: 'liquidacion', label: 'Liquidación' },
-  { key: 'compras', label: 'Compras' },
-  { key: 'equipo', label: 'Equipo' },
+  { key: 'avance', label: 'Avance' },
+  { key: 'financiero', label: 'Financiero' },
   { key: 'contractual', label: 'Contractual' },
+  { key: 'recursos', label: 'Recursos' },
+  { key: 'equipo', label: 'Equipo' },
+  { key: 'documentos', label: 'Documentos' },
+  { key: 'liquidacion', label: 'Liquidación' },
   { key: 'ia', label: '✦ Análisis IA' },
 ];
 
@@ -101,23 +106,34 @@ export function ProjectDetailPage() {
         </nav>
       </div>
 
-      {/* Tab content · sub-routes */}
+      {/* Tab content · sub-routes (lazy · Suspense por tab) */}
+      <Suspense fallback={<div className="py-10 text-center text-[12px] text-ink-3">Cargando…</div>}>
       <Routes>
         <Route index element={<Navigate to="resumen" replace />} />
         <Route path="resumen" element={<ResumenTab proyecto={p} />} />
         <Route path="partidas" element={<PartidasTab proyectoId={p.id} />} />
         <Route path="cronograma" element={<CronogramaTab proyectoId={p.id} />} />
-        <Route path="curva-s" element={<CurvaSTab proyectoId={p.id} />} />
+        <Route path="avance" element={<AvanceTab proyectoId={p.id} />} />
+        <Route path="financiero" element={<EconomicoTab proyectoId={p.id} />} />
+        <Route path="economico" element={<Navigate to={`/proyectos/${p.id}/financiero`} replace />} />
+        {/* Rutas viejas · redirect a Avance (fusión) */}
+        <Route path="curva-s" element={<Navigate to={`/proyectos/${p.id}/avance`} replace />} />
+        <Route path="valorizaciones" element={<Navigate to={`/proyectos/${p.id}/avance`} replace />} />
+        <Route path="reconciliacion" element={<Navigate to={`/proyectos/${p.id}/avance`} replace />} />
+        {/* Módulos globales movidos al sidebar · redirect */}
+        <Route path="finanzas" element={<Navigate to="/finanzas" replace />} />
+        <Route path="inventario" element={<Navigate to="/inventario" replace />} />
+        <Route path="planilla" element={<Navigate to="/personal" replace />} />
+        <Route path="compras" element={<Navigate to="/logistica/ordenes" replace />} />
         <Route path="recursos" element={<RecursosTab proyectoId={p.id} />} />
-        <Route path="documentos" element={<TabPlaceholder title="Documentos" desc="Conexión NAS Synology · 13 carpetas estándar" />} />
-        <Route path="valorizaciones" element={<ValorizacionesTab proyectoId={p.id} />} />
+        <Route path="equipo" element={<EquipoTab proyectoId={p.id} />} />
+        <Route path="documentos" element={<DocumentosTab proyectoId={p.id} />} />
         <Route path="liquidacion" element={<TabPlaceholder title="Liquidación" desc="Gastos · utilidad · reparto socios · formato Excel gerente" />} />
-        <Route path="compras" element={<TabPlaceholder title="Compras" desc="OC/OS · proveedores · vinculadas a partidas" />} />
-        <Route path="equipo" element={<TabPlaceholder title="Equipo" desc="Profesional + Personal de obra CAPECO" />} />
-        <Route path="contractual" element={<TabPlaceholder title="Contractual" desc="Adicionales · ampliaciones · garantías · FP · penalidades" />} />
+        <Route path="contractual" element={<ContractualTab proyectoId={p.id} />} />
         <Route path="ia" element={<TabPlaceholder title="✦ Análisis IA" desc="Insights con Gemini · alertas · recomendaciones" />} />
         <Route path="*" element={<Navigate to="resumen" replace />} />
       </Routes>
+      </Suspense>
     </div>
   );
 }

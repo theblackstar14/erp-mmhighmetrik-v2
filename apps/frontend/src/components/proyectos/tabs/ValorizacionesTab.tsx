@@ -1,8 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
+  CalendarClock,
+  CheckCircle2,
   ChevronDown,
   ChevronRight,
+  Clock,
   FileText,
   Loader2,
   Receipt,
@@ -12,7 +15,8 @@ import {
 } from 'lucide-react';
 import { useMemo, useRef, useState } from 'react';
 import { api, type Valorizacion, type ValorizacionReajuste } from '@/lib/api.js';
-import { cn, fmtCompact, fmtPEN } from '@/lib/utils.js';
+import { cn, fmtPEN } from '@/lib/utils.js';
+import { invalidateResumen } from '@/lib/invalidate.js';
 
 const STATUS_CHIP: Record<string, string> = {
   borrador: 'amber',
@@ -43,12 +47,18 @@ export function ValorizacionesTab({ proyectoId }: { proyectoId: string }) {
     queryKey: ['proyecto', proyectoId],
     queryFn: () => api.proyectos.get(proyectoId),
   });
+  const curvaQ = useQuery({
+    queryKey: ['curva-s', proyectoId],
+    queryFn: () => api.proyectos.getCurvaS(proyectoId),
+  });
 
   const [modo, setModo] = useState<Modo>('pen');
   const [expandidas, setExpandidas] = useState<Set<string>>(new Set());
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadOk, setUploadOk] = useState<string | null>(null);
+  const [cobro, setCobro] = useState<{ valId: string } | null>(null); // valo a marcar cobrada → pide cuenta destino
+  const cuentasQ = useQuery({ queryKey: ['cuentas'], queryFn: () => api.finanzas.listCuentas(), staleTime: 5 * 60 * 1000 });
 
   const montoSubtotal = Number(proyQ.data?.proyecto?.montoSubtotal ?? 0);
   const baseRef = montoSubtotal > 0 ? montoSubtotal : 1;
@@ -62,11 +72,18 @@ export function ValorizacionesTab({ proyectoId }: { proyectoId: string }) {
       );
       qc.invalidateQueries({ queryKey: ['valorizaciones', proyectoId] });
       qc.invalidateQueries({ queryKey: ['proyecto', proyectoId] });
+      invalidateResumen(qc);
     },
     onError: (e: Error) => {
       setUploadOk(null);
       setUploadError(e.message);
     },
+  });
+
+  const cambiarEstado = useMutation({
+    mutationFn: (v: { valId: string; estado: string; cuentaId?: string; fechaCobro?: string }) =>
+      api.proyectos.setValorizacionEstado(proyectoId, v.valId, v.estado, v.cuentaId ? { cuentaId: v.cuentaId, fechaCobro: v.fechaCobro } : undefined),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['valorizaciones', proyectoId] }); invalidateResumen(qc); setCobro(null); },
   });
 
   const onFile = (f: File | null) => {
@@ -79,6 +96,56 @@ export function ValorizacionesTab({ proyectoId }: { proyectoId: string }) {
   const valorizaciones = data?.valorizaciones ?? [];
   const reajustes = data?.reajustes ?? [];
   const stats = data?.stats ?? null;
+
+  // ── Timeline mensual del cronograma · cada periodo: presentada / pendiente / no presentada ──
+  const MES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+  const periodos = useMemo(() => {
+    const cd = curvaQ.data?.data;
+    const allBuckets = cd?.buckets ?? [];
+    const plan = cd?.plan ?? [];
+    // periodos reales de valorización = meses con plan > 0 (excluye el mes INICIO con plan 0)
+    let real = allBuckets.map((b, i) => ({ b, plan: Number(plan[i] ?? 0) })).filter((x) => x.b.start && x.plan > 0);
+    if (real.length === 0) real = allBuckets.filter((b) => b.start).map((b) => ({ b, plan: 0 }));
+    const hoyStr = new Date().toISOString().slice(0, 10);
+    const valByMes = new Map<string, (typeof valorizaciones)[number]>();
+    for (const v of valorizaciones) {
+      const ym = v.mesPeriodo ?? v.fechaDesde?.slice(0, 7) ?? '';
+      if (ym) valByMes.set(ym, v);
+    }
+    return real.map(({ b }, i) => {
+      const ym = b.start.slice(0, 7);
+      const fin = (b.finish ?? b.start).slice(0, 10);
+      const v = valByMes.get(ym);
+      const vencido = fin < hoyStr;
+      const estado: 'presentada' | 'no_presentada' | 'pendiente' = v ? 'presentada' : vencido ? 'no_presentada' : 'pendiente';
+      return {
+        idx: i + 1, // V01 = primer mes con plan
+        ym,
+        label: `${MES[Number(ym.slice(5, 7)) - 1] ?? '—'} ${ym.slice(2, 4)}`,
+        fin,
+        estado,
+        valNumero: v?.numero ?? null,
+        montoCd: v ? Number(v.montoCd) : null,
+        pct: v ? Number(v.pctAvance) : null,
+      };
+    });
+  }, [curvaQ.data, valorizaciones]);
+  const presentadas = periodos.filter((p) => p.estado === 'presentada').length;
+  const noPresentadas = periodos.filter((p) => p.estado === 'no_presentada').length;
+
+  // Avance de inversión (oficial · % al pie del Excel) · de la última val con dato
+  const inversionInfo = useMemo(() => {
+    const conInv = valorizaciones
+      .filter((v) => v.pctInversionAcumulado != null && Number(v.pctInversionAcumulado) > 0)
+      .sort((a, b) => a.numero - b.numero);
+    const ult = conInv[conInv.length - 1];
+    if (!ult) return null;
+    return {
+      pct: Number(ult.pctInversionAcumulado),
+      acum: Number(ult.montoInversionAcumulado ?? 0),
+      numero: ult.numero,
+    };
+  }, [valorizaciones]);
 
   const reajustesPorVal = useMemo(() => {
     const map = new Map<string, ValorizacionReajuste[]>();
@@ -163,45 +230,6 @@ export function ValorizacionesTab({ proyectoId }: { proyectoId: string }) {
     setExpandidas(next);
   };
 
-  // Curva chart dimensions
-  const chartW = 880;
-  const chartH = 220;
-  const padL = 56;
-  const padR = 16;
-  const padT = 16;
-  const padB = 32;
-  const innerW = chartW - padL - padR;
-  const innerH = chartH - padT - padB;
-
-  // Convertir % a S/ multiplicando por baseRef/100
-  const pctToVal = (pct: number) => (modo === 'pen' ? (pct / 100) * baseRef : pct);
-  const maxVal = modo === 'pen' ? Math.max(baseRef, 1) : 120; // 120% cap visual en modo %
-  const xStep = curvaSCompleta.length > 1 ? innerW / (curvaSCompleta.length - 1) : innerW;
-  const pointsProg = curvaSCompleta.map((c, i) => ({
-    x: padL + i * xStep,
-    y: padT + innerH - (pctToVal(c.pctProgAcum) / maxVal) * innerH,
-    val: pctToVal(c.pctProgAcum),
-    label: c.label,
-    showLabel: c.pctProgAcum > 0,
-  }));
-  // Ejecutado: solo dibujar hasta el último mes con datos (incluye INICIO=0,0)
-  const lastEjecIdx = (() => {
-    let idx = -1;
-    for (let i = 0; i < curvaSCompleta.length; i++) {
-      const p = curvaSCompleta[i]!;
-      if (p.label === 'INICIO' || p.pctEjecAcum > 0) idx = i;
-    }
-    return idx;
-  })();
-  const pointsEjec = curvaSCompleta.slice(0, lastEjecIdx + 1).map((c, i) => ({
-    x: padL + i * xStep,
-    y: padT + innerH - (pctToVal(c.pctEjecAcum) / maxVal) * innerH,
-    val: pctToVal(c.pctEjecAcum),
-    label: c.label,
-    showLabel: c.label === 'INICIO' || c.pctEjecAcum > 0,
-  }));
-  const fmtAxis = (n: number) => (modo === 'pen' ? fmtCompact(n) : `${n.toFixed(0)}%`);
-
   const hayValorizaciones = valorizaciones.length > 0;
 
   return (
@@ -253,12 +281,79 @@ export function ValorizacionesTab({ proyectoId }: { proyectoId: string }) {
         </div>
       )}
 
+      {/* Timeline mensual del cronograma · presentada / pendiente / no presentada */}
+      {periodos.length > 0 && (
+        <div className="rounded-md border border-line bg-bg-elev">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-4 py-2.5">
+            <h3 className="text-[13px] font-semibold flex items-center gap-1.5"><CalendarClock className="h-3.5 w-3.5 text-ink-3" /> Cronograma de valorizaciones · {periodos.length} periodos</h3>
+            <div className="flex items-center gap-3 text-[11px]">
+              <span className="inline-flex items-center gap-1 text-emerald-600"><CheckCircle2 className="h-3.5 w-3.5" /> {presentadas} presentadas</span>
+              {noPresentadas > 0 && <span className="inline-flex items-center gap-1 text-rose-500"><AlertTriangle className="h-3.5 w-3.5" /> {noPresentadas} no presentadas</span>}
+              <span className="inline-flex items-center gap-1 text-ink-4"><Clock className="h-3.5 w-3.5" /> {periodos.length - presentadas - noPresentadas} por venir</span>
+            </div>
+          </div>
+          <div className="flex gap-2 overflow-x-auto p-3">
+            {periodos.map((p) => {
+              const cfg = {
+                presentada: { ring: 'border-emerald-500/40 bg-emerald-500/5', dot: 'bg-emerald-500', txt: 'text-emerald-600', Icon: CheckCircle2 },
+                no_presentada: { ring: 'border-rose-500/40 bg-rose-500/5', dot: 'bg-rose-500', txt: 'text-rose-500', Icon: AlertTriangle },
+                pendiente: { ring: 'border-line bg-bg-sunken/30', dot: 'bg-ink-4/40', txt: 'text-ink-4', Icon: Clock },
+              }[p.estado];
+              return (
+                <div key={p.ym} className={cn('min-w-[120px] shrink-0 rounded-md border p-2.5', cfg.ring)}>
+                  <div className="flex items-center justify-between">
+                    <span className="font-mono text-[10px] font-bold uppercase tracking-wider text-ink-3">{p.label}</span>
+                    <span className="font-mono text-[9.5px] text-ink-4">V{String(p.idx).padStart(2, '0')}</span>
+                  </div>
+                  <div className={cn('mt-1 flex items-center gap-1 text-[11px] font-medium', cfg.txt)}>
+                    <cfg.Icon className="h-3.5 w-3.5" />
+                    {p.estado === 'presentada' ? `N°${p.valNumero}` : p.estado === 'no_presentada' ? 'No present.' : 'Pendiente'}
+                  </div>
+                  {p.estado === 'presentada' ? (
+                    <div className="mt-1">
+                      <div className="font-mono text-[11px] font-semibold tabular-nums">{fmtPEN(p.montoCd ?? 0)}</div>
+                      <div className="text-[10px] text-ink-4">{(p.pct ?? 0).toFixed(1)}% acum</div>
+                    </div>
+                  ) : (
+                    <div className="mt-1 text-[10px] text-ink-4">vence {p.fin.slice(8, 10)}/{p.fin.slice(5, 7)}</div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {!hayValorizaciones && (
         <div className="rounded-md border border-line bg-bg-elev p-6 text-center">
           <Receipt className="mx-auto h-8 w-8 text-ink-3 mb-2" />
           <div className="text-[13px] text-ink-2">Sin valorizaciones registradas</div>
           <div className="text-[12px] text-ink-3 mt-1">
             Sube la valorización N°1 en Excel para empezar
+          </div>
+        </div>
+      )}
+
+      {/* Avance oficial · inversión (% al pie del Excel) + obra físico secundario */}
+      {hayValorizaciones && inversionInfo && (
+        <div className="rounded-md border border-line bg-bg-elev px-4 py-3.5">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-2">
+              Avance de inversión
+              <span className="ml-2 chip green">oficial MEF/OxI</span>
+            </span>
+            <span className="text-[10px] text-ink-4">Val N°{inversionInfo.numero}</span>
+          </div>
+          <div className="mt-1 flex items-baseline gap-2.5 flex-wrap">
+            <span className="text-[28px] font-bold tracking-[-0.02em] text-primary leading-none">
+              {inversionInfo.pct.toFixed(2)}%
+            </span>
+            <span className="text-[12px] text-ink-3">ejecutado · {fmtPEN(inversionInfo.acum)}</span>
+          </div>
+          <div className="mt-1.5 text-[11px] text-ink-3">
+            Avance físico obra (CD):{' '}
+            <span className="font-semibold text-ink-1">{(stats?.pctAvanceUltima ?? 0).toFixed(2)}%</span>
+            <span className="text-[10px] text-ink-4"> · interno · lo que factura el contratista</span>
           </div>
         </div>
       )}
@@ -390,116 +485,11 @@ export function ValorizacionesTab({ proyectoId }: { proyectoId: string }) {
               />
             </>
           )}
-          <Stat label="% Avance ejec" value={`${stats.pctAvanceUltima.toFixed(2)}%`} accent="blue" />
+          <Stat label="% Avance obra (físico)" value={`${stats.pctAvanceUltima.toFixed(2)}%`} accent="blue" />
           <Stat label="K promedio" value={stats.kPromedio.toFixed(5)} accent="blue" />
         </div>
       )}
 
-      {/* Curva acumulada · ejecutado vs programado */}
-      {hayValorizaciones && (
-      <div className="rounded-md border border-line bg-bg-elev p-4">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <TrendingUp className="h-4 w-4 text-ink-3" />
-            <h3 className="text-[13px] font-semibold">
-              Curva valorización · {modo === 'pen' ? 'monto (S/)' : 'porcentaje acumulado'}
-            </h3>
-          </div>
-          <div className="flex items-center gap-4 text-[11px]">
-            <span className="flex items-center gap-1.5">
-              <span className="inline-block w-3 h-[2px] bg-blue-500" />
-              Programado
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="inline-block w-3 h-[2px]" style={{ background: 'hsl(var(--destructive))' }} />
-              Ejecutado
-            </span>
-          </div>
-        </div>
-        <svg
-          viewBox={`0 0 ${chartW} ${chartH}`}
-          className="w-full h-[220px]"
-          preserveAspectRatio="none"
-        >
-          {/* Y-axis grid */}
-          {[0, 0.25, 0.5, 0.75, 1].map((p) => (
-            <g key={p}>
-              <line
-                x1={padL}
-                x2={chartW - padR}
-                y1={padT + innerH * (1 - p)}
-                y2={padT + innerH * (1 - p)}
-                stroke="hsl(var(--line))"
-                strokeDasharray="2 4"
-              />
-              <text
-                x={padL - 6}
-                y={padT + innerH * (1 - p) + 3}
-                textAnchor="end"
-                className="fill-ink-3 text-[9px]"
-              >
-                {fmtAxis(maxVal * p)}
-              </text>
-            </g>
-          ))}
-          {/* Línea programada · azul · curva completa */}
-          <polyline
-            fill="none"
-            stroke="rgb(59 130 246)"
-            strokeWidth="2"
-            points={pointsProg.map((p) => `${p.x},${p.y}`).join(' ')}
-          />
-          {pointsProg.map((p, i) => (
-            <g key={`p-${i}`}>
-              <circle cx={p.x} cy={p.y} r="3" fill="rgb(59 130 246)" />
-              {p.showLabel && (
-                <text
-                  x={p.x}
-                  y={p.y - 6}
-                  textAnchor="middle"
-                  className="fill-blue-600 dark:fill-blue-400 text-[9px] font-medium"
-                >
-                  {modo === 'pen' ? fmtCompact(p.val) : `${p.val.toFixed(2)}%`}
-                </text>
-              )}
-              {/* Eje X labels · todos los meses */}
-              <text
-                x={p.x}
-                y={chartH - 8}
-                textAnchor="middle"
-                className="fill-ink-3 text-[9px]"
-              >
-                {p.label === 'INICIO' ? 'INICIO' : p.label}
-              </text>
-            </g>
-          ))}
-          {/* Línea ejecutada · rojo · solo hasta último mes con datos */}
-          {pointsEjec.length > 1 && (
-            <polyline
-              fill="none"
-              stroke="hsl(var(--destructive))"
-              strokeWidth="2.5"
-              points={pointsEjec.map((p) => `${p.x},${p.y}`).join(' ')}
-            />
-          )}
-          {pointsEjec.map((p, i) => (
-            <g key={`e-${i}`}>
-              <rect x={p.x - 3} y={p.y - 3} width="6" height="6" fill="hsl(var(--destructive))" />
-              {p.showLabel && p.val > 0 && (
-                <text
-                  x={p.x}
-                  y={p.y - 8}
-                  textAnchor="middle"
-                  className="fill-[hsl(var(--destructive))] text-[9px] font-semibold"
-                >
-                  {modo === 'pen' ? fmtCompact(p.val) : `${p.val.toFixed(2)}%`}
-                </text>
-              )}
-            </g>
-          ))}
-        </svg>
-      </div>
-      )}
 
       {/* Tabla valorizaciones */}
       {hayValorizaciones && (
@@ -518,7 +508,7 @@ export function ValorizacionesTab({ proyectoId }: { proyectoId: string }) {
                   <th className="px-2 py-2 text-right">Reajuste</th>
                   <th className="px-2 py-2 text-right">CD c/reajuste</th>
                   <th className="px-2 py-2 text-right">IGV 18%</th>
-                  <th className="px-2 py-2 text-right">Total</th>
+                  <th className="px-2 py-2 text-right">Neto a pagar</th>
                 </>
               ) : (
                 <>
@@ -552,6 +542,7 @@ export function ValorizacionesTab({ proyectoId }: { proyectoId: string }) {
                   modo={modo}
                   baseRef={baseRef}
                   pctProgAcum={curvaRow?.pctProg ?? 0}
+                  onChangeEstado={(estado) => estado === 'cobrada' ? setCobro({ valId: v.id }) : cambiarEstado.mutate({ valId: v.id, estado })}
                 />
               );
             })}
@@ -559,6 +550,53 @@ export function ValorizacionesTab({ proyectoId }: { proyectoId: string }) {
         </table>
       </div>
       )}
+
+      {cobro && (
+        <CobroValoModal
+          cuentas={cuentasQ.data?.cuentas ?? []}
+          pending={cambiarEstado.isPending}
+          onClose={() => setCobro(null)}
+          onConfirm={(cuentaId, fechaCobro) => cambiarEstado.mutate({ valId: cobro.valId, estado: 'cobrada', cuentaId, fechaCobro })}
+        />
+      )}
+    </div>
+  );
+}
+
+// Mini-modal · al marcar valo cobrada pide cuenta destino (nace movimiento Ingreso de caja)
+function CobroValoModal({ cuentas, pending, onClose, onConfirm }: {
+  cuentas: { id: string; descripcion: string | null; codigo: string; banco?: string | null }[];
+  pending: boolean;
+  onClose: () => void;
+  onConfirm: (cuentaId: string, fechaCobro: string) => void;
+}) {
+  const [cuentaId, setCuentaId] = useState('');
+  const [fecha, setFecha] = useState(new Date().toISOString().slice(0, 10));
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 animate-backdropIn" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="w-full max-w-sm rounded-xl border border-line bg-bg-elev p-5 shadow-xl animate-modalPop">
+        <h3 className="text-[14px] font-semibold mb-1">Registrar cobro</h3>
+        <p className="text-[11.5px] text-ink-3 mb-3">Se crea un movimiento de caja (Ingreso) en la cuenta destino.</p>
+        <div className="space-y-3">
+          <label className="block">
+            <span className="text-[10.5px] font-mono uppercase tracking-wider text-ink-4">Cuenta destino *</span>
+            <select value={cuentaId} onChange={(e) => setCuentaId(e.target.value)} className="mt-1 h-8 px-2 rounded-md border border-line bg-bg-elev text-[12px] w-full">
+              <option value="">— elegir cuenta —</option>
+              {cuentas.map((c) => <option key={c.id} value={c.id}>{c.descripcion ?? c.codigo}{c.banco ? ` · ${c.banco}` : ''}</option>)}
+            </select>
+          </label>
+          <label className="block">
+            <span className="text-[10.5px] font-mono uppercase tracking-wider text-ink-4">Fecha de cobro</span>
+            <input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} className="mt-1 h-8 px-2 rounded-md border border-line bg-bg-elev text-[12px] w-full" />
+          </label>
+          <div className="flex justify-end gap-2 pt-1">
+            <button onClick={onClose} className="h-8 px-3 rounded-md border border-line text-[12px] hover:bg-bg-sunken">Cancelar</button>
+            <button disabled={!cuentaId || pending} onClick={() => onConfirm(cuentaId, fecha)} className="h-8 px-3 rounded-md bg-emerald-600 text-white text-[12px] font-medium disabled:opacity-50">
+              {pending ? 'Guardando…' : 'Registrar cobro'}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -572,6 +610,7 @@ function FilaValorizacion({
   modo,
   baseRef,
   pctProgAcum,
+  onChangeEstado,
 }: {
   v: Valorizacion;
   cdBruto: number;
@@ -581,11 +620,14 @@ function FilaValorizacion({
   modo: Modo;
   baseRef: number;
   pctProgAcum: number;
+  onChangeEstado: (estado: string) => void;
 }) {
   const Caret = isExpanded ? ChevronDown : ChevronRight;
   const cd = Number(v.montoCd);
   const igv = Number(v.montoIgv);
-  const total = Number(v.montoTotal);
+  const total = Number(v.montoTotalConIgv ?? v.montoTotal); // bruto c/IGV
+  const retencion = Number(v.montoRetencion ?? 0);
+  const neto = Number(v.totalContratista ?? total); // lo que realmente entra a caja (bruto − retención)
   const k = Number(v.factorReajusteK ?? 1);
   const reajuste = Number(v.montoReajuste ?? 0);
   const pctAv = Number(v.pctAvance);
@@ -611,7 +653,14 @@ function FilaValorizacion({
             </td>
             <td className="px-2 py-2 text-right tabular-nums font-medium">{fmtPEN(cd)}</td>
             <td className="px-2 py-2 text-right tabular-nums text-ink-3">{fmtPEN(igv)}</td>
-            <td className="px-2 py-2 text-right tabular-nums font-semibold">{fmtPEN(total)}</td>
+            <td className="px-2 py-2 text-right tabular-nums font-semibold">
+              {fmtPEN(neto)}
+              {retencion > 0 && (
+                <div className="text-[10px] font-normal text-ink-4">
+                  bruto {fmtPEN(total)} · ret −{fmtPEN(retencion)}
+                </div>
+              )}
+            </td>
           </>
         ) : (
           (() => {
@@ -635,8 +684,20 @@ function FilaValorizacion({
             );
           })()
         )}
-        <td className="px-2 py-2">
-          <span className={`chip ${chipKind}`}>{v.status}</span>
+        <td className="px-2 py-2" onClick={(e) => e.stopPropagation()}>
+          <select
+            className={cn('chip border-0 cursor-pointer', chipKind)}
+            value={v.status}
+            onChange={(e) => onChangeEstado(e.target.value)}
+          >
+            <option value="borrador">borrador</option>
+            <option value="emitida">emitida</option>
+            <option value="conformidad_supervision">conformidad superv.</option>
+            <option value="aprobada">aprobada</option>
+            <option value="facturada">facturada</option>
+            <option value="cobrada">cobrada</option>
+            <option value="rechazada">rechazada</option>
+          </select>
         </td>
       </tr>
       {isExpanded && (

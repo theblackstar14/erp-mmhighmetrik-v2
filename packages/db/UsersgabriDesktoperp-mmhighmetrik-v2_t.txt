@@ -1,0 +1,2 @@
+conexiones=1 idleTx=0
+INSERT OK 3ms

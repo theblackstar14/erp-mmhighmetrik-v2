@@ -1,8 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Boxes, Check, HardHat, Loader2, Pencil, Search, Sparkles, Wrench, X } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { type Recurso, api } from '@/lib/api.js';
 import { cn, fmtPEN } from '@/lib/utils.js';
+import { SkelRows } from '@/components/ui/Skeleton.js';
 import { AutoClasificarModal } from './AutoClasificarModal.js';
 
 type FiltroTipo = 'todos' | 'mano_obra' | 'material' | 'equipo';
@@ -73,7 +75,16 @@ export function LogisticaRecursosPage() {
     });
   }, [recursos, search, filtroTipo, filtroIu]);
 
-  if (isLoading) return <div className="text-[12px] text-ink-3">Cargando recursos...</div>;
+  // Virtualización · renderiza solo las filas visibles (antes topaba en 300 y pedía "refina búsqueda")
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const rowVirt = useVirtualizer({
+    count: recursosFiltrados.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 34,
+    overscan: 14,
+  });
+
+  if (isLoading) return <SkelRows rows={6} />;
 
   if (recursos.length === 0) {
     return (
@@ -170,7 +181,7 @@ export function LogisticaRecursosPage() {
           </div>
         </div>
 
-        <div className="overflow-x-auto max-h-[700px] overflow-y-auto">
+        <div ref={scrollRef} className="overflow-x-auto max-h-[700px] overflow-y-auto">
           <table className="w-full">
             <thead className="sticky top-0 bg-bg-sunken z-10">
               <tr className="border-b border-line">
@@ -184,8 +195,16 @@ export function LogisticaRecursosPage() {
               </tr>
             </thead>
             <tbody>
-              {recursosFiltrados.slice(0, 300).map((r) => (
-                <tr key={r.id} className="border-b border-line hover:bg-bg-sunken/30">
+              {(() => {
+                const items = rowVirt.getVirtualItems();
+                const padTop = items.length ? items[0]!.start : 0;
+                const padBottom = items.length ? rowVirt.getTotalSize() - items[items.length - 1]!.end : 0;
+                return (<>
+              {padTop > 0 && <tr aria-hidden><td colSpan={7} style={{ height: padTop }} className="p-0" /></tr>}
+              {items.map((vi) => {
+                const r = recursosFiltrados[vi.index]!;
+                return (
+                <tr key={r.id} ref={rowVirt.measureElement} data-index={vi.index} className="border-b border-line hover:bg-bg-sunken/30">
                   <td className="px-2 py-1.5 text-center">
                     <TipoIcon tipo={r.tipo} />
                   </td>
@@ -324,14 +343,13 @@ export function LogisticaRecursosPage() {
                     {r.categoria ?? '—'}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
+              {padBottom > 0 && <tr aria-hidden><td colSpan={7} style={{ height: padBottom }} className="p-0" /></tr>}
+                </>);
+              })()}
             </tbody>
           </table>
-          {recursosFiltrados.length > 300 && (
-            <div className="px-4 py-3 text-[11px] text-ink-3 border-t border-line">
-              Mostrando primeros 300 de {recursosFiltrados.length} · refina búsqueda
-            </div>
-          )}
         </div>
       </div>
 

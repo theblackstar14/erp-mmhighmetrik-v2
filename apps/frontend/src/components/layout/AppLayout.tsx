@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { CopilotoPanel } from '@/components/copiloto/CopilotoPanel.js';
 import { Sidebar } from './Sidebar.js';
@@ -62,10 +62,12 @@ export function AppLayout() {
         {/* Content */}
         <div className="flex-1 overflow-auto">
           <div
-            key={location.pathname}
+            key={location.pathname.split('/')[1] || 'root'}
             className="mx-auto max-w-[1800px] p-5 sm:p-6 lg:p-8 4xl:max-w-[2200px] 4xl:p-10 animate-pageEnter"
           >
-            <Outlet />
+            <Suspense fallback={<div className="flex h-[60vh] items-center justify-center text-[12px] text-ink-3">Cargando…</div>}>
+              <Outlet />
+            </Suspense>
           </div>
         </div>
       </main>

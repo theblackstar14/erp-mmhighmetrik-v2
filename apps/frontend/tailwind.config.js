@@ -81,7 +81,8 @@ export default {
         },
         pageEnter: {
           '0%': { opacity: '0', transform: 'translateY(8px) scale(0.99)' },
-          '100%': { opacity: '1', transform: 'translateY(0) scale(1)' },
+          // 'none' al final · evita transform residual que crea containing-block para position:fixed (modales)
+          '100%': { opacity: '1', transform: 'none' },
         },
         loginExit: {
           '0%': { opacity: '1', transform: 'scale(1)', filter: 'blur(0)' },
@@ -89,14 +90,38 @@ export default {
         },
         appEnter: {
           '0%': { opacity: '0', transform: 'scale(1.02)', filter: 'blur(4px)' },
-          '100%': { opacity: '1', transform: 'scale(1)', filter: 'blur(0)' },
+          // 'none' al final · transform Y filter residuales también crean containing-block para fixed
+          '100%': { opacity: '1', transform: 'none', filter: 'none' },
+        },
+        // pop suave con leve overshoot · para modales (drill categoría)
+        modalPop: {
+          '0%': { opacity: '0', transform: 'scale(0.92)' },
+          '100%': { opacity: '1', transform: 'scale(1)' },
+        },
+        backdropIn: {
+          '0%': { opacity: '0' },
+          '100%': { opacity: '1' },
+        },
+        // fade rápido de solo opacidad · para contenido que llega de una query (sin slide lento)
+        dataIn: {
+          '0%': { opacity: '0' },
+          '100%': { opacity: '1' },
+        },
+        // barra indeterminada del splash de boot · desliza un segmento de izq a der
+        bootbar: {
+          '0%': { transform: 'translateX(-110%)' },
+          '100%': { transform: 'translateX(410%)' },
         },
       },
       animation: {
         fadeIn: 'fadeIn .6s ease both',
+        dataIn: 'dataIn .16s ease-out both',
         pageEnter: 'pageEnter .35s cubic-bezier(.2,.7,.3,1) both',
         loginExit: 'loginExit .45s cubic-bezier(.65,0,.35,1) forwards',
         appEnter: 'appEnter .55s cubic-bezier(.2,.7,.3,1) both',
+        modalPop: 'modalPop .26s cubic-bezier(.34,1.4,.5,1) both',
+        backdropIn: 'backdropIn .18s ease both',
+        bootbar: 'bootbar 1.1s cubic-bezier(.4,0,.2,1) infinite',
       },
     },
   },

@@ -1,0 +1,4 @@
+ACTIVAS/BLOQUEADAS:
+
+idle-in-transaction: 0
+INSERT directo OK en 5ms · id=619f8e90-ef47-47e2-9815-f24b7e794dfb

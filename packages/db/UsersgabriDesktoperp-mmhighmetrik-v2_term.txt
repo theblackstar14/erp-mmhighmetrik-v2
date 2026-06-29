@@ -1,0 +1,4 @@
+idle-in-transaction encontradas: 0
+locks de esos PID sobre tablas conciliacion:
+idle-in-transaction restantes: 0
+locks sobre extractos_bancarios restantes: 0

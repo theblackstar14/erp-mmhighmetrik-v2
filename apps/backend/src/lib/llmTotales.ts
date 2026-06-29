@@ -235,9 +235,11 @@ export function crossValidate(
   const discrepancias: ValidationDiscrepancia[] = [];
 
   const compareNum = (campo: string, dv: number | null, lv: number | null, tol: number) => {
-    // Si uno es null y el otro no · discrepancia
     if (dv === null && lv === null) return true;
-    if (dv === null || lv === null) {
+    // det tiene valor y la IA no lo extrajo → NO es discrepancia (deterministic es la fuente primaria; la IA solo cross-checkea)
+    if (lv === null) return true;
+    // det null pero la IA SÍ encontró algo → vale la pena revisarlo
+    if (dv === null) {
       discrepancias.push({ campo, deterministic: dv, llm: lv, diff: null, tipo: 'numero' });
       return false;
     }

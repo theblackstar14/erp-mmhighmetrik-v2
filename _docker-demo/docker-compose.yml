@@ -1,0 +1,45 @@
+# ERP MM HIGH METRIK · DEMO autocontenida (app + Postgres con la data ya cargada).
+# En la PC destino:  docker compose up -d   →   abrir  http://localhost:3001
+services:
+  db:
+    image: postgres:18-alpine
+    container_name: erp-demo-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: erp
+      POSTGRES_PASSWORD: erp
+      POSTGRES_DB: erp_mmh
+    volumes:
+      - erp-demo-data:/var/lib/postgresql
+      # Postgres corre los *.sql de initdb.d en el primer arranque (sin shell · cross-platform)
+      - ./db-init/01-restore.sql:/docker-entrypoint-initdb.d/01-restore.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U erp -d erp_mmh"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  app:
+    build:
+      context: ..
+      dockerfile: _docker-demo/Dockerfile
+    image: erp-demo:latest
+    container_name: erp-demo-app
+    restart: unless-stopped
+    env_file: .env            # ← copia aquí tu .env (trae GEMINI/ANTHROPIC/NAS keys)
+    environment:              # estas mandan sobre el .env (DB apunta al contenedor)
+      DATABASE_URL: postgresql://erp:erp@db:5432/erp_mmh
+      CORS_ORIGIN: http://localhost:3001
+      NODE_ENV: production
+      SERVE_STATIC: "1"
+      FRONTEND_DIST: /app/apps/frontend/dist
+      PORT: "3001"
+    ports:
+      - "3001:3001"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  erp-demo-data:
+    name: erp-demo-data

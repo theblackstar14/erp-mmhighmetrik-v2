@@ -1,0 +1,89 @@
+{
+  "fase": "F3-seed",
+  "fecha_seed": "2026-04",
+  "movimientos": 31,
+  "codigoPrefix": "SIM-",
+  "extractoId": "e577a72a-3b63-4c4a-9cbd-712601b5c0d3",
+  "extractoLineas": 194,
+  "ocsPagadas": [
+    "5900c1a2-f4e9-4111-87b1-c40db9991e76",
+    "c5147455-121a-4eac-9930-70e097fa1d6a",
+    "a35b2c3a-7ed2-41be-969b-94a424c8f387",
+    "63ee3308-d861-4b3e-8693-87a3c163f41c",
+    "27fb3930-1f4f-4766-bb04-a069acf96631"
+  ],
+  "valoCobrada": "952df8b9-d372-473f-95f5-8d62cc7c4375",
+  "edgeCases": [
+    {
+      "codigo": "SIM-04017",
+      "edge": "centavos",
+      "desc": "Pago (dif centavos)"
+    },
+    {
+      "codigo": "SIM-04018",
+      "edge": "doble_pago",
+      "desc": "Pago A (doble 1)"
+    },
+    {
+      "codigo": "SIM-04019",
+      "edge": "doble_pago",
+      "desc": "Pago A (doble 2)"
+    },
+    {
+      "codigo": "SIM-04020",
+      "edge": "fecha_distinta",
+      "desc": "Pago (fecha distinta vs banco 21-04)"
+    },
+    {
+      "codigo": "SIM-04021",
+      "edge": "sin_ref",
+      "desc": "Pago sin referencia"
+    },
+    {
+      "codigo": "SIM-04024",
+      "edge": "erp_sin_banco",
+      "desc": "Cobro Valorización 1 (PG0003)"
+    },
+    {
+      "codigo": "SIM-04025",
+      "edge": "aporte",
+      "desc": "Aporte de socio"
+    },
+    {
+      "codigo": "SIM-04026",
+      "edge": "usd",
+      "desc": "[SINTETICO] Pago proveedor USD"
+    },
+    {
+      "codigo": "SIM-04027",
+      "edge": "usd",
+      "desc": "[SINTETICO] Cobro USD"
+    },
+    {
+      "codigo": "SIM-04028",
+      "edge": "usd_transfer",
+      "desc": "[SINTETICO] Transfer PEN→USD salida"
+    },
+    {
+      "codigo": "SIM-04029",
+      "edge": "usd_transfer",
+      "desc": "[SINTETICO] Transfer PEN→USD entrada"
+    },
+    {
+      "codigo": "SIM-04030",
+      "edge": "gap_cuenta",
+      "desc": "Pago sin cuenta asignada"
+    },
+    {
+      "codigo": "SIM-04031",
+      "edge": "retroactivo",
+      "desc": "Gasto retroactivo (marzo)"
+    }
+  ],
+  "rollback": [
+    "DELETE FROM movimientos WHERE codigo LIKE 'SIM-%';",
+    "DELETE FROM extractos_bancarios WHERE id='e577a72a-3b63-4c4a-9cbd-712601b5c0d3';",
+    "UPDATE ordenes_compra SET estado_pago='pendiente', pagado_en=NULL WHERE id IN ('5900c1a2-f4e9-4111-87b1-c40db9991e76','c5147455-121a-4eac-9930-70e097fa1d6a','a35b2c3a-7ed2-41be-969b-94a424c8f387','63ee3308-d861-4b3e-8693-87a3c163f41c','27fb3930-1f4f-4766-bb04-a069acf96631');",
+    "UPDATE valorizaciones SET status='facturada' WHERE id='952df8b9-d372-473f-95f5-8d62cc7c4375';"
+  ]
+}
