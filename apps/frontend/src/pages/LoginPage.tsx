@@ -1,7 +1,7 @@
 import { ArrowRight, Loader2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { api } from '@/lib/api.js';
+import { api, setActiveEmpresa } from '@/lib/api.js';
 import { useAuthStore } from '@/lib/auth-store.js';
 
 const ACCENT = '#1C1C1C'; // dashboard ink (negro medio)
@@ -30,7 +30,7 @@ function useAnimationTime() {
 
 export function LoginPage() {
   const navigate = useNavigate();
-  const setUser = useAuthStore((s) => s.setUser);
+  const setSession = useAuthStore((s) => s.setSession);
   const [email, setEmail] = useState('admin@mmhighmetrik.com');
   const [password, setPassword] = useState('admin');
   const [showPass, setShowPass] = useState(false);
@@ -44,12 +44,14 @@ export function LoginPage() {
     setLoading(true);
     setError('');
     try {
-      const r = await api.login(email, password);
+      await api.login(email, password);
+      setActiveEmpresa(null); // fuerza el selector de empresa en cada login (multi-empresa)
+      const me = await api.me(); // empresas + permisos + mustChangePassword
       // Trigger exit animation antes de navegar
       setExiting(true);
       setTimeout(() => {
-        setUser(r.user);
-        navigate('/dashboard');
+        setSession(me);
+        navigate('/');
       }, 450);
     } catch (err) {
       setError((err as Error).message ?? 'Credenciales inválidas');

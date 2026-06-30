@@ -1,5 +1,17 @@
 const API_BASE = import.meta.env.VITE_API_URL ?? '';
 
+// Empresa activa (multi-empresa) · se manda como header x-empresa-id en cada request.
+// Persistida en localStorage; el backend valida que el usuario sea miembro.
+const EMPRESA_KEY = 'erp.empresaActiva';
+export function getActiveEmpresa(): number | null {
+  const v = localStorage.getItem(EMPRESA_KEY);
+  return v ? Number(v) : null;
+}
+export function setActiveEmpresa(id: number | null) {
+  if (id == null) localStorage.removeItem(EMPRESA_KEY);
+  else localStorage.setItem(EMPRESA_KEY, String(id));
+}
+
 export class ApiError extends Error {
   constructor(public status: number, message: string, public body?: unknown) {
     super(message);
@@ -7,10 +19,15 @@ export class ApiError extends Error {
 }
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
+  const empresaId = getActiveEmpresa();
   const res = await fetch(`${API_BASE}${path}`, {
     credentials: 'include',
     cache: 'no-store',
-    headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(empresaId ? { 'x-empresa-id': String(empresaId) } : {}),
+      ...(init?.headers ?? {}),
+    },
     ...init,
   });
   if (!res.ok) {
@@ -32,7 +49,36 @@ export const api = {
       body: JSON.stringify({ email, password }),
     }),
   logout: () => req('/api/auth/logout', { method: 'POST' }),
-  me: () => req<{ user: User | null }>('/api/auth/me'),
+  me: () => req<MeResponse>('/api/auth/me'),
+  cambiarPassword: (actual: string, nueva: string) =>
+    req<{ ok: true }>('/api/auth/cambiar-password', { method: 'POST', body: JSON.stringify({ actual, nueva }) }),
+
+  // Admin · usuarios / roles / empresas (gated por permiso 'usuarios' en backend)
+  admin: {
+    usuarios: {
+      list: (todos?: boolean) => req<{ usuarios: AdminUser[] }>(`/api/usuarios${todos ? '?todos=1' : ''}`),
+      create: (data: AdminUserInput) =>
+        req<{ ok: true; userId: string; tempPassword?: string }>('/api/usuarios', { method: 'POST', body: JSON.stringify(data) }),
+      update: (id: string, data: Partial<AdminUserInput> & { activo?: boolean }) =>
+        req<{ ok: true }>(`/api/usuarios/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+      resetPassword: (id: string) =>
+        req<{ ok: true; tempPassword: string }>(`/api/usuarios/${id}/reset-password`, { method: 'POST' }),
+    },
+    roles: {
+      list: () => req<{ roles: AdminRole[] }>('/api/admin/roles'),
+      create: (data: { nombre: string; descripcion?: string; permisos: Record<string, Nivel> }) =>
+        req<{ ok: true; id: string }>('/api/admin/roles', { method: 'POST', body: JSON.stringify(data) }),
+      update: (id: string, data: { nombre?: string; descripcion?: string; permisos?: Record<string, Nivel> }) =>
+        req<{ ok: true }>(`/api/admin/roles/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+      delete: (id: string) => req<{ ok: true }>(`/api/admin/roles/${id}`, { method: 'DELETE' }),
+    },
+    modulos: () => req<{ modulos: string[]; niveles: Nivel[] }>('/api/admin/modulos'),
+    empresas: {
+      list: () => req<{ empresas: EmpresaRow[] }>('/api/admin/empresas'),
+      create: (data: Partial<EmpresaRow>) => req<{ ok: true; empresa: EmpresaRow }>('/api/admin/empresas', { method: 'POST', body: JSON.stringify(data) }),
+      update: (id: number, data: Partial<EmpresaRow>) => req<{ ok: true; empresa: EmpresaRow }>(`/api/admin/empresas/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+    },
+  },
 
   // Proyectos
   proyectos: {
@@ -841,7 +887,67 @@ export type User = {
   email: string;
   nombres: string;
   apellidos: string;
-  role: 'admin' | 'gerente' | 'residente' | 'contadora' | 'almacen';
+  telefono?: string | null;
+  mustChangePassword?: boolean;
+  role?: string; // legacy · ya no se usa (el rol vive por empresa)
+};
+
+export type Nivel = 'ninguno' | 'lectura' | 'edicion';
+
+export type EmpresaMembresia = {
+  id: number;
+  nombre: string | null; // nombreCorto · MM / MG
+  razonSocial: string;
+  rol: string;
+  tieneProyectos: boolean;
+};
+
+export type MeResponse = {
+  user: User | null;
+  empresas: EmpresaMembresia[];
+  empresaActiva: { id: number; nombre: string | null; rol: string } | null;
+  permisos: Record<string, Nivel>;
+};
+
+export type AdminUser = {
+  id: string;
+  email: string;
+  nombres: string;
+  apellidos: string;
+  telefono: string | null;
+  activo: boolean;
+  lastLogin: string | null;
+  nombre: string;
+  empresas: { empresaId: number; empresaNombre: string | null; roleId: string; rol: string }[];
+};
+
+export type AdminUserInput = {
+  email: string;
+  nombres: string;
+  apellidos: string;
+  telefono?: string;
+  password?: string;
+  empresas: { empresaId: number; roleId: string }[];
+};
+
+export type AdminRole = {
+  id: string;
+  nombre: string;
+  descripcion: string | null;
+  esSistema: boolean;
+  permisos: Record<string, Nivel>;
+};
+
+export type EmpresaRow = {
+  id: number;
+  ruc: string;
+  razonSocial: string;
+  nombreCorto: string | null;
+  direccion?: string | null;
+  email?: string | null;
+  telefono?: string | null;
+  tieneProyectos: boolean;
+  activo: boolean;
 };
 
 export type GgUtModo = 'separado' | 'embebido_cd' | 'simple_pct';

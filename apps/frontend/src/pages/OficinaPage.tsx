@@ -61,7 +61,7 @@ export function OficinaPage() {
 // ─── Rendiciones ─────────────────────────────────────────────
 function RendicionesTab() {
   const user = useAuthStore((s) => s.user);
-  const puedeAprobar = !!user && ['admin', 'contadora'].includes(user.role);
+  const puedeAprobar = useAuthStore((s) => s.can)('oficina', 'edicion');
   const [scope, setScope] = useState<'mias' | 'aprobar' | 'todas'>('todas');
   const [nueva, setNueva] = useState(false);
   const [detId, setDetId] = useState<string | null>(null);

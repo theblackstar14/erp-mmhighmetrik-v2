@@ -3,10 +3,13 @@ import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
 import { z } from 'zod';
 
-// Cargar .env desde raíz monorepo · override fuerza re-leer (evita
-// que vars vacías en shell bloqueen valores del archivo .env)
+// Cargar .env desde raíz monorepo. override re-lee el archivo (evita que vars vacías
+// en shell bloqueen valores del .env) EXCEPTO si ya viene un DATABASE_URL real en el
+// entorno (backend de diagnóstico apuntando a otra DB, o DATABASE_URL del contenedor
+// Docker) → en ese caso el entorno gana. Retro-compatible: sin DATABASE_URL en shell
+// el comportamiento es idéntico al anterior.
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-dotenv.config({ path: path.resolve(__dirname, '../../../.env'), override: true });
+dotenv.config({ path: path.resolve(__dirname, '../../../.env'), override: !process.env.DATABASE_URL });
 
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),

@@ -5,6 +5,7 @@ import express from 'express';
 import pinoHttp from 'pino-http';
 import { env } from './env.js';
 import { authMiddleware } from './middleware/auth.js';
+import adminRoutes from './routes/admin.js';
 import authRoutes from './routes/auth.js';
 import activosRoutes from './routes/activos.js';
 import avancesRoutes from './routes/avances.js';
@@ -61,6 +62,7 @@ app.get('/api/health', (_req, res) => {
 
 // Routes
 app.use('/api/auth', authRoutes);
+app.use('/api/admin', adminRoutes); // roles + matriz permisos + módulos + empresas (admin)
 app.use('/api/proyectos', proyectosRoutes);
 app.use('/api/inversiones', inversionesRoutes);
 app.use('/api/logistica', logisticaRoutes);

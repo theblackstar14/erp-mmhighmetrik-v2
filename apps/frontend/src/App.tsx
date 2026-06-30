@@ -1,7 +1,9 @@
 import { lazy, useEffect } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { AppLayout } from './components/layout/AppLayout.js';
-import { api } from './lib/api.js';
+import { ChangePasswordModal } from './components/layout/ChangePasswordModal.js';
+import { EmpresaPicker } from './components/layout/EmpresaPicker.js';
+import { api, getActiveEmpresa } from './lib/api.js';
 import { useAuthStore } from './lib/auth-store.js';
 import { EmptyModulePage } from './pages/EmptyModulePage.js';
 import { LoginPage } from './pages/LoginPage.js';
@@ -48,18 +50,31 @@ function BootSplash() {
 }
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { user, loading } = useAuthStore();
+  const { user, loading, empresas, switchEmpresa } = useAuthStore();
   if (loading) return <BootSplash />;
   if (!user) return <Navigate to="/login" replace />;
+  // 1) clave temporal → forzar cambio antes de todo
+  if (user.mustChangePassword) {
+    return (
+      <div className="h-screen w-screen bg-[#F7F7F5]">
+        <ChangePasswordModal forced />
+      </div>
+    );
+  }
+  // 2) 2+ empresas y ninguna elegida → selector (1 empresa entra directo)
+  if (empresas.length > 1 && getActiveEmpresa() == null) {
+    return <EmpresaPicker empresas={empresas} onPick={(id) => void switchEmpresa(id)} />;
+  }
   return <>{children}</>;
 }
 
 export default function App() {
-  const setUser = useAuthStore((s) => s.setUser);
+  const setSession = useAuthStore((s) => s.setSession);
+  const clear = useAuthStore((s) => s.clear);
 
   useEffect(() => {
-    api.me().then((r) => setUser(r.user)).catch(() => setUser(null));
-  }, [setUser]);
+    api.me().then(setSession).catch(() => clear());
+  }, [setSession, clear]);
 
   return (
     <Routes>

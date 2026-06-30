@@ -49,6 +49,13 @@ export const ocConceptoEnum = pgEnum('oc_concepto', ['BIEN', 'SERVICIO']);
 export const ocEstadoPagoEnum = pgEnum('oc_estado_pago', ['pendiente', 'pagada']);
 export const ocMonedaEnum = pgEnum('oc_moneda', ['PEN', 'USD']);
 
+// RBAC dinámico · módulos del ERP (matriz de permisos rol→módulo).
+// Enum (no tabla): un módulo nuevo es código nuevo (ruta+página), no lo crea el admin.
+export const moduloEnum = pgEnum('modulo', [
+  'dashboard', 'finanzas', 'contabilidad', 'logistica', 'inventario', 'personal', 'proyectos', 'oficina', 'usuarios',
+]);
+export const nivelAccesoEnum = pgEnum('nivel_acceso', ['ninguno', 'lectura', 'edicion']);
+
 // ─── Auth · Users + Sessions ─────────────────────────────────
 export const users = pgTable('users', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -56,7 +63,10 @@ export const users = pgTable('users', {
   passwordHash: text('password_hash').notNull(),
   nombres: varchar('nombres', { length: 100 }).notNull(),
   apellidos: varchar('apellidos', { length: 100 }).notNull(),
-  role: userRoleEnum('role').notNull().default('admin'),
+  role: userRoleEnum('role').notNull().default('admin'), // legacy · reemplazado por usuario_empresa.role_id · drop tras cutover
+  telefono: varchar('telefono', { length: 30 }),
+  mustChangePassword: boolean('must_change_password').notNull().default(false),
+  lastLogin: timestamp('last_login'),
   activo: boolean('activo').notNull().default(true),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
@@ -68,19 +78,60 @@ export const sessions = pgTable('sessions', {
   expiresAt: timestamp('expires_at', { withTimezone: true, mode: 'date' }).notNull(),
 });
 
-// ─── Empresa (singleton) ─────────────────────────────────────
-export const empresa = pgTable('empresa', {
-  id: integer('id').primaryKey().default(1),
+// ─── Empresas (multi · grupo empresarial, 1 dueño, varias RUC) ─
+// Antes singleton (id=1). Ahora N filas. id manual (max+1 en el create route) ·
+// tabla chica, sin sequence. ponytail: pocas empresas, id a mano · serial si crecen.
+export const empresas = pgTable('empresa', {
+  id: integer('id').primaryKey(),
   ruc: varchar('ruc', { length: 11 }).notNull(),
   razonSocial: varchar('razon_social', { length: 255 }).notNull(),
+  nombreCorto: varchar('nombre_corto', { length: 50 }), // MM · MG · para el selector
   direccion: text('direccion'),
   email: varchar('email', { length: 255 }),
   telefono: varchar('telefono', { length: 30 }),
   web: varchar('web', { length: 255 }),
   logoUrl: text('logo_url'),
+  tieneProyectos: boolean('tiene_proyectos').notNull().default(false), // solo MM por ahora
+  activo: boolean('activo').notNull().default(true),
   config: jsonb('config').$type<Record<string, unknown>>().default({}),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });
+
+// ─── RBAC dinámico · roles (datos, no enum) + matriz + membresía ─
+// roles: el admin los crea/edita en UI. Los 4 base llevan esSistema=true (no se borran).
+export const roles = pgTable('roles', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  nombre: varchar('nombre', { length: 50 }).notNull().unique(),
+  descripcion: varchar('descripcion', { length: 255 }),
+  esSistema: boolean('es_sistema').notNull().default(false),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+});
+
+// Matriz rol → módulo → nivel. Fila ausente = sin acceso (igual que 'ninguno').
+export const roleModulo = pgTable(
+  'role_modulo',
+  {
+    roleId: uuid('role_id').notNull().references(() => roles.id, { onDelete: 'cascade' }),
+    modulo: moduloEnum('modulo').notNull(),
+    nivel: nivelAccesoEnum('nivel').notNull().default('ninguno'),
+  },
+  (t) => ({ pk: primaryKey({ columns: [t.roleId, t.modulo] }) }),
+);
+
+// Membresía: qué usuario, en qué empresa, con qué rol. Un usuario en varias empresas = varias filas.
+export const usuarioEmpresa = pgTable(
+  'usuario_empresa',
+  {
+    userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    empresaId: integer('empresa_id').notNull().references(() => empresas.id, { onDelete: 'cascade' }),
+    roleId: uuid('role_id').notNull().references(() => roles.id),
+  },
+  (t) => ({ pk: primaryKey({ columns: [t.userId, t.empresaId] }) }),
+);
+
+export type Empresa = typeof empresas.$inferSelect;
+export type Role = typeof roles.$inferSelect;
+export type UsuarioEmpresa = typeof usuarioEmpresa.$inferSelect;
 
 // ─── Clientes (entidades públicas / privadas) ────────────────
 export const clientes = pgTable('clientes', {

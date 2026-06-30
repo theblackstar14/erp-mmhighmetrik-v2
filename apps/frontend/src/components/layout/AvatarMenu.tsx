@@ -1,16 +1,18 @@
-import { Building, ChevronUp, LogOut, Settings, Users } from 'lucide-react';
+import { Building, ChevronUp, KeyRound, LogOut, Repeat, Settings, Users } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { api } from '@/lib/api.js';
+import { api, setActiveEmpresa } from '@/lib/api.js';
 import { useAuthStore } from '@/lib/auth-store.js';
 import { cn } from '@/lib/utils.js';
+import { ChangePasswordModal } from './ChangePasswordModal.js';
 
 type Props = { collapsed: boolean };
 
 export function AvatarMenu({ collapsed }: Props) {
   const navigate = useNavigate();
-  const { user, setUser } = useAuthStore();
+  const { user, empresaActiva, empresas, can, clear, reload } = useAuthStore();
   const [open, setOpen] = useState(false);
+  const [pwOpen, setPwOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -23,14 +25,27 @@ export function AvatarMenu({ collapsed }: Props) {
 
   const handleLogout = async () => {
     await api.logout();
-    setUser(null);
+    clear();
     navigate('/login');
   };
 
+  // Volver al selector de empresa (limpia la activa → ProtectedRoute muestra el picker)
+  const cambiarEmpresa = async () => {
+    setActiveEmpresa(null);
+    await reload();
+  };
+
+  const esAdmin = can('usuarios', 'edicion');
   const items = [
-    { icon: Building, label: 'Empresa', onClick: () => navigate('/config/empresa') },
-    { icon: Users, label: 'Usuarios y roles', onClick: () => navigate('/config/usuarios') },
+    ...(esAdmin
+      ? [
+          { icon: Building, label: 'Empresa', onClick: () => navigate('/config/empresa') },
+          { icon: Users, label: 'Usuarios y roles', onClick: () => navigate('/config/usuarios') },
+        ]
+      : []),
     { icon: Settings, label: 'Configuración', onClick: () => navigate('/config') },
+    ...(empresas.length > 1 ? [{ icon: Repeat, label: 'Cambiar empresa', onClick: cambiarEmpresa }] : []),
+    { icon: KeyRound, label: 'Cambiar contraseña', onClick: () => setPwOpen(true) },
     { icon: LogOut, label: 'Cerrar sesión', onClick: handleLogout, danger: true },
   ];
 
@@ -58,12 +73,10 @@ export function AvatarMenu({ collapsed }: Props) {
                 {user?.nombres} {user?.apellidos}
               </div>
               <div className="truncate font-mono text-[10px] uppercase tracking-[0.05em] text-ink-3">
-                {user?.role}
+                {empresaActiva ? `${empresaActiva.nombre ?? 'Empresa'} · ${empresaActiva.rol}` : user?.email}
               </div>
             </div>
-            <ChevronUp
-              className={cn('h-3.5 w-3.5 shrink-0 text-ink-3 transition-transform', open && 'rotate-180')}
-            />
+            <ChevronUp className={cn('h-3.5 w-3.5 shrink-0 text-ink-3 transition-transform', open && 'rotate-180')} />
           </>
         )}
       </button>
@@ -77,7 +90,11 @@ export function AvatarMenu({ collapsed }: Props) {
         >
           <div className="border-b border-line px-3 py-2">
             <div className="text-[12px] font-medium truncate">{user?.email}</div>
-            <div className="font-mono text-[10px] uppercase text-ink-3 mt-0.5">{user?.role}</div>
+            {empresaActiva && (
+              <div className="font-mono text-[10px] uppercase text-ink-3 mt-0.5">
+                {empresaActiva.nombre} · {empresaActiva.rol}
+              </div>
+            )}
           </div>
           {items.map((item) => (
             <button
@@ -98,6 +115,8 @@ export function AvatarMenu({ collapsed }: Props) {
           ))}
         </div>
       )}
+
+      {pwOpen && <ChangePasswordModal onClose={() => setPwOpen(false)} />}
     </div>
   );
 }

@@ -941,8 +941,7 @@ function RollbackPanel() {
 // ─── F4.1 · Panel de transición de ownership 104x (estado parallel/cutover + control admin) ──
 function TransicionPanel() {
   const qc = useQueryClient();
-  const user = useAuthStore((s) => s.user);
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = useAuthStore((s) => s.can)('contabilidad', 'edicion');
   const { data } = useQuery({ queryKey: ['ctb-config'], queryFn: () => api.contabilidad.getConfig() });
   const mut = useMutation({
     mutationFn: (body: { cutover?: string | null; parallel?: boolean; comentario?: string }) => api.contabilidad.updateConfig(body),
