@@ -66,7 +66,7 @@ export function InventarioPage() {
           <p className="text-[13px] text-ink-3 mt-0.5">Trazabilidad por obra · escaneo QR · cálculo depreciación SUNAT</p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={() => setScanOpen(true)} className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-line bg-bg-elev text-[12px] text-ink-2 hover:bg-bg-sunken" title="Escanear QR/barcode con cámara, pistola o RFID">
+          <button onClick={() => setScanOpen(true)} className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-line bg-bg-elev text-[12px] text-ink-2 hover:bg-bg-sunken" title="Escanear QR/barcode con cámara o pistola lectora">
             <ScanLine className="h-3.5 w-3.5" /> Escanear
           </button>
           <button onClick={() => setEtiquetasOpen(true)} disabled={!(stats?.total)} className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-line bg-bg-elev text-[12px] text-ink-2 hover:bg-bg-sunken disabled:opacity-50" title="Hoja de etiquetas QR para imprimir">
@@ -128,7 +128,7 @@ export function InventarioPage() {
 }
 
 // ─── Escáner · cámara (BarcodeDetector) + pistola HID + manual ──
-// resolveScan en el server cubre QR(url) · barcode(código) · RFID(tag).
+// resolveScan en el server cubre QR(url) · barcode(código).
 function ScanModal({ onClose, onResolved }: { onClose: () => void; onResolved: (codigo: string) => void }) {
   const [manual, setManual] = useState('');
   const [err, setErr] = useState<string | null>(null);
@@ -206,7 +206,7 @@ function ScanModal({ onClose, onResolved }: { onClose: () => void; onResolved: (
 
         {err && <div className="mt-2 text-[11.5px] text-destructive">{err}</div>}
         <div className="mt-3 flex items-center justify-between">
-          <span className="text-[10.5px] text-ink-4">{busy ? <span className="inline-flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> buscando…</span> : 'QR · barcode · RFID'}</span>
+          <span className="text-[10.5px] text-ink-4">{busy ? <span className="inline-flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> buscando…</span> : 'QR · barcode'}</span>
           <button onClick={() => { resolver(manual); setManual(''); }} disabled={!manual || busy} className="h-8 px-3 rounded-md bg-primary text-primary-foreground text-[12px] font-medium disabled:opacity-50">Buscar</button>
         </div>
       </div>
@@ -654,9 +654,6 @@ function ActivoPanel({ a, onClose, onChanged }: { a: ActivoFull; onClose: () => 
         </div>
       </div>
 
-      {/* Tag RFID/UHF · vincula el tag físico al activo */}
-      <RfidRow a={a} onChanged={onChanged} />
-
       <button onClick={() => setTrasladoOpen(true)} className="mt-3 w-full inline-flex items-center justify-center gap-1.5 h-8 rounded-md bg-primary text-primary-foreground text-[12px] font-medium hover:opacity-90">
         <ArrowRightLeft className="h-3.5 w-3.5" /> Trasladar
       </button>
@@ -689,33 +686,6 @@ function ActivoPanel({ a, onClose, onChanged }: { a: ActivoFull; onClose: () => 
   );
 }
 
-// Vincular tag RFID/UHF al activo · escribe con el lector (HID) o a mano
-function RfidRow({ a, onChanged }: { a: ActivoFull; onChanged: () => void }) {
-  const [editing, setEditing] = useState(false);
-  const [val, setVal] = useState(a.rfidTag ?? '');
-  const save = useMutation({
-    mutationFn: () => api.activos.update(a.id, { rfidTag: val.trim() || null }),
-    onSuccess: () => { setEditing(false); onChanged(); },
-  });
-  return (
-    <div className="mt-2 flex items-center gap-2 rounded-md border border-line bg-bg-sunken/50 px-2.5 py-2 text-[11px]">
-      <Radio className="h-3.5 w-3.5 text-ink-4 shrink-0" />
-      {editing ? (
-        <>
-          <input autoFocus value={val} onChange={(e) => setVal(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && save.mutate()}
-            placeholder="Apunta el lector UHF + Enter" className="flex-1 h-7 px-2 rounded border border-line bg-bg-elev font-mono text-[11px]" />
-          <button onClick={() => save.mutate()} disabled={save.isPending} className="h-7 px-2 rounded bg-primary text-primary-foreground text-[11px] disabled:opacity-50">OK</button>
-        </>
-      ) : (
-        <>
-          <span className="flex-1 text-ink-3">Tag RFID: {a.rfidTag ? <span className="font-mono text-foreground">{a.rfidTag}</span> : <span className="text-ink-4">sin vincular</span>}</span>
-          <button onClick={() => { setVal(a.rfidTag ?? ''); setEditing(true); }} className="text-primary hover:underline">{a.rfidTag ? 'Cambiar' : 'Vincular'}</button>
-        </>
-      )}
-    </div>
-  );
-}
-
 // ─── Modales ─────────────────────────────────────────────────
 const inputCls = 'mt-1 h-8 px-2 rounded-md border border-line bg-bg-elev text-[12px] w-full';
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
@@ -727,7 +697,7 @@ function NuevoActivoModal({ onClose, onDone }: { onClose: () => void; onDone: ()
   const [f, setF] = useState<ActivoInput>({
     nombre: '', categoria: 'Herramienta eléctrica', marca: '', serie: '',
     fechaAdquisicion: new Date().toISOString().slice(0, 10), valorAdquisicion: 0,
-    pctDepreciacionAnual: 10, proyectoId: null, ubicacion: '', responsable: '', rfidTag: '',
+    pctDepreciacionAnual: 10, proyectoId: null, ubicacion: '', responsable: '',
   });
   const [err, setErr] = useState<string | null>(null);
   const set = (p: Partial<ActivoInput>) => setF({ ...f, ...p });
@@ -748,10 +718,7 @@ function NuevoActivoModal({ onClose, onDone }: { onClose: () => void; onDone: ()
             <Field label="Valor adq. S/ *"><input type="number" className={cn(inputCls, 'font-mono')} value={f.valorAdquisicion || ''} onChange={(e) => set({ valorAdquisicion: Number(e.target.value) })} /></Field>
             <Field label="% depr/año"><input type="number" className={cn(inputCls, 'font-mono')} value={f.pctDepreciacionAnual} onChange={(e) => set({ pctDepreciacionAnual: Number(e.target.value) })} /></Field>
           </div>
-          <div className="grid grid-cols-2 gap-2.5">
-            <Field label="N° de serie"><input className={inputCls} value={f.serie ?? ''} onChange={(e) => set({ serie: e.target.value })} /></Field>
-            <Field label="Tag RFID/UHF"><input className={cn(inputCls, 'font-mono')} placeholder="Apunta el lector o escribe" value={f.rfidTag ?? ''} onChange={(e) => set({ rfidTag: e.target.value })} /></Field>
-          </div>
+          <Field label="N° de serie"><input className={inputCls} value={f.serie ?? ''} onChange={(e) => set({ serie: e.target.value })} /></Field>
           <div className="grid grid-cols-2 gap-2.5">
             <Field label="Ubicación inicial">
               <select className={inputCls} value={f.proyectoId ?? ''} onChange={(e) => set({ proyectoId: e.target.value || null })}>

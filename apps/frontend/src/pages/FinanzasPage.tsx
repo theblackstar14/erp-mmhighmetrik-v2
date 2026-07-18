@@ -27,7 +27,7 @@ import { EmittingOverlay } from '@/components/ui/EmittingOverlay.js';
 
 const FlujoCajaView = lazy(() => import('./FlujoCajaView.js'));
 
-type Sub = 'resumen' | 'flujo' | 'movimientos' | 'ordenes' | 'gastos' | 'conciliacion' | 'sunat' | 'reportes';
+type Sub = 'resumen' | 'flujo' | 'movimientos' | 'ordenes' | 'gastos' | 'conciliacion' | 'reportes';
 
 const mesLabel = (m: string | null) => {
   if (!m) return '—';
@@ -91,7 +91,6 @@ export function FinanzasPage() {
             ['ordenes', 'Órdenes (aprobar/pagar)'],
             ['gastos', 'Gastos'],
             ['conciliacion', 'Conciliación'],
-            ['sunat', 'SUNAT'],
             ['reportes', 'Reportes'],
           ] as const).map(([k, l]) => (
             <button
@@ -103,7 +102,6 @@ export function FinanzasPage() {
               )}
             >
               {l}
-              {k === 'sunat' && <span className="ml-1 text-[9px] text-ink-4">próx</span>}
             </button>
           ))}
         </nav>
@@ -120,7 +118,6 @@ export function FinanzasPage() {
         {sub === 'movimientos' && <GlobalLedger proyectoId={filtro} proyectos={proyectos} kind="movimientos" />}
         {sub === 'gastos' && <GlobalLedger proyectoId={filtro} proyectos={proyectos} kind="gastos" />}
         {sub === 'conciliacion' && <ConciliacionView />}
-        {sub === 'sunat' && <Proximamente title="Conciliación SUNAT" desc="Cruce de comprobantes con RUC · validación de detracciones · PLE" />}
         {sub === 'reportes' && <ReportesView />}
       </TabFade>
 
@@ -1184,17 +1181,6 @@ function ConciliacionView() {
           )}
         </div>
       )}
-    </div>
-  );
-}
-
-function Proximamente({ title, desc }: { title: string; desc: string }) {
-  return (
-    <div className="rounded-lg border border-dashed border-line-strong bg-bg-elev p-10 text-center">
-      <AlertTriangle className="h-6 w-6 text-ink-4 mx-auto mb-2" />
-      <div className="text-[14px] font-semibold">{title}</div>
-      <div className="text-[12px] text-ink-3 mt-1">{desc}</div>
-      <div className="text-[10.5px] text-ink-4 mt-2 font-mono uppercase tracking-wider">Próximamente</div>
     </div>
   );
 }

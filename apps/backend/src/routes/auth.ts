@@ -118,4 +118,17 @@ router.post('/cambiar-password', requireAuth, async (req, res) => {
   return res.json({ ok: true });
 });
 
+// Auto-edición de perfil (cualquier usuario · nombre/teléfono propios).
+router.patch('/perfil', requireAuth, async (req, res) => {
+  const parse = z
+    .object({ nombres: z.string().min(1).optional(), apellidos: z.string().min(1).optional(), telefono: z.string().nullable().optional() })
+    .safeParse(req.body);
+  if (!parse.success) return res.status(400).json({ error: 'Datos inválidos' });
+  if (Object.keys(parse.data).length) {
+    await db.update(schema.users).set({ ...parse.data, updatedAt: new Date() }).where(eq(schema.users.id, req.user!.id));
+    await audit(req, { action: 'perfil_update', entityType: 'user', entityId: req.user!.id, after: parse.data });
+  }
+  return res.json({ ok: true });
+});
+
 export default router;

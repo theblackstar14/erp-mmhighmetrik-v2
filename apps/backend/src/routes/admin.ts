@@ -1,6 +1,6 @@
 /** Admin · roles + matriz de permisos + módulos + empresas. Todo gated por requireAdmin. */
 import { db, schema } from '@erp/db';
-import { asc, eq, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, lte, sql } from 'drizzle-orm';
 import { Router } from 'express';
 import { z } from 'zod';
 import { audit } from '../lib/audit.js';
@@ -132,6 +132,46 @@ router.patch('/empresas/:id', async (req, res) => {
   if (!e) return res.status(404).json({ error: 'Empresa no encontrada' });
   await audit(req, { action: 'empresa_update', entityType: 'empresa', entityId: String(id), after: parse.data });
   return res.json({ ok: true, empresa: e });
+});
+
+// ── Registro / auditoría ───────────────────────────────
+// Lee audit_log (TODO el sistema: auth, admin, contable, caja) con filtros. Read-only.
+router.get('/audit', async (req, res) => {
+  const { action, entityType, from, to, limit } = req.query as Record<string, string | undefined>;
+  const conds = [];
+  if (action) conds.push(eq(schema.auditLog.action, action));
+  if (entityType) conds.push(eq(schema.auditLog.entityType, entityType));
+  if (from && /^\d{4}-\d{2}-\d{2}$/.test(from)) conds.push(gte(schema.auditLog.createdAt, new Date(`${from}T00:00:00`)));
+  if (to && /^\d{4}-\d{2}-\d{2}$/.test(to)) conds.push(lte(schema.auditLog.createdAt, new Date(`${to}T23:59:59`)));
+  const lim = Math.min(Math.max(Number(limit) || 200, 1), 500);
+
+  const eventos = await db
+    .select({
+      id: schema.auditLog.id,
+      action: schema.auditLog.action,
+      entityType: schema.auditLog.entityType,
+      entityId: schema.auditLog.entityId,
+      changes: schema.auditLog.changes,
+      ip: schema.auditLog.ip,
+      createdAt: schema.auditLog.createdAt,
+      userId: schema.auditLog.userId,
+      userEmail: schema.users.email,
+      userNombres: schema.users.nombres,
+    })
+    .from(schema.auditLog)
+    .leftJoin(schema.users, eq(schema.auditLog.userId, schema.users.id))
+    .where(conds.length ? and(...conds) : undefined)
+    .orderBy(desc(schema.auditLog.createdAt))
+    .limit(lim);
+
+  // valores distintos para los selectores de filtro
+  const acciones = await db.selectDistinct({ v: schema.auditLog.action }).from(schema.auditLog).orderBy(asc(schema.auditLog.action));
+  const entidades = await db.selectDistinct({ v: schema.auditLog.entityType }).from(schema.auditLog);
+  res.json({
+    eventos,
+    acciones: acciones.map((a) => a.v).filter(Boolean),
+    entidades: entidades.map((e) => e.v).filter(Boolean),
+  });
 });
 
 export default router;

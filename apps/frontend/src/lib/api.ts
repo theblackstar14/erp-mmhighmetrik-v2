@@ -52,6 +52,8 @@ export const api = {
   me: () => req<MeResponse>('/api/auth/me'),
   cambiarPassword: (actual: string, nueva: string) =>
     req<{ ok: true }>('/api/auth/cambiar-password', { method: 'POST', body: JSON.stringify({ actual, nueva }) }),
+  updatePerfil: (data: { nombres?: string; apellidos?: string; telefono?: string | null }) =>
+    req<{ ok: true }>('/api/auth/perfil', { method: 'PATCH', body: JSON.stringify(data) }),
 
   // Admin · usuarios / roles / empresas (gated por permiso 'usuarios' en backend)
   admin: {
@@ -73,6 +75,12 @@ export const api = {
       delete: (id: string) => req<{ ok: true }>(`/api/admin/roles/${id}`, { method: 'DELETE' }),
     },
     modulos: () => req<{ modulos: string[]; niveles: Nivel[] }>('/api/admin/modulos'),
+    audit: (f?: { action?: string; entityType?: string; from?: string; to?: string; limit?: number }) => {
+      const qs = new URLSearchParams(
+        Object.entries(f ?? {}).filter(([, v]) => v != null && v !== '').map(([k, v]) => [k, String(v)]),
+      );
+      return req<{ eventos: AuditEvento[]; acciones: string[]; entidades: string[] }>(`/api/admin/audit${qs.toString() ? `?${qs}` : ''}`);
+    },
     empresas: {
       list: () => req<{ empresas: EmpresaRow[] }>('/api/admin/empresas'),
       create: (data: Partial<EmpresaRow>) => req<{ ok: true; empresa: EmpresaRow }>('/api/admin/empresas', { method: 'POST', body: JSON.stringify(data) }),
@@ -169,18 +177,6 @@ export const api = {
     listPartidas: (id: string) => req<{ partidas: Partida[] }>(`/api/proyectos/${id}/partidas`),
     getAvances: (id: string) => req<AvancesResponse>(`/api/proyectos/${id}/avances`),
     getCurvaS: (id: string) => req<{ data: CurvaSData | null }>(`/api/proyectos/${id}/curva-s`),
-    getRecursos: (id: string) => req<RecursosResponse>(`/api/proyectos/${id}/recursos`),
-    getIusCatalogo: () => req<{ ius: IndiceUnificado[] }>(`/api/proyectos/_ius/catalogo`),
-    createIu: (data: { codigo: string; descripcion: string; categoria?: string }) =>
-      req<{ iu: IndiceUnificado }>(`/api/proyectos/_ius`, {
-        method: 'POST',
-        body: JSON.stringify(data),
-      }),
-    updateRecurso: (proyectoId: string, recursoId: string, data: { iuCodigo?: string | null; categoria?: string | null }) =>
-      req<{ recurso: Recurso }>(`/api/proyectos/${proyectoId}/recursos/${recursoId}`, {
-        method: 'PATCH',
-        body: JSON.stringify(data),
-      }),
     getValorizaciones: (id: string) => req<ValorizacionesResponse>(`/api/proyectos/${id}/valorizaciones`),
     getReconciliacion: (id: string) =>
       req<ReconciliacionResponse>(`/api/proyectos/${id}/reconciliacion`),
@@ -444,93 +440,8 @@ export const api = {
     deleteAdelanto: (id: string) => req<{ ok: boolean }>(`/api/adelantos/${id}`, { method: 'DELETE' }),
   },
 
-  // Logística · catálogos globales
+  // Logística
   logistica: {
-    listRecursos: () =>
-      req<{
-        recursos: Recurso[];
-        stats: {
-          total: number;
-          porTipo: Record<string, number>;
-          iuClasificados: number;
-          sinIu: number;
-        };
-      }>(`/api/logistica/recursos`),
-    updateRecurso: (id: string, data: {
-      iuCodigo?: string | null;
-      categoria?: string | null;
-      descripcion?: string;
-      tipo?: Recurso['tipo'];
-    }) =>
-      req<{ recurso: Recurso }>(`/api/logistica/recursos/${id}`, {
-        method: 'PATCH',
-        body: JSON.stringify(data),
-      }),
-    createRecurso: (data: {
-      codigo: string;
-      descripcion: string;
-      unidad: string;
-      tipo: Recurso['tipo'];
-      categoria?: string;
-      precioReferencial?: number;
-      iuCodigo?: string;
-    }) =>
-      req<{ recurso: Recurso }>(`/api/logistica/recursos`, {
-        method: 'POST',
-        body: JSON.stringify(data),
-      }),
-    listIus: () =>
-      req<{
-        ius: (IndiceUnificado & { recursosCount: number })[];
-        stats: {
-          total: number;
-          enUso: number;
-          sinUso: number;
-          totalRecursosClasificados: number;
-          totalRecursosSinClasificar: number;
-        };
-      }>(`/api/logistica/ius`),
-    createIu: (data: { codigo: string; descripcion: string; categoria?: string }) =>
-      req<{ iu: IndiceUnificado }>(`/api/logistica/ius`, {
-        method: 'POST',
-        body: JSON.stringify(data),
-      }),
-    updateIu: (codigo: string, data: { descripcion?: string; categoria?: string; vigente?: boolean }) =>
-      req<{ iu: IndiceUnificado }>(`/api/logistica/ius/${codigo}`, {
-        method: 'PATCH',
-        body: JSON.stringify(data),
-      }),
-    deleteIu: (codigo: string) =>
-      req<{ ok: boolean }>(`/api/logistica/ius/${codigo}`, { method: 'DELETE' }),
-    autoClasificarPreview: () =>
-      req<{
-        ok: boolean;
-        sugerencias: Array<{
-          recursoId: string;
-          recursoCodigo: string;
-          recursoDescripcion: string;
-          recursoTipo: string;
-          iuCodigo: string | null;
-          confianza: number;
-          razon: string;
-        }>;
-        total: number;
-        sinMatch: number;
-        altaConfianza: number;
-        mediaConfianza: number;
-        bajaConfianza: number;
-      }>(`/api/logistica/recursos/auto-clasificar`, {
-        method: 'POST',
-        body: JSON.stringify({ dryRun: true }),
-      }),
-    aplicarSugerencias: (sugerencias: Array<{ recursoId: string; iuCodigo: string | null; confianza: number }>) =>
-      req<{ ok: boolean; aplicados: number }>(
-        `/api/logistica/recursos/aplicar-sugerencias`,
-        {
-          method: 'POST',
-          body: JSON.stringify({ sugerencias }),
-        },
-      ),
     // F3 · Proveedores
     listProveedores: () =>
       req<{
@@ -1321,41 +1232,6 @@ export type OcAprobacion = {
   createdAt: string;
 };
 
-export type IndiceUnificado = {
-  codigo: string;
-  descripcion: string;
-  categoria: string | null;
-  unidadMedida: string | null;
-  vigente: boolean | null;
-  baseLegal: string | null;
-};
-
-export type Recurso = {
-  id: string;
-  codigo: string;
-  descripcion: string;
-  unidad: string;
-  tipo: 'material' | 'mano_obra' | 'equipo' | 'herramienta' | 'subcontrato';
-  categoria: string | null;
-  precioReferencial: string | null;
-  iuCodigo: string | null;
-  iuClasificacionOrigen: string | null;
-  iuConfianza: string | null;
-  activo: boolean;
-};
-
-export type CronogramaAdq = {
-  id: string;
-  proyectoId: string;
-  recursoId: string | null;
-  mesIndex: number;
-  mesEtiqueta: string;
-  fechaDesde: string;
-  fechaHasta: string;
-  cantidad: string;
-  monto: string;
-};
-
 export type Valorizacion = {
   id: string;
   proyectoId: string;
@@ -1545,19 +1421,6 @@ export type ValorizacionesResponse = {
     pctAvanceUltima: number;
     kPromedio: number;
     porSubpresupuesto: Record<string, { monto: number; reajuste: number }>;
-  } | null;
-};
-
-export type RecursosResponse = {
-  recursos: Recurso[];
-  cronograma: CronogramaAdq[];
-  stats: {
-    total: number;
-    porTipo: Record<string, number>;
-    montosPorTipo: Record<string, number>;
-    montoPorMes: number[];
-    montoTotal: number;
-    iuClasificados: number;
   } | null;
 };
 
@@ -1948,12 +1811,10 @@ export type ActivoInput = {
   ubicacion?: string | null;
   responsable?: string | null;
   notas?: string | null;
-  rfidTag?: string | null;
 };
 export type ActivoFull = {
   id: string;
   codigo: string;
-  rfidTag: string | null;
   nombre: string;
   categoria: string;
   marca: string | null;
@@ -2076,7 +1937,7 @@ export type CutoverPlaybook = {
   abortConditions: { hardStops: string[]; ventanasTolerancia: { amarillo: string; rojo: string }; metricasHardStop: string[] };
   rollback: { titulo: string; pasos: string[]; reversible: boolean }; nota: string;
 };
-export type AuditEvento = { id: string; action: string; entityType: string | null; entityId: string | null; changes: { before?: unknown; after?: unknown; motivo?: string | null } | null; createdAt: string; userId: string | null; userEmail: string | null; userNombres: string | null };
+export type AuditEvento = { id: string; action: string; entityType: string | null; entityId: string | null; changes: { before?: unknown; after?: unknown; motivo?: string | null } | null; ip?: string | null; createdAt: string; userId: string | null; userEmail: string | null; userNombres: string | null };
 export type ExtractoBancario = { id: string; cuentaId: string | null; banco: string | null; moneda: string; nombreArchivo: string | null; totalFilas: number; importadoEn: string };
 export type ExtractoLineaUI = { id: string; extractoId: string; fecha: string; descripcion: string | null; referencia: string | null; monto: string; moneda: string; estado: string; movimientoId: string | null; score: string | null; confianza: string | null; movimiento: Movimiento | null };
 export type ConciliacionMetricas = { periodo: string | null; total: number; conciliado: number; pendiente: number; diferencia: number; ignorado: number; pctConciliado: number; diferenciaNeta: number; agingMaxDias: number };

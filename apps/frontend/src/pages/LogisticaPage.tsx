@@ -1,23 +1,17 @@
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, Boxes, Clock, FileText, PackageCheck, ShoppingCart, Tags, Truck, Users } from 'lucide-react';
+import { AlertTriangle, Clock, FileText, ShoppingCart, Truck, Users } from 'lucide-react';
 import { Suspense, lazy } from 'react';
 import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { api } from '@/lib/api.js';
 import { cn, fmtPEN } from '@/lib/utils.js';
-import { EmptyModulePage } from './EmptyModulePage.js';
 
-// Sub-páginas lazy · cada una (+ modales OC, AutoClasificar) en su chunk · solo baja la tab abierta
-const LogisticaIusPage = lazy(() => import('@/components/logistica/LogisticaIusPage.js').then((m) => ({ default: m.LogisticaIusPage })));
+// Sub-páginas lazy · cada una (+ modales OC) en su chunk · solo baja la tab abierta
 const LogisticaOrdenesPage = lazy(() => import('@/components/logistica/LogisticaOrdenesPage.js').then((m) => ({ default: m.LogisticaOrdenesPage })));
 const LogisticaProveedoresPage = lazy(() => import('@/components/logistica/LogisticaProveedoresPage.js').then((m) => ({ default: m.LogisticaProveedoresPage })));
-const LogisticaRecursosPage = lazy(() => import('@/components/logistica/LogisticaRecursosPage.js').then((m) => ({ default: m.LogisticaRecursosPage })));
 
 const TABS = [
   { key: 'ordenes', label: 'Órdenes', icon: ShoppingCart },
   { key: 'proveedores', label: 'Proveedores', icon: Truck },
-  { key: 'recepciones', label: 'Recepciones', icon: PackageCheck, prox: true },
-  { key: 'recursos', label: 'Recursos', icon: Boxes },
-  { key: 'ius', label: 'IUs INEI', icon: Tags },
 ];
 
 function HeaderKpis() {
@@ -53,7 +47,7 @@ export function LogisticaPage() {
           <span className="font-mono text-[10px] uppercase tracking-[0.06em] text-ink-3 font-bold">Administración · Logística</span>
         </div>
         <h1 className="text-[22px] font-semibold tracking-[-0.02em] leading-tight">Compras y logística</h1>
-        <p className="mt-0.5 text-[12.5px] text-ink-3">Órdenes de compra y servicio · proveedores · recepciones · catálogo de recursos</p>
+        <p className="mt-0.5 text-[12.5px] text-ink-3">Órdenes de compra y servicio · proveedores</p>
       </header>
 
       <HeaderKpis />
@@ -75,7 +69,6 @@ export function LogisticaPage() {
             >
               <t.icon className="h-3.5 w-3.5" />
               {t.label}
-              {t.prox && <span className="text-[9px] text-ink-4">próx</span>}
             </NavLink>
           ))}
         </nav>
@@ -88,12 +81,7 @@ export function LogisticaPage() {
         <Route index element={<Navigate to="ordenes" replace />} />
         <Route path="ordenes" element={<LogisticaOrdenesPage />} />
         <Route path="proveedores" element={<LogisticaProveedoresPage />} />
-        <Route path="recepciones" element={<EmptyModulePage title="Recepciones" description="Recibir OC parcial/total · guía de remisión → alimenta Inventario · próximamente" />} />
-        <Route path="recursos" element={<LogisticaRecursosPage />} />
-        <Route path="ius" element={<LogisticaIusPage />} />
-        {/* rutas viejas · redirect */}
-        <Route path="compras" element={<Navigate to="/logistica/ordenes" replace />} />
-        <Route path="comprobantes" element={<Navigate to="/logistica/recepciones" replace />} />
+        {/* rutas viejas/removidas · redirect a órdenes */}
         <Route path="*" element={<Navigate to="ordenes" replace />} />
       </Routes>
       </Suspense>

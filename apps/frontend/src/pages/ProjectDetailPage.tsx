@@ -14,7 +14,6 @@ const DocumentosTab = lazy(() => import('@/components/proyectos/tabs/DocumentosT
 const EconomicoTab = lazy(() => import('@/components/proyectos/tabs/EconomicoTab.js').then((m) => ({ default: m.EconomicoTab })));
 const EquipoTab = lazy(() => import('@/components/proyectos/tabs/EquipoTab.js').then((m) => ({ default: m.EquipoTab })));
 const PartidasTab = lazy(() => import('@/components/proyectos/tabs/PartidasTab.js').then((m) => ({ default: m.PartidasTab })));
-const RecursosTab = lazy(() => import('@/components/proyectos/tabs/RecursosTab.js').then((m) => ({ default: m.RecursosTab })));
 const ResumenTab = lazy(() => import('@/components/proyectos/tabs/ResumenTab.js').then((m) => ({ default: m.ResumenTab })));
 
 const TABS = [
@@ -24,7 +23,6 @@ const TABS = [
   { key: 'avance', label: 'Avance' },
   { key: 'financiero', label: 'Financiero' },
   { key: 'contractual', label: 'Contractual' },
-  { key: 'recursos', label: 'Recursos' },
   { key: 'equipo', label: 'Equipo' },
   { key: 'documentos', label: 'Documentos' },
   { key: 'liquidacion', label: 'Liquidación' },
@@ -125,7 +123,6 @@ export function ProjectDetailPage() {
         <Route path="inventario" element={<Navigate to="/inventario" replace />} />
         <Route path="planilla" element={<Navigate to="/personal" replace />} />
         <Route path="compras" element={<Navigate to="/logistica/ordenes" replace />} />
-        <Route path="recursos" element={<RecursosTab proyectoId={p.id} />} />
         <Route path="equipo" element={<EquipoTab proyectoId={p.id} />} />
         <Route path="documentos" element={<DocumentosTab proyectoId={p.id} />} />
         <Route path="liquidacion" element={<TabPlaceholder title="Liquidación" desc="Gastos · utilidad · reparto socios · formato Excel gerente" />} />

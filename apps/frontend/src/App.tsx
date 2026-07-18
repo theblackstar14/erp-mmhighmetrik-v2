@@ -9,6 +9,7 @@ import { EmptyModulePage } from './pages/EmptyModulePage.js';
 import { LoginPage } from './pages/LoginPage.js';
 
 // Lazy · cada página = su propio chunk (no se parsea hasta visitarla). El Suspense vive en AppLayout.
+const ConfigPage = lazy(() => import('./pages/ConfigPage.js').then((m) => ({ default: m.ConfigPage })));
 const ContabilidadPage = lazy(() => import('./pages/ContabilidadPage.js').then((m) => ({ default: m.ContabilidadPage })));
 const DashboardPage = lazy(() => import('./pages/DashboardPage.js').then((m) => ({ default: m.DashboardPage })));
 const DocumentosPage = lazy(() => import('./pages/DocumentosPage.js'));
@@ -102,7 +103,7 @@ export default function App() {
         <Route path="personal" element={<PersonalPage />} />
         <Route path="oficina" element={<OficinaPage />} />
         <Route path="documentos" element={<DocumentosPage />} />
-        <Route path="config/*" element={<EmptyModulePage title="Configuración" description="Empresa · usuarios · roles · permisos" />} />
+        <Route path="config/*" element={<ConfigPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

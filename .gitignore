@@ -44,3 +44,6 @@ coverage/
 # Misc
 *.tsbuildinfo
 .cache/
+
+.tmp/
+.playwright-mcp/

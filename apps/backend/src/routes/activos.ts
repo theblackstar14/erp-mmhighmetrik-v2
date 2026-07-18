@@ -74,7 +74,6 @@ const activoSchema = z.object({
   ubicacion: z.string().optional().nullable(),
   responsable: z.string().optional().nullable(),
   notas: z.string().optional().nullable(),
-  rfidTag: z.string().max(64).optional().nullable(),
 });
 
 router.post('/activos', async (req, res) => {
@@ -95,7 +94,6 @@ router.post('/activos', async (req, res) => {
     ubicacion: d.ubicacion ?? null,
     responsable: d.responsable ?? null,
     notas: d.notas ?? null,
-    rfidTag: d.rfidTag || null,
   }).returning();
   res.status(201).json({ activo });
 });
@@ -109,7 +107,6 @@ router.patch('/activos/:id', async (req, res) => {
     if (v === undefined) continue;
     if (k === 'valorAdquisicion') set[k] = (v as number).toFixed(2);
     else if (k === 'pctDepreciacionAnual') set[k] = (v as number).toFixed(2);
-    else if (k === 'rfidTag') set[k] = v || null; // '' → null (evita choque con unique)
     else set[k] = v;
   }
   const [activo] = await db.update(schema.activos).set(set).where(eq(schema.activos.id, String(req.params.id))).returning();
@@ -210,8 +207,8 @@ router.post('/activos/promover/:itemId', async (req, res) => {
   res.status(201).json({ activo });
 });
 
-// POST /activos/scan · resolve genérico (UHF SDK, pistola, cámara, manual).
-// payload puede ser: URL deep-link (?codigo=MM-A-0001), el código crudo, o un rfidTag.
+// POST /activos/scan · resolve por código (QR deep-link, barcode, pistola, manual).
+// payload puede ser: URL deep-link (?codigo=MM-A-0001) o el código crudo.
 router.post('/activos/scan', async (req, res) => {
   const raw = String((req.body as { payload?: unknown }).payload ?? '').trim();
   if (!raw) return res.status(400).json({ error: 'payload vacío' });
@@ -221,16 +218,8 @@ router.post('/activos/scan', async (req, res) => {
   if (m) codigo = decodeURIComponent(m[1]);
   codigo = codigo.toUpperCase();
 
-  const [a] = await db
-    .select()
-    .from(schema.activos)
-    .where(/^MM-A-\d+$/.test(codigo) ? eq(schema.activos.codigo, codigo) : eq(schema.activos.rfidTag, raw));
-  if (!a) {
-    // segundo intento: tratar raw como rfidTag exacto si el primero fue por código
-    const [byTag] = await db.select().from(schema.activos).where(eq(schema.activos.rfidTag, raw));
-    if (!byTag) return res.status(404).json({ error: `No encontrado: ${raw}` });
-    return res.json({ activo: { ...byTag, ...depreciar(byTag) } });
-  }
+  const [a] = await db.select().from(schema.activos).where(eq(schema.activos.codigo, codigo));
+  if (!a) return res.status(404).json({ error: `No encontrado: ${raw}` });
   res.json({ activo: { ...a, ...depreciar(a) } });
 });
 
