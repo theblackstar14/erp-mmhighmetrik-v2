@@ -1,6 +1,6 @@
 import { db, parseCronogramaValorizado, parseValInversionTotales, parseValorizacionXlsx, valEsFormatoSimple, schema } from '@erp/db';
 import { proyectoCreateSchema } from '@erp/shared';
-import { and, asc, desc, eq, inArray, isNull } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { Router } from 'express';
 import multer from 'multer';
 import { env } from '../env.js';
@@ -161,7 +161,11 @@ router.get('/_dashboard', async (_req, res) => {
     obrasActivas: obras.filter((o) => ACTIVAS.has(o.status)).length,
     obrasTotal: obras.length,
     licitacion: obras.filter((o) => o.status === 'licitacion').length,
-    avanceFisicoProm: obras.length > 0 ? obras.reduce((s, o) => s + o.avanceFisico, 0) / obras.length : 0,
+    // Promedio solo sobre obras activas · las de licitación (avance 0, sin valos) diluían el indicador
+    avanceFisicoProm: (() => {
+      const act = obras.filter((o) => ACTIVAS.has(o.status));
+      return act.length > 0 ? act.reduce((s, o) => s + o.avanceFisico, 0) / act.length : 0;
+    })(),
   };
   res.json({ totales, obras });
 });
@@ -282,6 +286,44 @@ router.delete('/:id/equipo/:profesionalId', async (req, res) => {
   res.json({ ok: true });
 });
 
+// Reporte de costos de obra · CD / GG_OBRA ejecutado vs presupuesto + resultado de obra
+router.get('/:id/costos-obra', async (req, res) => {
+  const id = req.params.id!;
+  const [proy] = await db.select().from(schema.proyectos).where(eq(schema.proyectos.id, id)).limit(1);
+  if (!proy) return res.status(404).json({ error: 'Proyecto no encontrado' });
+
+  const rows = await db.select({
+      clasificacion: schema.gastos.clasificacion,
+      prorrateable: schema.gastos.prorrateable,
+      total: sql<number>`coalesce(sum(${schema.gastos.total}),0)::float8`,
+    }).from(schema.gastos)
+    .where(and(eq(schema.gastos.proyectoId, id), eq(schema.gastos.destino, 'proyecto')))
+    .groupBy(schema.gastos.clasificacion, schema.gastos.prorrateable);
+
+  const sumBy = (clase: string) => rows.filter((r) => r.clasificacion === clase).reduce((s, r) => s + Number(r.total), 0);
+  const cdEjec = sumBy('CD');
+  const ggEjec = sumBy('GG_OBRA');
+  const compartidos = rows.filter((r) => r.prorrateable).reduce((s, r) => s + Number(r.total), 0);
+
+  const cdPres = Number(proy.costoDirectoSinIgv ?? proy.costoDirecto ?? 0);
+  const separable = proy.ggUtModo === 'separado';
+  const ggPres = separable ? cdPres * Number(proy.pctGg ?? 0) : null;
+
+  const [val] = await db.select({ v: sql<number>`coalesce(sum(${schema.valorizaciones.montoCd}),0)::float8` })
+    .from(schema.valorizaciones)
+    .where(and(eq(schema.valorizaciones.proyectoId, id), inArray(schema.valorizaciones.status, ['aprobada', 'conformidad_supervision', 'facturada', 'cobrada'])));
+  const valorizacion = Number(val?.v ?? 0);
+
+  const costoTotal = cdEjec + ggEjec;
+  res.json({
+    cd: { presupuesto: cdPres, ejecutado: cdEjec },
+    ggObra: { presupuesto: ggPres, ejecutado: ggEjec, separable },
+    costoTotal, valorizacion, resultadoObra: valorizacion - costoTotal,
+    compartidosSinDistribuir: compartidos,
+    ggUtModo: proy.ggUtModo,
+  });
+});
+
 // GET /api/proyectos/:id
 router.get('/:id', async (req, res) => {
   const [proyecto] = await db
@@ -332,6 +374,20 @@ router.post('/', async (req, res) => {
       managerId: req.user!.id,
     })
     .returning();
+
+  // Garantía de fiel cumplimiento · auto-generada del % que el usuario fija al crear la obra.
+  // Aparece en Finanzas (card Garantías) y en el tab Contractual · se libera al consentimiento de liquidación.
+  const pctFiel = data.pctFielCumplimiento ?? 0;
+  if (proyecto && pctFiel > 0 && contractual > 0) {
+    await db.insert(schema.garantias).values({
+      proyectoId: proyecto.id,
+      tipo: 'fiel_cumplimiento',
+      monto: (contractual * pctFiel).toFixed(2),
+      estado: 'vigente',
+      liberaEnHito: 'consentimiento_liquidacion',
+      notas: `Fiel cumplimiento ${(pctFiel * 100).toFixed(1)}% · autogenerada al crear la obra`,
+    });
+  }
   res.status(201).json({ proyecto });
 });
 
@@ -1405,10 +1461,33 @@ router.patch('/:id/valorizaciones/:valId/estado', async (req, res) => {
     if (cerrado) return res.status(423).json({ error: `Periodo ${cerrado} cerrado · no se permite cobrar con fecha retroactiva` });
   }
 
+  // Al marcar FACTURADA se captura el comprobante electrónico (serie/número reales · o mock auto-correlativo si no se envían).
+  // Alimenta Registro de Ventas (14.1) y SIRE RVIE. Idempotente: no re-numera si la valo ya tiene comprobante.
+  let comprobante: Partial<typeof schema.valorizaciones.$inferInsert> | undefined;
+  if (estado === 'facturada') {
+    const [cur] = await db.select({ n: schema.valorizaciones.comprobanteNumero }).from(schema.valorizaciones).where(eq(schema.valorizaciones.id, req.params.valId!)).limit(1);
+    if (!cur?.n) {
+      const c = (body as { comprobante?: { tipo?: string; serie?: string; numero?: string; fecha?: string; fechaVenc?: string; detraccion?: number } }).comprobante ?? {};
+      const serie = c.serie?.trim() || 'F001';
+      let numero = c.numero?.trim();
+      if (!numero) {
+        const [mx] = await db.select({ n: schema.valorizaciones.comprobanteNumero }).from(schema.valorizaciones)
+          .where(eq(schema.valorizaciones.comprobanteSerie, serie)).orderBy(desc(schema.valorizaciones.comprobanteNumero)).limit(1);
+        numero = String(Number(mx?.n ?? 0) + 1).padStart(8, '0'); // ponytail: correlativo mock; el número real se envía en body.comprobante
+      }
+      const fechaEmi = c.fecha?.trim() || new Date().toISOString().slice(0, 10);
+      comprobante = {
+        comprobanteTipo: c.tipo?.trim() || 'factura', comprobanteSerie: serie, comprobanteNumero: numero, comprobanteFecha: fechaEmi,
+        comprobanteFechaVenc: c.fechaVenc?.trim() || fechaEmi,
+        comprobanteDetraccion: Number(c.detraccion) > 0 ? String(c.detraccion) : null,
+      };
+    }
+  }
+
   const val = await db.transaction(async (tx) => {
     const [v] = await tx
       .update(schema.valorizaciones)
-      .set({ status: estado as (typeof VALO_ESTADOS)[number], updatedAt: new Date() })
+      .set({ status: estado as (typeof VALO_ESTADOS)[number], updatedAt: new Date(), ...comprobante })
       .where(eq(schema.valorizaciones.id, req.params.valId!))
       .returning();
     if (!v) return null;
@@ -1547,7 +1626,14 @@ router.get('/:id/reconciliacion', async (req, res) => {
     .where(eq(schema.valorizaciones.proyectoId, proyectoId))
     .orderBy(asc(schema.valorizaciones.numero));
   const valorizadoCd = vals.length ? vals.reduce((s, v) => s + Number(v.montoCd), 0) : null;
-  const pctAvanceUltima = vals.length ? Number(vals[vals.length - 1]!.pctAvance) : null;
+  // Base correcta del valorizado = SUBTOTAL de obra (CD+GG+UT sin IGV). La valorización bruta ya incluye
+  // GG+UT (el con-IGV = bruta×1.18, sin sumar GG+UT aparte) → compararla vs CD-solo daba >100% falso.
+  // pctAvance de cada valo = montoCd/subtotal, por eso el acumulado (Σ) = avance real; la última valo NO.
+  const expedienteSubtotal = proyecto.montoSubtotal != null && Number(proyecto.montoSubtotal) > 0
+    ? Number(proyecto.montoSubtotal)
+    : expedienteCd; // embebido_cd: subtotal = CD
+  const normPct = (n: number) => (n <= 1 ? n * 100 : n); // fracción→%
+  const valorizadoPctAcum = vals.length ? vals.reduce((s, v) => s + normPct(Number(v.pctAvance ?? 0)), 0) : null;
 
   type Check = {
     nombre: string;
@@ -1578,37 +1664,36 @@ router.get('/:id/reconciliacion', async (req, res) => {
     });
   }
 
-  // Check 2 · No sobre-valorización: Σ valorizado CD <= expediente CD (+epsilon)
+  // Check 2 · No sobre-valorización: Σ valorizado (sin IGV, incluye GG+UT) <= subtotal de obra (+epsilon)
   {
-    const evaluable = expedienteCd != null && valorizadoCd != null;
-    const diff = evaluable ? valorizadoCd! - expedienteCd! : null; // >0 = sobre-valorizado
-    const ok = evaluable ? valorizadoCd! <= expedienteCd! + EPSILON_CD : null;
+    const evaluable = expedienteSubtotal != null && valorizadoCd != null;
+    const diff = evaluable ? valorizadoCd! - expedienteSubtotal! : null; // >0 = sobre-valorizado
+    const ok = evaluable ? valorizadoCd! <= expedienteSubtotal! + EPSILON_CD : null;
     checks.push({
       nombre: 'no_sobre_valorizacion',
-      descripcion: 'El CD valorizado acumulado no debe superar el CD del expediente',
+      descripcion: 'El valorizado acumulado (sin IGV) no debe superar el subtotal de obra (CD+GG+UT)',
       grupo: 'obra',
-      a: { fuente: 'Σ valorizaciones CD', valor: valorizadoCd },
-      b: { fuente: 'Expediente CD', valor: expedienteCd },
+      a: { fuente: 'Σ valorizaciones (sin IGV)', valor: valorizadoCd },
+      b: { fuente: 'Subtotal de obra (CD+GG+UT)', valor: expedienteSubtotal },
       diff,
       ok,
       severidad: ok === null ? 'na' : ok ? 'ok' : 'error',
     });
   }
 
-  // Check 3 · Coherencia % avance reportado vs CD valorizado/expediente
+  // Check 3 · Coherencia % avance reportado (acumulado) vs valorizado/subtotal
   {
-    const evaluable = expedienteCd != null && valorizadoCd != null && pctAvanceUltima != null && expedienteCd! > 0;
-    const pctCalculado = evaluable ? (valorizadoCd! / expedienteCd!) * 100 : null;
-    // pctAvance puede venir como fracción (0.42) o porcentaje (42) · normalizar
-    const pctReportado = pctAvanceUltima != null ? (pctAvanceUltima <= 1 ? pctAvanceUltima * 100 : pctAvanceUltima) : null;
+    const evaluable = expedienteSubtotal != null && valorizadoCd != null && valorizadoPctAcum != null && expedienteSubtotal! > 0;
+    const pctCalculado = evaluable ? (valorizadoCd! / expedienteSubtotal!) * 100 : null;
+    const pctReportado = valorizadoPctAcum; // acumulado (Σ pctAvance), NO la última valo
     const diff = evaluable && pctReportado != null ? Math.abs(pctCalculado! - pctReportado) : null;
     const ok = diff != null ? diff <= 1.0 : null; // 1 punto porcentual de tolerancia
     checks.push({
       nombre: 'coherencia_pct_avance',
-      descripcion: '% avance reportado debe coincidir con Σ valorizado / CD expediente',
+      descripcion: '% avance reportado (acumulado) debe coincidir con Σ valorizado / subtotal de obra',
       grupo: 'obra',
-      a: { fuente: '% avance reportado (última val)', valor: pctReportado },
-      b: { fuente: '% calculado (Σ val CD / expediente)', valor: pctCalculado },
+      a: { fuente: '% avance reportado (Σ valos)', valor: pctReportado },
+      b: { fuente: '% calculado (Σ val / subtotal)', valor: pctCalculado },
       diff,
       ok,
       severidad: ok === null ? 'na' : ok ? 'ok' : 'warn',
@@ -1730,7 +1815,8 @@ router.get('/:id/reconciliacion', async (req, res) => {
       partidasCd,
       partidasHoja: partidasHoja.length,
       valorizadoCd,
-      pctAvanceUltima,
+      expedienteSubtotal,
+      pctAvanceAcum: valorizadoPctAcum,
       valorizaciones: vals.length,
       inversion: {
         montoInversion,
@@ -1967,6 +2053,71 @@ router.patch('/:id/participacion', async (req, res) => {
     .returning();
   if (!proyecto) return res.status(404).json({ error: 'Proyecto no encontrado' });
   res.json({ ok: true, pctParticipacionPropia: proyecto.pctParticipacionPropia });
+});
+
+// ════════ CIERRE DE OBRA · checklist "prueba de cierre" + gate ════════
+// Fuente única: la usa el GET (mostrar) y el POST (re-valida antes de cerrar · nunca confiar en el cliente).
+const CIERRE_TOL = 0.01;
+async function buildCierreChecklist(proyectoId: string) {
+  const [proyecto] = await db.select().from(schema.proyectos).where(and(eq(schema.proyectos.id, proyectoId), isNull(schema.proyectos.deletedAt))).limit(1);
+  if (!proyecto) return null;
+  const [hitos, garantias, adelantos, vals] = await Promise.all([
+    db.select().from(schema.hitosObra).where(eq(schema.hitosObra.proyectoId, proyectoId)),
+    db.select().from(schema.garantias).where(eq(schema.garantias.proyectoId, proyectoId)),
+    db.select().from(schema.adelantos).where(eq(schema.adelantos.proyectoId, proyectoId)),
+    db.select().from(schema.valorizaciones).where(eq(schema.valorizaciones.proyectoId, proyectoId)),
+  ]);
+  const hito = (t: string) => hitos.find((h) => h.tipo === t);
+  const fechaDe = (t: string) => hito(t)?.fecha ?? null;
+
+  const garVigentes = garantias.filter((g) => g.estado === 'vigente');
+  const retencionVigente = garVigentes.filter((g) => g.tipo === 'retencion' || g.tipo === 'fiel_cumplimiento');
+  const adelPendiente = adelantos.filter((a) => Number(a.monto) - Number(a.montoAmortizado ?? 0) > CIERRE_TOL);
+  const sumMonto = (gs: Array<{ monto: string | null }>) => gs.reduce((s, g) => s + Number(g.monto ?? 0), 0);
+
+  const vigente = Number(proyecto.montoVigente ?? 0) || Number(proyecto.montoContractual ?? 0);
+  const valorizadoConIgv = vals.reduce((s, v) => s + (Number(v.montoTotalConIgv ?? 0) || Number(v.totalContratista ?? 0) || Number(v.montoValorizacionBruta ?? 0) * 1.18), 0);
+
+  const items = [
+    { key: 'culminacion', label: 'Culminación de obra', ok: !!hito('culminacion'), detail: fechaDe('culminacion') ?? 'sin registrar' },
+    { key: 'recepcion', label: 'Recepción de obra', ok: !!hito('recepcion'), detail: fechaDe('recepcion') ?? 'sin registrar' },
+    { key: 'liquidacion', label: 'Liquidación practicada', ok: !!hito('liquidacion'), detail: fechaDe('liquidacion') ?? 'sin registrar' },
+    { key: 'consentimiento', label: 'Consentimiento de liquidación', ok: !!hito('consentimiento_liquidacion'), detail: fechaDe('consentimiento_liquidacion') ?? 'sin registrar' },
+    { key: 'adelantos', label: 'Adelantos amortizados', ok: adelPendiente.length === 0, detail: adelPendiente.length ? `${adelPendiente.length} con saldo pendiente` : 'sin saldo' },
+    { key: 'garantias', label: 'Garantías devueltas', ok: garVigentes.length === 0, detail: garVigentes.length ? `${garVigentes.length} vigente(s)` : 'ninguna vigente' },
+    { key: 'retencion', label: 'Retención liberada', ok: retencionVigente.length === 0, detail: retencionVigente.length ? `S/ ${sumMonto(retencionVigente).toLocaleString('es-PE', { minimumFractionDigits: 2 })} sin liberar` : 'liberada' },
+    { key: 'valorizado', label: 'Valorizado al 100%', ok: vigente > 0 && valorizadoConIgv >= vigente - Math.max(CIERRE_TOL, vigente * 0.005), detail: vigente > 0 ? `${((valorizadoConIgv / vigente) * 100).toFixed(1)}%` : '—' },
+  ];
+  // Gate duro: hitos de cierre + sin pendientes financieros. 'valorizado' es informativo (un deductivo puede dejarlo <100% legítimamente).
+  const GATE = new Set(['culminacion', 'recepcion', 'liquidacion', 'consentimiento', 'adelantos', 'garantias', 'retencion']);
+  const canClose = items.filter((i) => GATE.has(i.key)).every((i) => i.ok);
+  const veredicto = proyecto.status === 'cerrado' ? 'CERRADA'
+    : canClose ? 'LISTA PARA CERRAR'
+    : hito('recepcion') ? 'EN LIQUIDACIÓN'
+    : 'EN EJECUCIÓN';
+  const faltantes = items.filter((i) => GATE.has(i.key) && !i.ok).map((i) => i.label);
+  return { status: proyecto.status, veredicto, canClose, items, faltantes, valorizadoConIgv, vigente };
+}
+
+// GET /:id/cierre · checklist de prueba de cierre (solo lectura)
+router.get('/:id/cierre', async (req, res) => {
+  const data = await buildCierreChecklist(req.params.id!);
+  if (!data) return res.status(404).json({ error: 'Proyecto no encontrado' });
+  res.json(data);
+});
+
+// POST /:id/cerrar · re-valida el gate y marca la obra cerrada (auditado)
+router.post('/:id/cerrar', async (req, res) => {
+  const proyectoId = req.params.id!;
+  const data = await buildCierreChecklist(proyectoId);
+  if (!data) return res.status(404).json({ error: 'Proyecto no encontrado' });
+  if (data.status === 'cerrado') return res.status(409).json({ error: 'La obra ya está cerrada' });
+  if (!data.canClose) return res.status(422).json({ error: 'No cumple el gate de cierre', faltantes: data.faltantes });
+  const [proyecto] = await db.update(schema.proyectos)
+    .set({ status: 'cerrado', updatedAt: new Date() })
+    .where(eq(schema.proyectos.id, proyectoId)).returning();
+  await audit(req, { action: 'cerrar_obra', entityType: 'proyecto', entityId: proyectoId, before: { status: data.status }, after: { status: 'cerrado' } });
+  res.json({ ok: true, status: proyecto.status });
 });
 
 export default router;
