@@ -156,6 +156,8 @@ export function GastoForm({ proyectoId, proyectos, cuentas, onDone }: {
   };
   const [f, setF] = useState<GastoInput>(empty);
   const set = (patch: Partial<GastoInput>) => setF((prev) => ({ ...prev, ...patch }));
+  // true solo si el usuario cambió manualmente la clasificación (→ USUARIO); si no, no se envía y el backend deriva de config (AUTOMATICO)
+  const [clasifTouched, setClasifTouched] = useState(false);
 
   // subtotal → IGV 18% auto + total
   const onSubtotal = (v: number) => {
@@ -165,7 +167,11 @@ export function GastoForm({ proyectoId, proyectos, cuentas, onDone }: {
 
   const resolvedProyectoId = f.destino === 'corporativo' ? null : (proyectoId ?? obraId) || null;
   const create = useMutation({
-    mutationFn: () => api.finanzas.createGastoGlobal({ ...f, proyectoId: resolvedProyectoId }),
+    mutationFn: () => {
+      const payload: GastoInput & { proyectoId?: string | null } = { ...f, proyectoId: resolvedProyectoId };
+      if (!clasifTouched) delete payload.clasificacion; // sin override → backend clasifica por config (AUTOMATICO)
+      return api.finanzas.createGastoGlobal(payload);
+    },
     onSuccess: onDone,
   });
   const canSubmit = !!f.fecha && (f.total ?? 0) > 0 && !!f.tipoGasto && (f.destino === 'corporativo' || !!(proyectoId ?? obraId));
@@ -177,12 +183,12 @@ export function GastoForm({ proyectoId, proyectos, cuentas, onDone }: {
         <div className="w-full">
           <span className="text-[10.5px] font-mono uppercase tracking-wider text-ink-4">Destino del gasto</span>
           <div className="mt-1 grid grid-cols-2 gap-2">
-            <button type="button" onClick={() => set({ destino: 'proyecto', clasificacion: 'CD' })}
+            <button type="button" onClick={() => { set({ destino: 'proyecto', clasificacion: claseDe(f.tipoGasto ?? '') }); setClasifTouched(false); }}
               className={cn('rounded-md border p-2 text-left text-[11.5px] transition-colors', f.destino === 'proyecto' ? 'border-primary bg-primary/5' : 'border-line hover:bg-bg-sunken')}>
               <div className="font-medium">Proyecto</div>
               <div className="text-[10px] text-ink-4">Gasto imputable a una obra (CD o GG Obra)</div>
             </button>
-            <button type="button" onClick={() => set({ destino: 'corporativo', clasificacion: 'GG_CORP' })}
+            <button type="button" onClick={() => { set({ destino: 'corporativo', clasificacion: 'GG_CORP' }); setClasifTouched(false); }}
               className={cn('rounded-md border p-2 text-left text-[11.5px] transition-colors', f.destino === 'corporativo' ? 'border-primary bg-primary/5' : 'border-line hover:bg-bg-sunken')}>
               <div className="font-medium">Oficina / Administración</div>
               <div className="text-[10px] text-ink-4">Gasto corporativo (GG Corp — backend lo clasifica)</div>
@@ -199,7 +205,7 @@ export function GastoForm({ proyectoId, proyectos, cuentas, onDone }: {
       )}
       <div className="flex flex-wrap items-center gap-2">
         <input className={inputCls} type="date" value={f.fecha} onChange={(e) => set({ fecha: e.target.value })} />
-        <Sel value={f.tipoGasto ?? ''} onChange={(v) => set({ tipoGasto: v, inventariable: TIPOS_INVENTARIABLES.has(v), clasificacion: claseDe(v) })} opts={TIPOS_GASTO} />
+        <Sel value={f.tipoGasto ?? ''} onChange={(v) => { set({ tipoGasto: v, inventariable: TIPOS_INVENTARIABLES.has(v), clasificacion: claseDe(v) }); setClasifTouched(false); }} opts={TIPOS_GASTO} />
         <input className={cn(inputCls, 'w-28')} placeholder="RUC" value={f.proveedorRuc ?? ''} onChange={(e) => set({ proveedorRuc: e.target.value })} />
         <input className={cn(inputCls, 'flex-1 min-w-[140px]')} placeholder="Proveedor / razón social" value={f.proveedorRazon ?? ''} onChange={(e) => set({ proveedorRazon: e.target.value })} />
       </div>
@@ -226,12 +232,12 @@ export function GastoForm({ proyectoId, proyectos, cuentas, onDone }: {
           <div className="col-span-2 w-full">
             <span className="text-[10.5px] font-mono uppercase tracking-wider text-ink-4">¿A qué parte de la obra corresponde?</span>
             <div className="mt-1 grid grid-cols-2 gap-2">
-              <button type="button" onClick={() => set({ clasificacion: 'CD' })}
+              <button type="button" onClick={() => { set({ clasificacion: 'CD' }); setClasifTouched(true); }}
                 className={cn('rounded-md border p-2 text-left text-[11.5px] transition-colors', f.clasificacion === 'CD' ? 'border-primary bg-primary/5' : 'border-line hover:bg-bg-sunken')}>
                 <div className="font-medium">Costo Directo</div>
                 <div className="text-[10px] text-ink-4">Va a una partida del presupuesto (cemento, fierro, mano de obra)</div>
               </button>
-              <button type="button" onClick={() => set({ clasificacion: 'GG_OBRA' })}
+              <button type="button" onClick={() => { set({ clasificacion: 'GG_OBRA' }); setClasifTouched(true); }}
                 className={cn('rounded-md border p-2 text-left text-[11.5px] transition-colors', f.clasificacion === 'GG_OBRA' ? 'border-primary bg-primary/5' : 'border-line hover:bg-bg-sunken')}>
                 <div className="font-medium">Gasto General de Obra</div>
                 <div className="text-[10px] text-ink-4">Gasto general de la obra (guardianía, campamento, viáticos)</div>
