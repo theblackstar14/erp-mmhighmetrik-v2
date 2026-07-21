@@ -1,9 +1,10 @@
 import { db, schema } from '@erp/db';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { Router } from 'express';
 import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
 import { periodoCerradoDeFecha } from '../lib/periodos.js';
+import { resolverClase } from '../lib/clasificacion.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -35,8 +36,9 @@ async function generarGasto(rendId: string) {
   const exonerado = items.filter((it) => !it.deducible).reduce((s, it) => s + n(it.total), 0);
   const total = items.reduce((s, it) => s + n(it.total), 0);
   const first = items[0];
+  const cls = await resolverClase({ proyectoId: r.proyectoId, tipoGasto: r.tipo });
   const [g] = await db.insert(schema.gastos).values({
-    codigo: r.codigo, proyectoId: r.proyectoId, fecha: r.fecha,
+    codigo: r.codigo, proyectoId: r.proyectoId, ...cls, fecha: r.fecha,
     tipoRegistro: 'Rendición', tipoGasto: r.tipo, tipoIgv: igv > 0 ? 'IGV' : 'Exonerado',
     proveedorRuc: first?.ruc ?? null, proveedorRazon: first?.razon ?? r.solicitanteNombre,
     tipoComprobante: first?.tipoComprobante ?? 'recibo', serie: first?.serie ?? null, numero: first?.numero ?? null,
@@ -85,6 +87,28 @@ router.get('/oficina/rendiciones', async (req, res) => {
     })
     .map((x) => ({ ...x.r, proyectoCodigo: x.proyectoCodigo, cuentaNombre: x.cuenta }));
   res.json({ rendiciones: list });
+});
+
+// Saldo POR RENDIR por persona · derivado de anticipos abiertos (aprobado/rendido, aún no cerrados).
+// = Σ (montoAnticipo − montoRendido). Reemplaza las cuentas REND-* hechas a mano: el saldo se calcula, no se guarda.
+router.get('/oficina/saldos-rendir', async (req, res) => {
+  const rows = await db.select().from(schema.rendiciones)
+    .where(and(eq(schema.rendiciones.modo, 'anticipo'), inArray(schema.rendiciones.estado, ['aprobado', 'rendido'])));
+  const byUser = new Map<string, { userId: string | null; nombre: string; saldo: number; count: number }>();
+  for (const r of rows) {
+    const key = r.solicitanteUserId ?? r.solicitanteNombre ?? 'sin';
+    const e = byUser.get(key) ?? { userId: r.solicitanteUserId ?? null, nombre: r.solicitanteNombre ?? 'Sin nombre', saldo: 0, count: 0 };
+    e.saldo += n(r.montoAnticipo) - n(r.montoRendido);
+    e.count += 1;
+    byUser.set(key, e);
+  }
+  const saldos = [...byUser.values()].filter((s) => s.saldo > 0.01).sort((a, b) => b.saldo - a.saldo);
+  res.json({
+    saldos,
+    total: saldos.reduce((s, x) => s + x.saldo, 0),
+    miSaldo: saldos.find((s) => s.userId === req.user?.id)?.saldo ?? 0,
+    miCount: saldos.find((s) => s.userId === req.user?.id)?.count ?? 0,
+  });
 });
 
 router.get('/oficina/rendiciones/:id', async (req, res) => {

@@ -7,6 +7,7 @@ import { nasDownload, nasEnsureOcFolder, nasUpload } from '../lib/nas.js';
 import { requireAuth } from '../middleware/auth.js';
 import { periodoCerradoDeFecha } from '../lib/periodos.js';
 import { audit } from '../lib/audit.js';
+import { resolverClase } from '../lib/clasificacion.js';
 
 const ocUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
@@ -733,8 +734,11 @@ router.post('/ordenes-compra/:id/pagar', ocUpload.single('file'), async (req, re
     // pero /generar todavía NO lo lee (sigue asentando por flags) → cero doble-conteo hasta F3.
     const result = await db.transaction(async (tx) => {
       // Auto-crear gasto (Fact de Compras) ligado a la OC
+      const ocTipoGasto = oc.concepto === 'SERVICIO' ? 'Servicio Terceros' : 'Compra Materiales';
+      const cls = await resolverClase({ proyectoId: oc.proyectoId, tipoGasto: ocTipoGasto });
       const [gasto] = await tx.insert(schema.gastos).values({
         proyectoId: oc.proyectoId,
+        ...cls,
         fecha,
         tipoRegistro: 'Gasto Directo',
         tipoIgv: Number(oc.igv) > 0 ? 'IGV' : 'Exonerado',
@@ -747,7 +751,7 @@ router.post('/ordenes-compra/:id/pagar', ocUpload.single('file'), async (req, re
         subtotal: oc.subtotalSinIgv,
         igv: oc.igv,
         total: oc.total,
-        tipoGasto: oc.concepto === 'SERVICIO' ? 'Servicio Terceros' : 'Compra Materiales',
+        tipoGasto: ocTipoGasto,
         observaciones: `Auto-generado al pagar ${oc.numero}`,
       }).returning();
 

@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
 import { periodoCerradoDeFecha } from '../lib/periodos.js';
 import { audit } from '../lib/audit.js';
+import { resolverClase } from '../lib/clasificacion.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -85,7 +86,31 @@ const gastoSchema = z.object({
   total: z.number().default(0),
   tipoGasto: z.string().optional().nullable(),
   observaciones: z.string().optional().nullable(),
+  inventariable: z.boolean().optional(), // FX · crea ítem de inventario "por completar" ligado al gasto
+  destino: z.enum(['proyecto', 'corporativo']).optional(),
+  clasificacion: z.enum(['CD', 'GG_OBRA', 'GG_CORP']).optional(),
+  prorrateable: z.boolean().optional(),
 });
+
+// FX · gasto → inventario: crea un ítem draft ligado (herramientas/equipos/EPPS). El usuario completa
+// código/serie/foto/ubicación en Inventario (filtro "Por completar"); ahí puede promoverlo a activo.
+async function crearDraftInventario(gasto: typeof schema.gastos.$inferSelect) {
+  await db.insert(schema.inventarioItems).values({
+    fecha: gasto.fecha,
+    proyectoId: gasto.proyectoId ?? null,
+    proveedorRuc: gasto.proveedorRuc ?? null,
+    proveedorRazon: gasto.proveedorRazon ?? null,
+    tipoComprobante: gasto.tipoComprobante ?? null,
+    serie: gasto.serie ?? null,
+    numero: gasto.numero ?? null,
+    cantidad: '1',
+    descripcionItem: gasto.descripcionItem ?? gasto.tipoGasto ?? 'Ítem',
+    valorUnitario: gasto.total ?? '0',
+    categoria: gasto.tipoGasto ?? null,
+    estado: 'Por completar',
+    gastoId: gasto.id,
+  });
+}
 
 function toValues(d: z.infer<typeof gastoSchema>) {
   return {
@@ -110,6 +135,7 @@ function toValues(d: z.infer<typeof gastoSchema>) {
     total: dec(d.total),
     tipoGasto: d.tipoGasto ?? null,
     observaciones: d.observaciones ?? null,
+    prorrateable: d.prorrateable ?? false,
   };
 }
 
@@ -136,7 +162,10 @@ router.get('/proyectos/:id/gastos', async (req, res) => {
 router.post('/proyectos/:id/gastos', async (req, res) => {
   const parse = gastoSchema.safeParse(req.body);
   if (!parse.success) return res.status(400).json({ error: parse.error.flatten() });
-  const [gasto] = await db.insert(schema.gastos).values({ proyectoId: req.params.id!, ...toValues(parse.data) }).returning();
+  const values = { proyectoId: req.params.id!, ...toValues(parse.data) };
+  const cls = await resolverClase({ proyectoId: values.proyectoId, tipoGasto: values.tipoGasto, destino: parse.data.destino, clasificacion: parse.data.clasificacion });
+  const [gasto] = await db.insert(schema.gastos).values({ ...values, ...cls }).returning();
+  if (parse.data.inventariable && gasto) await crearDraftInventario(gasto);
   res.json({ gasto });
 });
 
@@ -363,7 +392,10 @@ router.post('/gastos', async (req, res) => {
   if (!parse.success) return res.status(400).json({ error: parse.error.flatten() });
   const { proyectoId, ...rest } = parse.data;
   if (await bloqueoPeriodo(rest.fecha, res)) return;
-  const [gasto] = await db.insert(schema.gastos).values({ proyectoId: proyectoId ?? null, ...toValues(rest) }).returning();
+  const values = { proyectoId: proyectoId ?? null, ...toValues(rest) };
+  const cls = await resolverClase({ proyectoId: values.proyectoId, tipoGasto: values.tipoGasto, destino: rest.destino, clasificacion: rest.clasificacion });
+  const [gasto] = await db.insert(schema.gastos).values({ ...values, ...cls }).returning();
+  if (rest.inventariable && gasto) await crearDraftInventario(gasto);
   await audit(req, { action: 'create', entityType: 'gasto', entityId: gasto!.id, after: { total: gasto!.total, tipo: gasto!.tipoGasto, proveedor: gasto!.proveedorRazon } });
   res.json({ gasto });
 });
