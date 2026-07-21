@@ -191,7 +191,7 @@ export const api = {
     getCashflow: (id: string) => req<CashflowResponse>(`/api/proyectos/${id}/cashflow`),
     getPartidasCostos: (id: string) =>
       req<{ costos: Record<string, { ejecutado: number; comprometido: number }> }>(`/api/proyectos/${id}/partidas-costos`),
-    setValorizacionEstado: (proyectoId: string, valId: string, estado: string, opts?: { cuentaId?: string; fechaCobro?: string }) =>
+    setValorizacionEstado: (proyectoId: string, valId: string, estado: string, opts?: { cuentaId?: string; fechaCobro?: string; comprobante?: { tipo?: string; serie?: string; numero?: string; fecha?: string; fechaVenc?: string; detraccion?: number } }) =>
       req<{ ok: boolean; valorizacion: Valorizacion }>(`/api/proyectos/${proyectoId}/valorizaciones/${valId}/estado`, {
         method: 'PATCH',
         body: JSON.stringify({ estado, ...opts }),
@@ -201,6 +201,10 @@ export const api = {
         method: 'PATCH',
         body: JSON.stringify({ pct }),
       }),
+    getCierre: (id: string) => req<CierreObra>(`/api/proyectos/${id}/cierre`),
+    cerrarObra: (id: string) =>
+      req<{ ok: boolean; status: string }>(`/api/proyectos/${id}/cerrar`, { method: 'POST' }),
+    getCostosObra: (id: string) => req<CostosObra>(`/api/proyectos/${id}/costos-obra`),
     uploadValorizacion: async (id: string, file: File): Promise<UploadValResponse> => {
       const fd = new FormData();
       fd.append('file', file);
@@ -319,6 +323,7 @@ export const api = {
   // Oficina · rendiciones / viáticos (FIN-5)
   oficina: {
     listRendiciones: (scope: 'mias' | 'aprobar' | 'todas' = 'todas') => req<{ rendiciones: Rendicion[] }>(`/api/oficina/rendiciones?scope=${scope}`),
+    getSaldosRendir: () => req<SaldosRendirResponse>('/api/oficina/saldos-rendir'),
     getRendicion: (id: string) => req<{ rendicion: Rendicion; items: RendicionItem[] }>(`/api/oficina/rendiciones/${id}`),
     crearRendicion: (data: RendicionInput) => req<{ rendicion: Rendicion }>('/api/oficina/rendiciones', { method: 'POST', body: JSON.stringify(data) }),
     updateRendicion: (id: string, data: Partial<RendicionInput>) => req<{ rendicion: Rendicion }>(`/api/oficina/rendiciones/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
@@ -431,6 +436,8 @@ export const api = {
     updateGarantia: (id: string, data: Partial<GarantiaInput>) =>
       req<{ garantia: Garantia }>(`/api/garantias/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     deleteGarantia: (id: string) => req<{ ok: boolean }>(`/api/garantias/${id}`, { method: 'DELETE' }),
+    generarRetencion: (proyectoId: string) =>
+      req<{ garantia: Garantia; total: number }>(`/api/proyectos/${proyectoId}/garantias/generar-retencion`, { method: 'POST' }),
 
     listAdelantos: (proyectoId: string) => req<{ adelantos: Adelanto[] }>(`/api/proyectos/${proyectoId}/adelantos`),
     createAdelanto: (proyectoId: string, data: AdelantoInput) =>
@@ -619,6 +626,9 @@ export const api = {
   // Contabilidad · PCGE 2020 (contador interno)
   contabilidad: {
     getPlan: (periodo?: string) => req<{ cuentas: CuentaPlan[] }>(`/api/contabilidad/plan${periodo ? `?periodo=${periodo}` : ''}`),
+    getCuentasTipo: () => req<{ mapa: GastoCuentaMapRow[]; plan: { codigo: string; nombre: string }[] }>('/api/contabilidad/cuentas-tipo'),
+    updateCuentaTipo: (tipo: string, data: { cuenta: string; esActivo: boolean; esGasto: boolean; clase?: string }) =>
+      req<{ ok: boolean; row: GastoCuentaMapRow }>(`/api/contabilidad/cuentas-tipo/${encodeURIComponent(tipo)}`, { method: 'PUT', body: JSON.stringify(data) }),
     createCuenta: (data: { codigo: string; descripcion: string; tipo: string }) =>
       req<{ cuenta: CuentaPlan }>('/api/contabilidad/plan', { method: 'POST', body: JSON.stringify(data) }),
     deleteCuenta: (codigo: string) => req<{ ok: boolean }>(`/api/contabilidad/plan/${codigo}`, { method: 'DELETE' }),
@@ -679,8 +689,11 @@ export const api = {
     cutoverPlaybook: (periodo: string, cutover: string) => req<CutoverPlaybook>(`/api/contabilidad/cutover-playbook?periodo=${periodo}&cutover=${cutover}`),
     // PLE SUNAT (C5)
     pleResumen: (periodo: string) =>
-      req<{ periodo: string; libros: Record<'5.1' | '6.1' | '8.1' | '14.1', { nombre: string; filas: number }> }>(`/api/contabilidad/ple/resumen?periodo=${periodo}`),
-    pleUrl: (periodo: string, libro: '5.1' | '6.1' | '8.1' | '14.1') => `/api/contabilidad/ple?periodo=${periodo}&libro=${libro}`,
+      req<{ periodo: string; libros: Record<'5.1' | '6.1' | '8.1' | '14.1' | 'RCE' | 'RVIE', { nombre: string; filas: number }> }>(`/api/contabilidad/ple/resumen?periodo=${periodo}`),
+    pleUrl: (periodo: string, libro: '5.1' | '6.1' | '8.1' | '14.1' | 'RCE' | 'RVIE') => `/api/contabilidad/ple?periodo=${periodo}&libro=${libro}`,
+    // Estados Financieros · Balance de Comprobación + ESF + ER (IR RMT estimado)
+    estadosFinancieros: (anio?: string, uit?: number) =>
+      req<EstadosFinancieros>(`/api/contabilidad/estados-financieros${anio ? `?anio=${anio}${uit ? `&uit=${uit}` : ''}` : ''}`),
   },
 
   // H3 · Conciliación bancaria
@@ -862,6 +875,13 @@ export type EmpresaRow = {
 };
 
 export type GgUtModo = 'separado' | 'embebido_cd' | 'simple_pct';
+
+export type CostosObra = {
+  cd: { presupuesto: number; ejecutado: number };
+  ggObra: { presupuesto: number | null; ejecutado: number; separable: boolean };
+  costoTotal: number; valorizacion: number; resultadoObra: number;
+  compartidosSinDistribuir: number; ggUtModo: string;
+};
 export type ModalidadInversion =
   | 'oxi'
   | 'contrata'
@@ -1387,7 +1407,8 @@ export type ReconciliacionResponse = {
     partidasCd: number | null;
     partidasHoja: number;
     valorizadoCd: number | null;
-    pctAvanceUltima: number | null;
+    expedienteSubtotal: number | null;
+    pctAvanceAcum: number | null;
     valorizaciones: number;
     inversion: {
       montoInversion: number | null;
@@ -1478,6 +1499,16 @@ export type HitoTipo =
   | 'liquidacion'
   | 'consentimiento_liquidacion';
 
+export type CierreItem = { key: string; label: string; ok: boolean; detail: string };
+export type CierreObra = {
+  status: string;
+  veredicto: 'CERRADA' | 'LISTA PARA CERRAR' | 'EN LIQUIDACIÓN' | 'EN EJECUCIÓN';
+  canClose: boolean;
+  items: CierreItem[];
+  faltantes: string[];
+  valorizadoConIgv: number;
+  vigente: number;
+};
 export type HitoObra = {
   id: string;
   proyectoId: string;
@@ -1729,6 +1760,10 @@ export type GastoInput = {
   total?: number;
   tipoGasto?: string | null;
   observaciones?: string | null;
+  inventariable?: boolean; // FX · crea ítem de inventario "por completar" ligado al gasto
+  destino?: 'proyecto' | 'corporativo';
+  clasificacion?: 'CD' | 'GG_OBRA' | 'GG_CORP';
+  prorrateable?: boolean;
 };
 export type GastoStats = { count: number; totalGeneral: number; subtotalGeneral: number; porTipo: Record<string, number> };
 export type CuentaBancaria = { id: string; codigo: string; banco: string | null; moneda: string; descripcion: string | null; cuentaContable: string | null; activo: boolean };
@@ -1845,6 +1880,17 @@ export type ActivosStats = {
 export type ActivoMov = { id: string; activoId: string; fecha: string; desde: string | null; hacia: string; proyectoId: string | null; responsable: string | null; notas: string | null };
 
 // ─── Contabilidad · PCGE ──────────────────────────────────────
+export type GastoCuentaMapRow = { tipoGasto: string; cuenta: string; esActivo: boolean; esGasto: boolean; clase: 'CD' | 'GG_OBRA' | 'GG_CORP' };
+export type EEFFGrupo = { grupo: string; descripcion: string; monto: number };
+export type EstadosFinancieros = {
+  anio: string; uit: number;
+  balanceComprobacion: {
+    filas: { cuenta: string; descripcion: string; debe: number; haber: number; saldoDeudor: number; saldoAcreedor: number }[];
+    totales: { debe: number; haber: number; saldoDeudor: number; saldoAcreedor: number };
+  };
+  esf: { activo: EEFFGrupo[]; pasivo: EEFFGrupo[]; patrimonio: EEFFGrupo[]; totalActivo: number; totalPasivo: number; totalPatrimonioBase: number; resultadoEjercicio: number; totalPatrimonio: number; check: number };
+  er: { ingresos: EEFFGrupo[]; gastos: EEFFGrupo[]; totalIngresos: number; totalGastos: number; utilidadAntesIR: number; ir: number; regimen: string; utilidadNeta: number };
+};
 export type CuentaPlan = {
   codigo: string;
   descripcion: string;
@@ -2060,5 +2106,7 @@ export type RendicionItem = {
   ruc: string | null; razon: string | null; fecha: string | null; categoria: string | null;
   subtotal: string; igv: string; total: string; deducible: boolean; archivo: string | null;
 };
+export type SaldoRendir = { userId: string | null; nombre: string; saldo: number; count: number };
+export type SaldosRendirResponse = { saldos: SaldoRendir[]; total: number; miSaldo: number; miCount: number };
 export type RendicionInput = { modo: 'reembolso' | 'anticipo'; tipo: string; concepto?: string | null; fecha: string; proyectoId?: string | null; cuentaId?: string | null; montoAnticipo?: number };
 export type RendicionItemInput = { tipoComprobante: 'factura' | 'boleta' | 'rh' | 'recibo'; serie?: string | null; numero?: string | null; ruc?: string | null; razon?: string | null; fecha?: string | null; categoria?: string | null; subtotal: number; igv: number; total: number; deducible: boolean; archivo?: string | null };
