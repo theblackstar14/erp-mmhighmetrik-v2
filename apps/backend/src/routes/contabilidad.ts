@@ -41,6 +41,10 @@ router.use(requireAuth);
 const D2 = (n: number) => n.toFixed(2);
 const periodoDe = (fecha: string) => String(fecha).slice(0, 7);
 const RECON_TOLERANCE = 0.05; // F3-B · tolerancia monetaria única (neto + por-doc + redondeo)
+// DEVENGADO · el ingreso de una valorización se reconoce cuando se APRUEBA (percepción del ingreso),
+// no cuando se factura. Estos estados generan el asiento de venta 70/12/40111.
+// Ojo: el PLE Registro de Ventas (14.1) sí es por comprobante → ese sigue filtrando solo facturada/cobrada.
+const VALO_DEVENGADO = ['aprobada', 'conformidad_supervision', 'facturada', 'cobrada'] as const;
 
 // ── Periodo helpers (tabla periodos_contables: anio+mes+estado · proyectoId null = empresa) ──
 const partesPeriodo = (periodo: string) => {
@@ -92,9 +96,11 @@ async function crearAsiento(opts: {
   const haber = lineas.reduce((s, l) => s + l.haber, 0);
   if (lineas.length < 2) throw new Error('Asiento necesita al menos 2 líneas');
   const delta = debe - haber; // >0 falta haber · <0 falta debe
-  if (Math.abs(delta) > 0.05) throw new Error(`Asiento descuadrado: debe ${D2(debe)} ≠ haber ${D2(haber)}`);
+  // Umbral de redondeo. Un asiento de planilla acumula redondeo de decenas de líneas (sueldo/EsSalud/ONP/SCTR…)
+  // y llegaba a ~S/0.09 > 0.05 → reventaba. Real descuadre (línea faltante) siempre es ≥ S/1. 0.50 separa ambos.
+  if (Math.abs(delta) > 0.50) throw new Error(`Asiento descuadrado: debe ${D2(debe)} ≠ haber ${D2(haber)}`);
   if (Math.abs(delta) > 0.01) {
-    // Regla 2 · redondeo ≤ S/0.05 → línea automática de ajuste (659 pérdida / 759 ganancia)
+    // Regla 2 · redondeo ≤ S/0.50 → línea automática de ajuste (659 pérdida / 759 ganancia)
     if (delta > 0) lineas.push({ cuenta: '759', descripcion: 'Ajuste por redondeo', debe: 0, haber: Math.abs(delta) });
     else lineas.push({ cuenta: '659', descripcion: 'Ajuste por redondeo', debe: Math.abs(delta), haber: 0 });
   }
@@ -465,7 +471,7 @@ async function calcCobertura(periodo: string) {
     db.select({ origen: schema.asientos.origen, origenId: schema.asientos.origenId }).from(schema.asientos).where(and(dsql`${schema.asientos.origen} != 'manual'`, dsql`${schema.asientos.status} != 'anulado'`)),
     db.select({ id: schema.gastos.id, total: schema.gastos.total }).from(schema.gastos).where(and(gte(schema.gastos.fecha, desde), lte(schema.gastos.fecha, hasta))),
     db.select({ id: schema.ordenesCompra.id, pagadoEn: schema.ordenesCompra.pagadoEn }).from(schema.ordenesCompra).where(eq(schema.ordenesCompra.estadoPago, 'pagada')),
-    db.select({ id: schema.valorizaciones.id, status: schema.valorizaciones.status, mesPeriodo: schema.valorizaciones.mesPeriodo, fechaEmision: schema.valorizaciones.fechaEmision }).from(schema.valorizaciones).where(inArray(schema.valorizaciones.status, ['facturada', 'cobrada'])),
+    db.select({ id: schema.valorizaciones.id, status: schema.valorizaciones.status, mesPeriodo: schema.valorizaciones.mesPeriodo, fechaEmision: schema.valorizaciones.fechaEmision }).from(schema.valorizaciones).where(inArray(schema.valorizaciones.status, [...VALO_DEVENGADO])),
     db.select({ id: schema.planillaSemanas.id }).from(schema.planillaSemanas).where(and(gte(schema.planillaSemanas.fechaFin, desde), lte(schema.planillaSemanas.fechaFin, hasta))),
   ]);
   const yaSet = new Set(generados.map((a) => `${a.origen}:${a.origenId}`));
@@ -533,6 +539,93 @@ router.get('/mayor-resumen', async (req, res) => {
       debe: filas.reduce((s, f) => s + f.debe, 0),
       haber: filas.reduce((s, f) => s + f.haber, 0),
     },
+  });
+});
+
+// ── Estados Financieros · Balance de Comprobación + ESF + ER (derivados del mayor) ──
+// No postea asiento de cierre: el ESF muestra "resultado antes de IR" → cuadra POR CONSTRUCCIÓN
+// (los asientos ya están balanceados; check = -Σ(clase 8/9), que es 0 sin asiento de cierre).
+// El IR es estimación RMT informativa (provisión NO asentada · la asienta la contadora al cierre anual).
+const UIT_DEFAULT = 5350; // ponytail: UIT 2026 · editar por query ?uit= si cambia la RS anual
+router.get('/estados-financieros', async (req, res) => {
+  const { anio, uit } = req.query as { anio?: string; uit?: string };
+  const UIT = Number(uit) > 0 ? Number(uit) : UIT_DEFAULT;
+  const hastaPer = anio && /^\d{4}$/.test(anio) ? `${anio}-12` : null; // corte a dic del año, o todo el histórico
+  const rows = await db
+    .select({
+      cuenta: schema.asientosLineas.cuenta,
+      debe: dsql<number>`coalesce(sum(${schema.asientosLineas.debe}),0)::float8`,
+      haber: dsql<number>`coalesce(sum(${schema.asientosLineas.haber}),0)::float8`,
+    })
+    .from(schema.asientosLineas)
+    .innerJoin(schema.asientos, eq(schema.asientosLineas.asientoId, schema.asientos.id))
+    .where(hastaPer
+      ? and(eq(schema.asientos.status, 'registrado'), dsql`${schema.asientos.periodo} <= ${hastaPer}`)
+      : eq(schema.asientos.status, 'registrado'))
+    .groupBy(schema.asientosLineas.cuenta);
+  const plan = await db.select().from(schema.planContable);
+  const nombre = new Map(plan.map((p) => [p.codigo, p.descripcion]));
+
+  // Balance de comprobación (por cuenta · debe/haber acumulados + saldos deudor/acreedor)
+  const balance = rows
+    .filter((r) => Math.abs(r.debe) > 0.004 || Math.abs(r.haber) > 0.004)
+    .map((r) => {
+      const saldo = r.debe - r.haber;
+      return {
+        cuenta: r.cuenta, descripcion: nombre.get(r.cuenta) ?? r.cuenta,
+        debe: r.debe, haber: r.haber,
+        saldoDeudor: saldo > 0 ? saldo : 0, saldoAcreedor: saldo < 0 ? -saldo : 0,
+      };
+    })
+    .sort((a, b) => a.cuenta.localeCompare(b.cuenta));
+
+  // Agrupa por 2 dígitos dentro de una clase (elemento PCGE), con signo natural (deudor +1 / acreedor -1)
+  const grupo = (pred: (c: string) => boolean, signo: 1 | -1) => {
+    const m = new Map<string, { grupo: string; descripcion: string; monto: number }>();
+    for (const r of rows) {
+      if (!pred(r.cuenta)) continue;
+      const g2 = r.cuenta.slice(0, 2);
+      const cur = m.get(g2) ?? { grupo: g2, descripcion: nombre.get(g2) ?? nombre.get(r.cuenta) ?? g2, monto: 0 };
+      cur.monto += signo * (r.debe - r.haber);
+      m.set(g2, cur);
+    }
+    return [...m.values()].filter((x) => Math.abs(x.monto) > 0.004).sort((a, b) => a.grupo.localeCompare(b.grupo));
+  };
+  const cls = (d: string) => (c: string) => c.startsWith(d);
+  const activo = [cls('1'), cls('2'), cls('3')].flatMap((p) => grupo(p, 1));
+  const pasivo = grupo(cls('4'), -1);
+  const patrimonioBase = grupo(cls('5'), -1);
+  const ingresos = grupo(cls('7'), -1);
+  const gastos = grupo(cls('6'), 1);
+  const sum = (a: { monto: number }[]) => a.reduce((s, x) => s + x.monto, 0);
+
+  const totalActivo = sum(activo);
+  const totalPasivo = sum(pasivo);
+  const totalPatrimonioBase = sum(patrimonioBase);
+  const totalIngresos = sum(ingresos);
+  const totalGastos = sum(gastos);
+  const utilidadAntesIR = totalIngresos - totalGastos;
+
+  // IR RMT: 10% hasta 15 UIT de utilidad neta, 29.5% sobre el exceso (solo si hay utilidad)
+  const tope = 15 * UIT;
+  const ir = utilidadAntesIR <= 0 ? 0
+    : Math.min(utilidadAntesIR, tope) * 0.10 + Math.max(0, utilidadAntesIR - tope) * 0.295;
+  const utilidadNeta = utilidadAntesIR - ir;
+
+  const totalPatrimonio = totalPatrimonioBase + utilidadAntesIR; // ESF cuadra con resultado ANTES de IR
+  const checkEsf = totalActivo - (totalPasivo + totalPatrimonio);
+
+  res.json({
+    anio: anio ?? 'acumulado', uit: UIT,
+    balanceComprobacion: {
+      filas: balance,
+      totales: {
+        debe: balance.reduce((s, f) => s + f.debe, 0), haber: balance.reduce((s, f) => s + f.haber, 0),
+        saldoDeudor: balance.reduce((s, f) => s + f.saldoDeudor, 0), saldoAcreedor: balance.reduce((s, f) => s + f.saldoAcreedor, 0),
+      },
+    },
+    esf: { activo, pasivo, patrimonio: patrimonioBase, totalActivo, totalPasivo, totalPatrimonioBase, resultadoEjercicio: utilidadAntesIR, totalPatrimonio, check: checkEsf },
+    er: { ingresos, gastos, totalIngresos, totalGastos, utilidadAntesIR, ir, regimen: 'RMT · 10% hasta 15 UIT, 29.5% exceso', utilidadNeta },
   });
 });
 
@@ -627,10 +720,13 @@ router.post('/generar', async (req, res) => {
   const asientoBase = { nextCorrelativo: () => `${corrPref}${String(++corrN).padStart(4, '0')}`, skipPeriodoCheck: true as const, validCuentas: planCodes, userId: req.user!.id };
   const gen = (o: Parameters<typeof crearAsiento>[0]) => crearAsiento({ ...o, ...asientoBase });
 
-  // 1· GASTOS → provisión compra (60x/63x + 40111 / 4212)
+  // 1· GASTOS → provisión compra (60x/63x + 40111 / 4212). Determinación de cuenta = mapa editable de la DB.
   const gastosList = await db.select().from(schema.gastos).where(and(gte(schema.gastos.fecha, desde), lte(schema.gastos.fecha, hasta)));
+  const cuentaMap = new Map((await db.select().from(schema.gastoCuentaMap)).map((m) => [m.tipoGasto, m]));
   for (const g of gastosList) {
     if (yaSet.has(`gasto:${g.id}`)) continue;
+    const cm = cuentaMap.get(g.tipoGasto ?? '');
+    if (cm && !cm.esGasto) continue; // no es gasto (financiamiento/CxC) → no se provisiona como compra
     try {
       const subtotal = Number(g.subtotal) + Number(g.exonerado);
       const igv = Number(g.igv);
@@ -647,7 +743,7 @@ router.post('/generar', async (req, res) => {
         contraparteRuc: g.proveedorRuc,
         contraparteRazon: g.proveedorRazon,
         lineas: [
-          { cuenta: cuentaGasto(g.tipoGasto), descripcion: g.tipoGasto ?? 'Gasto', debe: subtotal, haber: 0 },
+          { cuenta: cm?.cuenta ?? cuentaGasto(g.tipoGasto), descripcion: g.tipoGasto ?? 'Gasto', debe: subtotal, haber: 0 },
           { cuenta: '40111', descripcion: 'IGV crédito fiscal', debe: igv, haber: 0 },
           { cuenta: '4212', descripcion: 'Por pagar', debe: 0, haber: total },
         ],
@@ -686,8 +782,8 @@ router.post('/generar', async (req, res) => {
     }
   }
 
-  // 3· VALORIZACIONES facturadas/cobradas del periodo → 1212 / 7041 + 40111
-  const valos = await db.select().from(schema.valorizaciones).where(inArray(schema.valorizaciones.status, ['facturada', 'cobrada']));
+  // 3· VALORIZACIONES devengadas del periodo (aprobadas+) → 1212 / 7041 + 40111
+  const valos = await db.select().from(schema.valorizaciones).where(inArray(schema.valorizaciones.status, [...VALO_DEVENGADO]));
   for (const v of valos) {
     const mes = v.mesPeriodo ?? periodoDe(String(v.fechaEmision));
     if (mes !== periodo) continue;
@@ -698,7 +794,7 @@ router.post('/generar', async (req, res) => {
         const total = Number(v.montoTotalConIgv ?? v.montoTotal);
         await gen({
           fecha: String(v.fechaEmision),
-          glosa: `Valorización N°${v.numero} facturada`,
+          glosa: `Valorización N°${v.numero} devengada`,
           origen: 'valorizacion',
           origenId: v.id,
           proyectoId: v.proyectoId,
@@ -1744,14 +1840,16 @@ async function filasVentasPeriodo(periodo: string): Promise<ple.FilaVenta[]> {
     const proy = proyMap.get(v.proyectoId);
     const cli = proy?.clienteId ? cliMap.get(proy.clienteId) : null;
     return {
-      fecha: v.fechaEmision,
-      tipoComprobante: 'Factura',
-      // ponytail: no guardamos serie/número de la factura emitida → placeholder F001-<numero valo>.
-      // Reemplazar cuando se capture el comprobante electrónico real (campo en valorizaciones).
-      serie: 'F001', numero: String(v.numero),
+      fecha: v.comprobanteFecha ?? v.fechaEmision,
+      tipoComprobante: v.comprobanteTipo === 'boleta' ? 'Boleta' : 'Factura',
+      // comprobante real capturado al facturar (o mock F001-correlativo); fallback al placeholder viejo si faltara
+      serie: v.comprobanteSerie ?? 'F001', numero: v.comprobanteNumero ?? String(v.numero),
       clienteRuc: cli?.ruc ?? null, clienteRazon: cli?.razonSocial ?? null,
       baseGravada: Number(v.montoCd), igv: Number(v.montoIgv), exonerado: 0, total: Number(v.montoTotal),
       tipoCambio: null,
+      fechaVencimiento: v.comprobanteFechaVenc ?? v.comprobanteFecha ?? v.fechaEmision, // RVIE 5
+      proyectoCodigo: proy?.codigo ?? null,                                              // RVIE 32
+      detraccion: v.comprobanteDetraccion ? Number(v.comprobanteDetraccion) : null,      // RVIE 39
     };
   });
 }
@@ -1797,6 +1895,8 @@ router.get('/ple/resumen', async (req, res) => {
       '14.1': { nombre: ple.LIBROS['14.1'].nombre, filas: ventas.length },
       '5.1': { nombre: ple.LIBROS['5.1'].nombre, filas: diario.length },
       '6.1': { nombre: ple.LIBROS['6.1'].nombre, filas: diario.length },
+      RCE: { nombre: ple.LIBROS.RCE.nombre, filas: compras.length },
+      RVIE: { nombre: ple.LIBROS.RVIE.nombre, filas: ventas.length },
     },
   });
 });
@@ -1806,20 +1906,46 @@ router.get('/ple', async (req, res) => {
   const periodo = String(req.query.periodo ?? '');
   const libro = String(req.query.libro ?? '') as ple.LibroKey;
   if (!/^\d{4}-\d{2}$/.test(periodo)) return res.status(400).json({ error: 'periodo inválido (YYYY-MM)' });
-  if (!ple.LIBROS[libro]) return res.status(400).json({ error: 'libro inválido (5.1|6.1|8.1|14.1)' });
+  if (!ple.LIBROS[libro]) return res.status(400).json({ error: 'libro inválido (5.1|6.1|8.1|14.1|RCE|RVIE)' });
 
   let contenido = '';
   if (libro === '8.1') contenido = ple.compras80100(periodo, await filasComprasPeriodo(periodo));
   else if (libro === '14.1') contenido = ple.ventas140100(periodo, await filasVentasPeriodo(periodo));
   else if (libro === '5.1') contenido = ple.diario50100(periodo, await filasDiarioPeriodo(periodo));
   else if (libro === '6.1') contenido = ple.mayor60100(periodo, await filasDiarioPeriodo(periodo));
+  else if (libro === 'RCE') contenido = ple.rceCompras(periodo, await filasComprasPeriodo(periodo)); // SIRE
+  else if (libro === 'RVIE') contenido = ple.rvieVentas(periodo, await filasVentasPeriodo(periodo)); // SIRE
 
   const conOper = contenido.length > 0;
-  const nombre = ple.nombreArchivo(periodo, ple.LIBROS[libro].codigo, conOper);
+  const nombre = ple.LIBROS[libro].sire
+    ? ple.sireNombreArchivo(periodo, libro as 'RCE' | 'RVIE')
+    : ple.nombreArchivo(periodo, ple.LIBROS[libro].codigo, conOper);
   if (conOper) contenido += '\r\n'; // PLE: cada línea termina en CRLF, incluida la última
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="${nombre}"`);
   res.send(contenido);
+});
+
+// ── Determinación de cuentas · mapa tipoGasto → cuenta PCGE (editable por la contadora) ──
+router.get('/cuentas-tipo', async (_req, res) => {
+  const [mapa, plan] = await Promise.all([
+    db.select().from(schema.gastoCuentaMap).orderBy(asc(schema.gastoCuentaMap.tipoGasto)),
+    db.select({ codigo: schema.planContable.codigo, nombre: schema.planContable.descripcion }).from(schema.planContable).orderBy(asc(schema.planContable.codigo)),
+  ]);
+  res.json({ mapa, plan });
+});
+router.put('/cuentas-tipo/:tipo', async (req, res) => {
+  const tipo = String(req.params.tipo);
+  const b = req.body as { cuenta?: string; esActivo?: boolean; esGasto?: boolean; clase?: string };
+  if (!b.cuenta) return res.status(400).json({ error: 'cuenta requerida' });
+  const claseOk = ['CD', 'GG_OBRA', 'GG_CORP'].includes(b.clase ?? '') ? b.clase! : 'CD';
+  const set = { cuenta: b.cuenta, esActivo: !!b.esActivo, esGasto: b.esGasto ?? true, clase: claseOk, actualizadoEn: new Date() };
+  const [row] = await db.insert(schema.gastoCuentaMap)
+    .values({ tipoGasto: tipo, ...set })
+    .onConflictDoUpdate({ target: schema.gastoCuentaMap.tipoGasto, set })
+    .returning();
+  await audit(req, { action: 'update_config', entityType: 'gasto_cuenta_map', entityId: tipo, after: set });
+  res.json({ ok: true, row });
 });
 
 export default router;
