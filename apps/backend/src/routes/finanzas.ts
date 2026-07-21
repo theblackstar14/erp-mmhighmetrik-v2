@@ -163,7 +163,8 @@ router.post('/proyectos/:id/gastos', async (req, res) => {
   const parse = gastoSchema.safeParse(req.body);
   if (!parse.success) return res.status(400).json({ error: parse.error.flatten() });
   const values = { proyectoId: req.params.id!, ...toValues(parse.data) };
-  const cls = await resolverClase({ proyectoId: values.proyectoId, tipoGasto: values.tipoGasto, destino: parse.data.destino, clasificacion: parse.data.clasificacion });
+  // FINDING 2: ruta de proyecto → siempre destino='proyecto' (ignorar lo que diga el cliente)
+  const cls = await resolverClase({ proyectoId: values.proyectoId, tipoGasto: values.tipoGasto, destino: 'proyecto', clasificacion: parse.data.clasificacion });
   const [gasto] = await db.insert(schema.gastos).values({ ...values, ...cls }).returning();
   if (parse.data.inventariable && gasto) await crearDraftInventario(gasto);
   res.json({ gasto });
@@ -178,6 +179,21 @@ router.put('/gastos/:id', async (req, res) => {
     if (v === undefined) continue;
     if (['subtotal', 'igv', 'exonerado', 'total'].includes(k)) set[k] = dec(v as number);
     else set[k] = v;
+  }
+  // FINDING 1: mantener el invariante de clasificación también al editar (no confiar en el valor crudo del cliente)
+  if (d.destino !== undefined || d.clasificacion !== undefined) {
+    const [prev] = await db.select({ proyectoId: schema.gastos.proyectoId, tipoGasto: schema.gastos.tipoGasto, destino: schema.gastos.destino }).from(schema.gastos).where(eq(schema.gastos.id, req.params.id!)).limit(1);
+    if (prev) {
+      const cls = await resolverClase({
+        proyectoId: prev.proyectoId,
+        tipoGasto: d.tipoGasto ?? prev.tipoGasto,
+        destino: d.destino ?? prev.destino,
+        clasificacion: d.clasificacion,
+      });
+      set.destino = cls.destino;
+      set.clasificacion = cls.clasificacion;
+      set.clasificacionOrigen = cls.clasificacionOrigen;
+    }
   }
   const [gasto] = await db.update(schema.gastos).set(set).where(eq(schema.gastos.id, req.params.id!)).returning();
   if (!gasto) return res.status(404).json({ error: 'Gasto no encontrado' });
