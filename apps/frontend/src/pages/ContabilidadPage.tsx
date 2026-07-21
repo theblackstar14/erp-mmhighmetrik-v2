@@ -26,7 +26,7 @@ import { useAuthStore } from '@/lib/auth-store.js';
 import { cn, fmtPEN } from '@/lib/utils.js';
 import { SkelRows, TabFade } from '@/components/ui/Skeleton.js';
 
-type Tab = 'plan' | 'diario' | 'mayor' | 'bancos' | 'sombra' | 'fiscal' | 'reportes' | 'auditoria';
+type Tab = 'plan' | 'diario' | 'mayor' | 'bancos' | 'sombra' | 'fiscal' | 'eeff' | 'reportes' | 'auditoria' | 'cuentas';
 
 const hoyPeriodo = () => new Date().toISOString().slice(0, 7);
 
@@ -56,6 +56,8 @@ export function ContabilidadPage() {
             ['bancos', 'Bancos y Conciliación', Landmark],
             ['sombra', 'Sombra 104x', Scale],
             ['fiscal', 'Fiscal (IGV / Renta)', Calculator],
+            ['eeff', 'Estados Financieros', Scale],
+            ['cuentas', 'Cuentas por tipo', BookOpen],
             ['reportes', 'Reportes', FileSpreadsheet],
             ['auditoria', 'Auditoría', History],
           ] as const).map(([k, l, Icon]) => (
@@ -75,6 +77,8 @@ export function ContabilidadPage() {
         {tab === 'bancos' && <BancosTab />}
         {tab === 'sombra' && <SombraTab periodo={periodo} />}
         {tab === 'fiscal' && <FiscalTab periodo={periodo} />}
+        {tab === 'eeff' && <EstadosFinancierosTab />}
+        {tab === 'cuentas' && <CuentasTipoTab />}
         {tab === 'reportes' && <ReportesTab periodo={periodo} />}
         {tab === 'auditoria' && <AuditoriaTab periodo={periodo} />}
       </TabFade>
@@ -393,9 +397,6 @@ function DiarioTab({ periodo }: { periodo: string }) {
           </button>
           <button onClick={() => setNuevoOpen(true)} className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md bg-primary text-primary-foreground text-[12px] font-medium hover:opacity-90">
             <Plus className="h-3.5 w-3.5" /> Manual
-          </button>
-          <button onClick={() => alert('Export PLE SUNAT · próximamente')} className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-line text-[12px] text-ink-3 hover:bg-bg-sunken" title="Próximamente">
-            PLE SUNAT
           </button>
         </div>
       </div>
@@ -737,10 +738,10 @@ function BancosTab() {
         </table>
       </div>
 
-      <div className="rounded-lg border border-dashed border-line-strong bg-bg-elev p-5 text-center">
+      <div className="rounded-lg border border-line bg-bg-elev p-5 text-center">
         <div className="text-[13px] font-semibold">Conciliación contra extracto bancario</div>
         <div className="text-[11.5px] text-ink-3 mt-1">Importar estado de cuenta (Excel/CSV del banco) → matching automático con movimientos → ajustes con un click</div>
-        <div className="text-[10px] font-mono uppercase tracking-wider text-ink-4 mt-2">Próximamente</div>
+        <a href="/finanzas" className="inline-block mt-2 text-[11px] text-primary hover:underline">Disponible en Finanzas → Conciliación →</a>
       </div>
 
       <p className="text-[10.5px] text-ink-4">Tip: crea divisionarias por banco (ej. 10411 BCP MN, 10412 BCP ME) en el Plan Contable para conciliar cuenta por cuenta.</p>
@@ -1354,8 +1355,8 @@ function FiscalTab({ periodo }: { periodo: string }) {
           <p className="text-[10.5px] text-ink-4 mt-3">{data.renta.regimen} · al superar 300 UIT de ingresos anuales pasa a 1.5%/coeficiente (lo ajustamos cuando aplique).</p>
         </div>
       </div>
-      <div className="rounded-lg border border-dashed border-line-strong bg-bg-elev p-5 text-center text-[11.5px] text-ink-3">
-        Detracciones · percepciones · retenciones → se incorporan con la conciliación bancaria (próximamente)
+      <div className="rounded-lg border border-line bg-bg-elev p-5 text-center text-[11.5px] text-ink-3">
+        Detracciones · percepciones · retenciones se capturan en cada movimiento y en la valorización (desglose fiscal).
       </div>
     </div>
   );
@@ -1448,43 +1449,219 @@ function ReportesTab({ periodo }: { periodo: string }) {
   );
 }
 
+// ─── Estados Financieros · Balance de Comprobación + ESF + ER (derivados del mayor) ───
+function EstadosFinancierosTab() {
+  const anioActual = new Date().getFullYear();
+  const [anio, setAnio] = useState(String(anioActual));
+  const q = useQuery({ queryKey: ['ctb-eeff', anio], queryFn: () => api.contabilidad.estadosFinancieros(anio) });
+  const d = q.data;
+  const anios = Array.from({ length: 5 }, (_, i) => String(anioActual - i));
+
+  const Row = ({ g, m, bold }: { g: string; m: number; bold?: boolean }) => (
+    <div className={cn('flex justify-between gap-3 py-1 text-[12px]', bold && 'font-semibold border-t border-line mt-0.5 pt-1.5')}>
+      <span className={cn(bold ? 'text-foreground' : 'text-ink-2')}>{g}</span>
+      <span className="font-mono tabular-nums">{fmtPEN(m)}</span>
+    </div>
+  );
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <h2 className="text-[15px] font-semibold">Estados Financieros</h2>
+          <p className="text-[11px] text-ink-4">Balance de Comprobación · ESF · Estado de Resultados — derivados de los asientos registrados</p>
+        </div>
+        <label className="flex items-center gap-2">
+          <span className="text-[11px] font-mono uppercase tracking-wider text-ink-4">Ejercicio</span>
+          <select value={anio} onChange={(e) => setAnio(e.target.value)} className="h-9 px-3 rounded-md border border-line bg-bg-elev text-[12.5px]">
+            {anios.map((a) => <option key={a} value={a}>{a}</option>)}
+          </select>
+        </label>
+      </div>
+
+      {q.isLoading && <div className="text-[12px] text-ink-4">Cargando…</div>}
+      {d && (
+        <>
+          {/* ESF + ER lado a lado */}
+          <div className="grid lg:grid-cols-2 gap-4">
+            {/* ESF */}
+            <div className="rounded-lg border border-line bg-bg-elev p-4">
+              <h3 className="text-[13px] font-semibold mb-2">Estado de Situación Financiera</h3>
+              <div className="grid grid-cols-2 gap-x-5">
+                <div>
+                  <p className="text-[10.5px] font-mono uppercase tracking-wider text-ink-4 mb-1">Activo</p>
+                  {d.esf.activo.map((x) => <Row key={x.grupo} g={`${x.grupo} · ${x.descripcion}`} m={x.monto} />)}
+                  <Row g="Total Activo" m={d.esf.totalActivo} bold />
+                </div>
+                <div>
+                  <p className="text-[10.5px] font-mono uppercase tracking-wider text-ink-4 mb-1">Pasivo + Patrimonio</p>
+                  {d.esf.pasivo.map((x) => <Row key={x.grupo} g={`${x.grupo} · ${x.descripcion}`} m={x.monto} />)}
+                  {d.esf.patrimonio.map((x) => <Row key={x.grupo} g={`${x.grupo} · ${x.descripcion}`} m={x.monto} />)}
+                  <Row g="Resultado del ejercicio (antes IR)" m={d.esf.resultadoEjercicio} />
+                  <Row g="Total Pasivo + Patrimonio" m={d.esf.totalPasivo + d.esf.totalPatrimonio} bold />
+                </div>
+              </div>
+              <div className="mt-2 pt-2 border-t border-line flex items-center gap-2 text-[10.5px]">
+                {Math.abs(d.esf.check) < 0.01
+                  ? <span className="chip emerald">✓ Cuadra (Activo = Pasivo + Patrimonio)</span>
+                  : <span className="chip amber">Descuadre {fmtPEN(d.esf.check)}</span>}
+              </div>
+            </div>
+
+            {/* ER */}
+            <div className="rounded-lg border border-line bg-bg-elev p-4">
+              <h3 className="text-[13px] font-semibold mb-2">Estado de Resultados (por naturaleza)</h3>
+              <p className="text-[10.5px] font-mono uppercase tracking-wider text-ink-4 mb-1">Ingresos</p>
+              {d.er.ingresos.map((x) => <Row key={x.grupo} g={`${x.grupo} · ${x.descripcion}`} m={x.monto} />)}
+              <Row g="Total Ingresos" m={d.er.totalIngresos} bold />
+              <p className="text-[10.5px] font-mono uppercase tracking-wider text-ink-4 mb-1 mt-3">Gastos</p>
+              {d.er.gastos.map((x) => <Row key={x.grupo} g={`${x.grupo} · ${x.descripcion}`} m={x.monto} />)}
+              <Row g="Total Gastos" m={d.er.totalGastos} bold />
+              <div className="mt-3 pt-2 border-t border-line space-y-0.5">
+                <Row g="Utilidad antes de IR" m={d.er.utilidadAntesIR} bold />
+                <Row g={`(−) Impuesto a la Renta · estimado`} m={-d.er.ir} />
+                <Row g="Utilidad neta del ejercicio" m={d.er.utilidadNeta} bold />
+              </div>
+              <p className="text-[10px] text-ink-4 mt-2 leading-relaxed">
+                IR estimado bajo <b>{d.er.regimen}</b> (UIT {fmtPEN(d.uit)}). <b className="text-warn-ink">Provisión informativa</b> — la contadora asienta el IR y el asiento de cierre al cierre anual.
+              </p>
+            </div>
+          </div>
+
+          {/* Balance de Comprobación */}
+          <div className="rounded-lg border border-line bg-bg-elev overflow-hidden">
+            <div className="px-4 py-2.5 border-b border-line"><h3 className="text-[13px] font-semibold">Balance de Comprobación (sumas y saldos)</h3></div>
+            <div className="overflow-x-auto max-h-[420px]">
+              <table className="w-full text-[11.5px]">
+                <thead className="sticky top-0 bg-bg-sunken text-ink-3">
+                  <tr className="border-b border-line">
+                    <th className="px-3 py-2 text-left font-medium">Cuenta</th>
+                    <th className="px-3 py-2 text-left font-medium">Descripción</th>
+                    <th className="px-3 py-2 text-right font-medium">Debe</th>
+                    <th className="px-3 py-2 text-right font-medium">Haber</th>
+                    <th className="px-3 py-2 text-right font-medium">Saldo Deudor</th>
+                    <th className="px-3 py-2 text-right font-medium">Saldo Acreedor</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {d.balanceComprobacion.filas.map((f) => (
+                    <tr key={f.cuenta} className="border-b border-line/60 hover:bg-bg-sunken/50">
+                      <td className="px-3 py-1.5 font-mono">{f.cuenta}</td>
+                      <td className="px-3 py-1.5 text-ink-2">{f.descripcion}</td>
+                      <td className="px-3 py-1.5 text-right font-mono tabular-nums">{f.debe ? fmtPEN(f.debe) : '—'}</td>
+                      <td className="px-3 py-1.5 text-right font-mono tabular-nums">{f.haber ? fmtPEN(f.haber) : '—'}</td>
+                      <td className="px-3 py-1.5 text-right font-mono tabular-nums">{f.saldoDeudor ? fmtPEN(f.saldoDeudor) : '—'}</td>
+                      <td className="px-3 py-1.5 text-right font-mono tabular-nums">{f.saldoAcreedor ? fmtPEN(f.saldoAcreedor) : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot className="bg-bg-sunken font-semibold">
+                  <tr>
+                    <td className="px-3 py-2" colSpan={2}>Totales</td>
+                    <td className="px-3 py-2 text-right font-mono tabular-nums">{fmtPEN(d.balanceComprobacion.totales.debe)}</td>
+                    <td className="px-3 py-2 text-right font-mono tabular-nums">{fmtPEN(d.balanceComprobacion.totales.haber)}</td>
+                    <td className="px-3 py-2 text-right font-mono tabular-nums">{fmtPEN(d.balanceComprobacion.totales.saldoDeudor)}</td>
+                    <td className="px-3 py-2 text-right font-mono tabular-nums">{fmtPEN(d.balanceComprobacion.totales.saldoAcreedor)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 // PLE SUNAT · descarga de libros electrónicos TXT (C5)
 function PleExport({ periodo }: { periodo: string }) {
   const { data, isLoading } = useQuery({ queryKey: ['ctb-ple', periodo], queryFn: () => api.contabilidad.pleResumen(periodo) });
-  const LIBROS: { key: '8.1' | '14.1' | '5.1' | '6.1'; etiqueta: string }[] = [
+  const PLE: { key: '8.1' | '14.1' | '5.1' | '6.1'; etiqueta: string }[] = [
     { key: '8.1', etiqueta: '8.1 · Registro de Compras' },
     { key: '14.1', etiqueta: '14.1 · Registro de Ventas' },
     { key: '5.1', etiqueta: '5.1 · Libro Diario' },
     { key: '6.1', etiqueta: '6.1 · Libro Mayor' },
   ];
+  const SIRE: { key: 'RCE' | 'RVIE'; etiqueta: string }[] = [
+    { key: 'RCE', etiqueta: 'RCE · Compras' },
+    { key: 'RVIE', etiqueta: 'RVIE · Ventas' },
+  ];
+  const Card = ({ k, etiqueta }: { k: '8.1' | '14.1' | '5.1' | '6.1' | 'RCE' | 'RVIE'; etiqueta: string }) => {
+    const filas = data?.libros[k]?.filas ?? 0;
+    const vacio = filas === 0;
+    return (
+      <a href={vacio ? undefined : api.contabilidad.pleUrl(periodo, k)}
+        className={cn('rounded-md border border-line p-3 flex flex-col gap-1 transition-colors', vacio ? 'opacity-50 pointer-events-none' : 'hover:bg-bg-sunken hover:border-primary/40 cursor-pointer')}>
+        <span className="text-[12px] font-medium">{etiqueta}</span>
+        <span className="text-[10.5px] text-ink-4">{isLoading ? '…' : `${filas} ${filas === 1 ? 'línea' : 'líneas'}`}</span>
+        {!vacio && <span className="text-[10px] text-primary inline-flex items-center gap-1"><Download className="h-3 w-3" /> Descargar TXT</span>}
+      </a>
+    );
+  };
   return (
-    <div className="rounded-lg border border-line bg-bg-elev p-4">
-      <div className="flex items-center gap-2 mb-3">
-        <Download className="h-4 w-4 text-ink-3" />
-        <h3 className="text-[13px] font-semibold">Export PLE SUNAT · libros electrónicos {periodo}</h3>
+    <div className="rounded-lg border border-line bg-bg-elev p-4 space-y-4">
+      <div>
+        <div className="flex items-center gap-2 mb-1"><Download className="h-4 w-4 text-ink-3" /><h3 className="text-[13px] font-semibold">PLE · SLE-PLE {periodo}</h3></div>
+        <p className="text-[10.5px] text-ink-4 mb-2.5">Diario, Mayor, Compras y Ventas se suben por el programa <b>PLE (SLE-PLE)</b>.</p>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">{PLE.map((l) => <Card key={l.key} k={l.key} etiqueta={l.etiqueta} />)}</div>
       </div>
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
-        {LIBROS.map(({ key, etiqueta }) => {
-          const filas = data?.libros[key]?.filas ?? 0;
-          const vacio = filas === 0;
-          return (
-            <a
-              key={key}
-              href={vacio ? undefined : api.contabilidad.pleUrl(periodo, key)}
-              className={cn('rounded-md border border-line p-3 flex flex-col gap-1 transition-colors',
-                vacio ? 'opacity-50 pointer-events-none' : 'hover:bg-bg-sunken hover:border-primary/40 cursor-pointer')}
-            >
-              <span className="text-[12px] font-medium">{etiqueta}</span>
-              <span className="text-[10.5px] text-ink-4">{isLoading ? '…' : `${filas} ${filas === 1 ? 'línea' : 'líneas'}`}</span>
-              {!vacio && <span className="text-[10px] text-primary inline-flex items-center gap-1"><Download className="h-3 w-3" /> Descargar TXT</span>}
-            </a>
-          );
-        })}
+      <div>
+        <div className="flex items-center gap-2 mb-1"><Download className="h-4 w-4 text-ink-3" /><h3 className="text-[13px] font-semibold">SIRE · importación {periodo} <span className="chip amber ml-1">borrador</span></h3></div>
+        <p className="text-[10.5px] text-ink-4 mb-2.5">Solo <b>Compras (RCE)</b> y <b>Ventas (RVIE)</b> van al <b>SIRE</b> (Diario/Mayor NO). Archivo de reemplazo de propuesta.</p>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">{SIRE.map((l) => <Card key={l.key} k={l.key} etiqueta={l.etiqueta} />)}</div>
       </div>
-      <p className="text-[10px] text-ink-4 mt-3 leading-relaxed">
-        Estructura PLE 5.x (RS 286-2009 y modificatorias). <b>Validar contra el PLE del contador</b> antes de presentar.
-        Ventas usa serie/número placeholder (<span className="font-mono">F001-N°valo</span>) hasta capturar la factura electrónica real. Diario/Mayor toman los asientos en estado <span className="font-mono">registrado</span> del periodo.
+      <p className="text-[10px] text-ink-4 leading-relaxed border-t border-line pt-3">
+        PLE: estructura RS 286-2009. <b className="text-warn-ink">SIRE (RCE/RVIE): borrador estructural</b> — validar el orden/cantidad exactos de campos contra el formato de importación SIRE vigente de SUNAT (o un archivo real de la contadora) antes de subir. Ventas usa serie/número placeholder hasta capturar la factura electrónica real.
       </p>
+    </div>
+  );
+}
+
+// Determinación de cuentas · mapa editable tipoGasto → cuenta PCGE (config, no hardcode)
+function CuentasTipoTab() {
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ['cuentas-tipo'], queryFn: () => api.contabilidad.getCuentasTipo() });
+  const upd = useMutation({
+    mutationFn: (v: { tipo: string; cuenta: string; esActivo: boolean; esGasto: boolean; clase: string }) => api.contabilidad.updateCuentaTipo(v.tipo, { cuenta: v.cuenta, esActivo: v.esActivo, esGasto: v.esGasto, clase: v.clase }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['cuentas-tipo'] }),
+  });
+  const mapa = q.data?.mapa ?? [];
+  const plan = q.data?.plan ?? [];
+  return (
+    <div className="space-y-3">
+      <div className="rounded-md bg-bg-sunken/50 px-3 py-2.5 text-[11.5px] text-ink-3 leading-relaxed">
+        A qué cuenta PCGE va cada tipo de gasto al generar los asientos automáticos. <b>Es activo</b> → rutea a activo fijo (33x) en vez de gasto. <b>Es gasto</b> desmarcado → no es gasto (financiamiento / cuenta por cobrar) y <b>no se provisiona</b> como compra. Lo edita la contadora, sin tocar código.
+      </div>
+      {q.isLoading ? <div className="text-[12px] text-ink-3">Cargando…</div> : (
+        <div className="rounded-md border border-line bg-bg-elev overflow-x-auto">
+          <table className="w-full">
+            <thead><tr className="border-b border-line bg-bg-sunken">{['Tipo de gasto', 'Cuenta PCGE', 'Es activo', 'Es gasto', 'Clase'].map((h, i) => <th key={h} className={cn('px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-ink-4', i > 1 ? 'text-center' : 'text-left')}>{h}</th>)}</tr></thead>
+            <tbody>
+              {mapa.map((m) => (
+                <tr key={m.tipoGasto} className={cn('border-b border-line', !m.esGasto && 'bg-amber-500/[0.04]')}>
+                  <td className="px-3 py-1.5 text-[12px] font-medium">{m.tipoGasto}</td>
+                  <td className="px-3 py-1.5">
+                    <select value={m.cuenta} onChange={(e) => upd.mutate({ tipo: m.tipoGasto, cuenta: e.target.value, esActivo: m.esActivo, esGasto: m.esGasto, clase: m.clase })}
+                      className="h-7 px-1.5 rounded border border-line bg-bg-elev text-[11.5px] font-mono max-w-[320px]">
+                      {plan.map((c) => <option key={c.codigo} value={c.codigo}>{c.codigo} · {c.nombre}</option>)}
+                    </select>
+                  </td>
+                  <td className="px-3 py-1.5 text-center"><input type="checkbox" checked={m.esActivo} onChange={(e) => upd.mutate({ tipo: m.tipoGasto, cuenta: m.cuenta, esActivo: e.target.checked, esGasto: m.esGasto, clase: m.clase })} /></td>
+                  <td className="px-3 py-1.5 text-center"><input type="checkbox" checked={m.esGasto} onChange={(e) => upd.mutate({ tipo: m.tipoGasto, cuenta: m.cuenta, esActivo: m.esActivo, esGasto: e.target.checked, clase: m.clase })} /></td>
+                  <td className="px-3 py-2">
+                    <select value={m.clase} onChange={(e) => upd.mutate({ tipo: m.tipoGasto, cuenta: m.cuenta, esActivo: m.esActivo, esGasto: m.esGasto, clase: e.target.value })}
+                      className="h-7 px-2 rounded-md border border-line bg-bg-elev text-[11.5px]">
+                      <option value="CD">Costo Directo</option>
+                      <option value="GG_OBRA">Gasto General de Obra</option>
+                      <option value="GG_CORP">Gasto Corporativo</option>
+                    </select>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
