@@ -19,7 +19,7 @@ import { type FinanzasResumen, type MovimientoInput, api } from '@/lib/api.js';
 import { cn, fmtPEN } from '@/lib/utils.js';
 import { invalidateResumen } from '@/lib/invalidate.js';
 import { NATURALEZAS_CONTABLES } from '@erp/shared';
-import { FinanzasTab } from '@/components/proyectos/tabs/FinanzasTab.js';
+import { FinanzasTab, GastoForm } from '@/components/proyectos/tabs/FinanzasTab.js';
 
 import { FinanzasOcQueue } from '@/components/finanzas/FinanzasOcQueue.js';
 import { Skel, SkelCards, SkelRows, TabFade } from '@/components/ui/Skeleton.js';
@@ -40,9 +40,12 @@ export function FinanzasPage() {
   const [filtro, setFiltro] = useState<string>('todos');
   const [sub, setSub] = useState<Sub>('resumen');
   const [movOpen, setMovOpen] = useState(false);
+  const [gastoOpen, setGastoOpen] = useState(false);
 
   const proyectosQ = useQuery({ queryKey: ['proyectos-list'], queryFn: () => api.proyectos.list() });
   const proyectos = proyectosQ.data?.proyectos ?? [];
+  const cuentasQ = useQuery({ queryKey: ['cuentas'], queryFn: () => api.finanzas.listCuentas() });
+  const qc = useQueryClient();
 
   const resumenQ = useQuery({
     queryKey: ['finanzas-resumen', filtro],
@@ -72,6 +75,12 @@ export function FinanzasPage() {
               </option>
             ))}
           </select>
+          <button
+            onClick={() => setGastoOpen(true)}
+            className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md bg-primary text-primary-foreground text-[12px] font-medium hover:opacity-90"
+          >
+            <Plus className="h-3.5 w-3.5" /> Registrar gasto
+          </button>
           <button
             onClick={() => setMovOpen(true)}
             className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md bg-primary text-primary-foreground text-[12px] font-medium hover:opacity-90"
@@ -122,6 +131,26 @@ export function FinanzasPage() {
       </TabFade>
 
       {movOpen && <MovModal proyectos={proyectos} defaultProyecto={filtro} onClose={() => setMovOpen(false)} />}
+      {gastoOpen && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 animate-backdropIn" onClick={(e) => e.target === e.currentTarget && setGastoOpen(false)}>
+          <div className="w-full max-w-2xl mt-10 rounded-xl border border-line bg-bg-elev p-4 shadow-xl animate-modalPop">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-[14px] font-semibold">Registrar gasto</h3>
+              <button onClick={() => setGastoOpen(false)} className="text-ink-4 hover:text-ink-2">✕</button>
+            </div>
+            <GastoForm
+              proyectos={proyectos}
+              cuentas={cuentasQ.data?.cuentas ?? []}
+              onDone={() => {
+                qc.invalidateQueries({ queryKey: ['gas-global'] });
+                qc.invalidateQueries({ queryKey: ['finanzas-resumen'] });
+                qc.invalidateQueries({ queryKey: ['costos-obra'] });
+                setGastoOpen(false);
+              }}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -314,10 +343,7 @@ function FlujoMini({ data, cajaActual }: { data: FinanzasResumen['flujoMensual']
     <div className="rounded-lg border border-line border-t-2 border-t-teal-600 bg-bg-elev p-4 flex flex-col">
       <div className="flex items-center justify-between mb-1">
         <h3 className="text-[11px] font-mono uppercase tracking-wider text-ink-4">Flujo de caja</h3>
-        <div className="inline-flex rounded border border-line p-0.5 bg-bg-sunken text-[9px]">
-          <span className="px-1.5 py-0.5 rounded-sm bg-bg-elev text-foreground font-medium">REAL</span>
-          <span className="px-1.5 py-0.5 text-ink-4" title="Próximamente">PROYECTADO</span>
-        </div>
+        <span className="text-[9px] font-mono uppercase tracking-wider text-ink-4 px-1.5 py-0.5 rounded border border-line bg-bg-sunken">REAL</span>
       </div>
       {data.length === 0 ? (
         <div className="text-center py-8 text-[11.5px] text-ink-3 flex-1">Sin movimientos</div>
@@ -419,7 +445,7 @@ function Garantias({ r }: { r: FinanzasResumen }) {
       {r.garantias.length === 0 ? (
         <div className="text-center py-8 text-[11.5px] text-ink-3 leading-relaxed">
           Sin cartas fianza registradas
-          <div className="text-[10.5px] text-ink-4 mt-1">Se cargarán desde el escaneo del contrato (próximamente)</div>
+          <div className="text-[10.5px] text-ink-4 mt-1">Regístralas en la pestaña Contractual del proyecto</div>
         </div>
       ) : (
         <div className="space-y-1.5">
@@ -451,6 +477,11 @@ function Garantias({ r }: { r: FinanzasResumen }) {
 // ─── Por cobrar / pagar ──────────────────────────────────────
 type Row = { id: string; label: string; sub: string; monto: number; chip: string };
 function CobrarPagar({ title, total, tone, accent, rows, empty }: { title: string; total: number; tone: 'ok' | 'warn'; accent: keyof typeof ACENTO; rows: Row[]; empty: string }) {
+  const [page, setPage] = useState(0);
+  const PAGE = 10;
+  const totalPages = Math.max(1, Math.ceil(rows.length / PAGE));
+  const pageSafe = Math.min(page, totalPages - 1);
+  const rowsPage = rows.slice(pageSafe * PAGE, pageSafe * PAGE + PAGE);
   return (
     <div className={cn('rounded-lg border border-line border-t-2 bg-bg-elev p-4', ACENTO[accent].border)}>
       <div className="flex items-center justify-between mb-3">
@@ -460,16 +491,35 @@ function CobrarPagar({ title, total, tone, accent, rows, empty }: { title: strin
       {rows.length === 0 ? (
         <div className="text-center py-6 text-[11.5px] text-ink-3">{empty}</div>
       ) : (
-        <div className="space-y-1">
-          {rows.map((row) => (
-            <div key={row.id} className="flex items-center gap-2 text-[12px] py-1.5 border-b border-line last:border-0">
-              <div className="min-w-0 flex-1">
-                <div className="font-medium truncate">{row.label}</div>
-                <div className="text-[10.5px] text-ink-4 capitalize">{row.sub.replace(/_/g, ' ')}</div>
+        <>
+          <div className="space-y-1">
+            {rowsPage.map((row) => (
+              <div key={row.id} className="flex items-center gap-2 text-[12px] py-1.5 border-b border-line last:border-0">
+                <div className="min-w-0 flex-1">
+                  <div className="font-medium truncate">{row.label}</div>
+                  <div className="text-[10.5px] text-ink-4 capitalize">{row.sub.replace(/_/g, ' ')}</div>
+                </div>
+                <span className="font-mono tabular-nums font-semibold w-24 text-right">{fmtPEN(row.monto)}</span>
               </div>
-              <span className="font-mono tabular-nums font-semibold w-24 text-right">{fmtPEN(row.monto)}</span>
-            </div>
-          ))}
+            ))}
+          </div>
+          <Pager page={pageSafe} totalPages={totalPages} count={rows.length} per={PAGE} onPage={setPage} />
+        </>
+      )}
+    </div>
+  );
+}
+
+// Paginador compartido · 10/pág con ‹ › (mismo patrón que Gastos)
+function Pager({ page, totalPages, count, per, onPage }: { page: number; totalPages: number; count: number; per: number; onPage: (p: number) => void }) {
+  return (
+    <div className="border-t border-line pt-2 mt-1.5 flex items-center justify-between text-[11px] text-ink-3">
+      <span>{count === 0 ? '0' : `${page * per + 1}–${Math.min(count, (page + 1) * per)}`} de {count}</span>
+      {totalPages > 1 && (
+        <div className="flex items-center gap-1">
+          <button disabled={page === 0} onClick={() => onPage(page - 1)} className="h-6 px-2 rounded border border-line disabled:opacity-40 hover:bg-bg-sunken">‹</button>
+          <span className="px-1.5 font-mono">{page + 1}/{totalPages}</span>
+          <button disabled={page >= totalPages - 1} onClick={() => onPage(page + 1)} className="h-6 px-2 rounded border border-line disabled:opacity-40 hover:bg-bg-sunken">›</button>
         </div>
       )}
     </div>
@@ -488,7 +538,7 @@ function GlobalLedger({ proyectoId, proyectos, kind }: { proyectoId: string; pro
   const [page, setPage] = useState(0);
   const [anio, setAnio] = useState('');
   const [mes, setMes] = useState('');
-  const PAGE = 50;
+  const PAGE = isMov ? 10 : 50;
 
   // Memoizar derivados · antes se filtraba/ordenaba todo el array en cada tecla/render (lag con miles de filas)
   const q = busca.trim().toLowerCase();
@@ -512,6 +562,9 @@ function GlobalLedger({ proyectoId, proyectos, kind }: { proyectoId: string; pro
   if (isMov) {
     const all = movQ.data?.movimientos ?? [];
     const st = movQ.data?.stats;
+    const movTotalPages = Math.max(1, Math.ceil(movs.length / PAGE));
+    const movPageSafe = Math.min(page, movTotalPages - 1);
+    const movsPage = movs.slice(movPageSafe * PAGE, movPageSafe * PAGE + PAGE);
     const csv = () => {
       const head = ['Fecha', 'Tipo', 'Comprobante', 'Concepto', 'Contraparte', 'Proyecto', 'Monto'];
       const lines = movs.map((m) => [
@@ -539,11 +592,11 @@ function GlobalLedger({ proyectoId, proyectos, kind }: { proyectoId: string; pro
             <h3 className="text-[13px] font-semibold mr-auto">Movimientos <span className="text-ink-4 font-normal">{movs.length} de {all.length}</span></h3>
             <div className="relative">
               <Search className="h-3.5 w-3.5 text-ink-4 absolute left-2 top-1/2 -translate-y-1/2" />
-              <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar concepto, contraparte..." className="h-8 pl-7 pr-2 rounded-md border border-line bg-bg-elev text-[12px] w-56" />
+              <input value={busca} onChange={(e) => { setBusca(e.target.value); setPage(0); }} placeholder="Buscar concepto, contraparte..." className="h-8 pl-7 pr-2 rounded-md border border-line bg-bg-elev text-[12px] w-56" />
             </div>
             <div className="inline-flex rounded-md border border-line p-0.5 bg-bg-sunken">
               {(['todos', 'Ingreso', 'Egreso'] as const).map((k) => (
-                <button key={k} onClick={() => setFilt(k)} className={cn('h-7 px-2.5 rounded-[5px] text-[11.5px] font-medium capitalize transition-colors', filt === k ? 'bg-bg-elev text-foreground shadow-sm' : 'text-ink-3 hover:text-foreground')}>{k === 'todos' ? 'Todos' : k + 's'}</button>
+                <button key={k} onClick={() => { setFilt(k); setPage(0); }} className={cn('h-7 px-2.5 rounded-[5px] text-[11.5px] font-medium capitalize transition-colors', filt === k ? 'bg-bg-elev text-foreground shadow-sm' : 'text-ink-3 hover:text-foreground')}>{k === 'todos' ? 'Todos' : k + 's'}</button>
               ))}
             </div>
             <button onClick={csv} disabled={movs.length === 0} className="inline-flex items-center gap-1 h-8 px-2.5 rounded-md border border-line text-[11.5px] font-medium hover:bg-bg-sunken disabled:opacity-40"><Download className="h-3.5 w-3.5" /> CSV</button>
@@ -551,11 +604,12 @@ function GlobalLedger({ proyectoId, proyectos, kind }: { proyectoId: string; pro
           {movQ.isLoading ? <SkelRows rows={6} />
             : movs.length === 0 ? <div className="text-center py-8 text-[12px] text-ink-3">{all.length === 0 ? 'Sin movimientos' : 'Sin resultados para el filtro'}</div>
             : (
+            <>
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead><tr className="border-b border-line bg-bg-sunken">{['Fecha', 'Tipo', 'Comprobante', 'Concepto', 'Contraparte', 'Obra', 'Monto'].map((h, i) => <th key={i} className={cn('px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-ink-4', i === 6 ? 'text-right' : 'text-left')}>{h}</th>)}</tr></thead>
                 <tbody>
-                  {movs.map((m) => {
+                  {movsPage.map((m) => {
                     const ing = m.tipoMovimiento === 'Ingreso';
                     const comp = [m.serie, m.numero].filter(Boolean).join('-');
                     return (
@@ -573,6 +627,8 @@ function GlobalLedger({ proyectoId, proyectos, kind }: { proyectoId: string; pro
                 </tbody>
               </table>
             </div>
+            <div className="px-3"><Pager page={movPageSafe} totalPages={movTotalPages} count={movs.length} per={PAGE} onPage={setPage} /></div>
+            </>
           )}
         </div>
       </div>

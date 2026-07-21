@@ -130,12 +130,23 @@ function GastosSection({ proyectoId }: { proyectoId: string }) {
 // Tipos de gasto que por defecto sugieren registrar en inventario (herramientas/equipos/EPPS)
 const TIPOS_INVENTARIABLES = new Set(['Herramientas', 'Maquinaria y equipo', 'EPPS']);
 
-function GastoForm({ proyectoId, cuentas, onDone }: { proyectoId: string; cuentas: { id: string; descripcion: string | null; codigo: string }[]; onDone: () => void }) {
+export function GastoForm({ proyectoId, proyectos, cuentas, onDone }: {
+  proyectoId?: string | null;
+  proyectos?: { id: string; codigo: string; nombre: string }[];
+  cuentas: { id: string; descripcion: string | null; codigo: string }[];
+  onDone: () => void;
+}) {
   const claseMapQ = useQuery({ queryKey: ['cuentas-tipo'], queryFn: () => api.contabilidad.getCuentasTipo() });
   const claseDe = (tipo: string): 'CD' | 'GG_OBRA' => {
     const m = claseMapQ.data?.mapa.find((x) => x.tipoGasto === tipo);
     return m?.clase === 'GG_OBRA' ? 'GG_OBRA' : 'CD'; // en obra solo CD/GG_OBRA (GG_CORP se trata como GG_OBRA)
   };
+
+  const [obraId, setObraId] = useState<string>(proyectoId ?? '');
+
+  // When proyectoId is fixed, destino is always proyecto; otherwise allow toggle
+  const showDestinoToggle = !!proyectos && !proyectoId;
+  const showObraSelector = !!proyectos && !proyectoId;
 
   const empty: GastoInput = {
     fecha: new Date().toISOString().slice(0, 10), tipoRegistro: 'Gasto Directo', tipoIgv: 'IGV',
@@ -144,7 +155,7 @@ function GastoForm({ proyectoId, cuentas, onDone }: { proyectoId: string; cuenta
     descripcionItem: '', subtotal: 0, igv: 0, exonerado: 0, total: 0, tipoGasto: 'Compra Materiales', observaciones: '', inventariable: false, destino: 'proyecto', clasificacion: 'CD',
   };
   const [f, setF] = useState<GastoInput>(empty);
-  const set = (patch: Partial<GastoInput>) => setF({ ...f, ...patch });
+  const set = (patch: Partial<GastoInput>) => setF((prev) => ({ ...prev, ...patch }));
 
   // subtotal → IGV 18% auto + total
   const onSubtotal = (v: number) => {
@@ -152,11 +163,40 @@ function GastoForm({ proyectoId, cuentas, onDone }: { proyectoId: string; cuenta
     set({ subtotal: v, igv, total: Number((v + igv).toFixed(2)) });
   };
 
-  const create = useMutation({ mutationFn: () => api.finanzas.createGasto(proyectoId, f), onSuccess: onDone });
-  const canSubmit = !!f.fecha && (f.total ?? 0) > 0 && !!f.tipoGasto;
+  const resolvedProyectoId = f.destino === 'corporativo' ? null : (proyectoId ?? obraId) || null;
+  const create = useMutation({
+    mutationFn: () => api.finanzas.createGastoGlobal({ ...f, proyectoId: resolvedProyectoId }),
+    onSuccess: onDone,
+  });
+  const canSubmit = !!f.fecha && (f.total ?? 0) > 0 && !!f.tipoGasto && (f.destino === 'corporativo' || !!(proyectoId ?? obraId));
 
   return (
     <div className="rounded-md border border-line bg-bg-sunken/40 p-3 space-y-2">
+      {/* Destino toggle — only when not fixed to a project */}
+      {showDestinoToggle && (
+        <div className="w-full">
+          <span className="text-[10.5px] font-mono uppercase tracking-wider text-ink-4">Destino del gasto</span>
+          <div className="mt-1 grid grid-cols-2 gap-2">
+            <button type="button" onClick={() => set({ destino: 'proyecto', clasificacion: 'CD' })}
+              className={cn('rounded-md border p-2 text-left text-[11.5px] transition-colors', f.destino === 'proyecto' ? 'border-primary bg-primary/5' : 'border-line hover:bg-bg-sunken')}>
+              <div className="font-medium">Proyecto</div>
+              <div className="text-[10px] text-ink-4">Gasto imputable a una obra (CD o GG Obra)</div>
+            </button>
+            <button type="button" onClick={() => set({ destino: 'corporativo', clasificacion: 'GG_CORP' })}
+              className={cn('rounded-md border p-2 text-left text-[11.5px] transition-colors', f.destino === 'corporativo' ? 'border-primary bg-primary/5' : 'border-line hover:bg-bg-sunken')}>
+              <div className="font-medium">Oficina / Administración</div>
+              <div className="text-[10px] text-ink-4">Gasto corporativo (GG Corp — backend lo clasifica)</div>
+            </button>
+          </div>
+        </div>
+      )}
+      {/* Obra selector — only in global mode when destino is proyecto */}
+      {showObraSelector && f.destino === 'proyecto' && (
+        <select className={cn(inputCls, 'w-full')} value={obraId} onChange={(e) => setObraId(e.target.value)}>
+          <option value="">— elegir obra —</option>
+          {proyectos!.map((p) => <option key={p.id} value={p.id}>{p.codigo} · {p.nombre}</option>)}
+        </select>
+      )}
       <div className="flex flex-wrap items-center gap-2">
         <input className={inputCls} type="date" value={f.fecha} onChange={(e) => set({ fecha: e.target.value })} />
         <Sel value={f.tipoGasto ?? ''} onChange={(v) => set({ tipoGasto: v, inventariable: TIPOS_INVENTARIABLES.has(v), clasificacion: claseDe(v) })} opts={TIPOS_GASTO} />
@@ -181,21 +221,24 @@ function GastoForm({ proyectoId, cuentas, onDone }: { proyectoId: string; cuenta
         <input className={cn(inputCls, 'w-28')} type="number" value={f.subtotal || ''} onChange={(e) => onSubtotal(Number(e.target.value))} />
         <span className="text-[11px] text-ink-3">IGV {fmtPEN(f.igv ?? 0)}</span>
         <span className="text-[12px] font-semibold">Total {fmtPEN(f.total ?? 0)}</span>
-        <div className="col-span-2 w-full">
-          <span className="text-[10.5px] font-mono uppercase tracking-wider text-ink-4">¿A qué parte de la obra corresponde?</span>
-          <div className="mt-1 grid grid-cols-2 gap-2">
-            <button type="button" onClick={() => set({ clasificacion: 'CD' })}
-              className={cn('rounded-md border p-2 text-left text-[11.5px] transition-colors', f.clasificacion === 'CD' ? 'border-primary bg-primary/5' : 'border-line hover:bg-bg-sunken')}>
-              <div className="font-medium">Costo Directo</div>
-              <div className="text-[10px] text-ink-4">Va a una partida del presupuesto (cemento, fierro, mano de obra)</div>
-            </button>
-            <button type="button" onClick={() => set({ clasificacion: 'GG_OBRA' })}
-              className={cn('rounded-md border p-2 text-left text-[11.5px] transition-colors', f.clasificacion === 'GG_OBRA' ? 'border-primary bg-primary/5' : 'border-line hover:bg-bg-sunken')}>
-              <div className="font-medium">Gasto General de Obra</div>
-              <div className="text-[10px] text-ink-4">Gasto general de la obra (guardianía, campamento, viáticos)</div>
-            </button>
+        {/* CD/GG_OBRA selector — only for project gastos */}
+        {f.destino === 'proyecto' && (
+          <div className="col-span-2 w-full">
+            <span className="text-[10.5px] font-mono uppercase tracking-wider text-ink-4">¿A qué parte de la obra corresponde?</span>
+            <div className="mt-1 grid grid-cols-2 gap-2">
+              <button type="button" onClick={() => set({ clasificacion: 'CD' })}
+                className={cn('rounded-md border p-2 text-left text-[11.5px] transition-colors', f.clasificacion === 'CD' ? 'border-primary bg-primary/5' : 'border-line hover:bg-bg-sunken')}>
+                <div className="font-medium">Costo Directo</div>
+                <div className="text-[10px] text-ink-4">Va a una partida del presupuesto (cemento, fierro, mano de obra)</div>
+              </button>
+              <button type="button" onClick={() => set({ clasificacion: 'GG_OBRA' })}
+                className={cn('rounded-md border p-2 text-left text-[11.5px] transition-colors', f.clasificacion === 'GG_OBRA' ? 'border-primary bg-primary/5' : 'border-line hover:bg-bg-sunken')}>
+                <div className="font-medium">Gasto General de Obra</div>
+                <div className="text-[10px] text-ink-4">Gasto general de la obra (guardianía, campamento, viáticos)</div>
+              </button>
+            </div>
           </div>
-        </div>
+        )}
         <label className="ml-auto inline-flex items-center gap-1.5 text-[11px] text-ink-2 cursor-pointer select-none" title="Crea un ítem en Inventario (Por completar) ligado a este gasto">
           <input type="checkbox" checked={!!f.inventariable} onChange={(e) => set({ inventariable: e.target.checked })} /> Registrar en inventario
         </label>
