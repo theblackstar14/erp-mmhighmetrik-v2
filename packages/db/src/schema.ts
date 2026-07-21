@@ -406,6 +406,13 @@ export const valorizaciones = pgTable(
     montoInversionAcumulado: decimal('monto_inversion_acumulado', { precision: 16, scale: 2 }),
     pctInversionAcumulado: decimal('pct_inversion_acumulado', { precision: 6, scale: 2 }),
     archivoXlsx: varchar('archivo_xlsx', { length: 255 }),
+    // Comprobante electrónico emitido (factura de la valo) · para Registro de Ventas / RVIE · mock hasta captura real
+    comprobanteTipo: varchar('comprobante_tipo', { length: 12 }).default('factura'),
+    comprobanteSerie: varchar('comprobante_serie', { length: 20 }),
+    comprobanteNumero: varchar('comprobante_numero', { length: 40 }),
+    comprobanteFecha: date('comprobante_fecha'),
+    comprobanteFechaVenc: date('comprobante_fecha_venc'), // RVIE campo 5 · vencimiento/pago
+    comprobanteDetraccion: decimal('comprobante_detraccion', { precision: 14, scale: 2 }), // RVIE campo 39 · monto detracción (constructora)
     status: valorizacionStatusEnum('status').notNull().default('borrador'),
     snapshot: jsonb('snapshot').$type<Record<string, unknown>>(), // hojas K + Reajuste + RES.VALO + Ios/Irs
     observaciones: text('observaciones'),
@@ -612,6 +619,19 @@ export const configuracionContable = pgTable('configuracion_contable', {
 });
 export type ConfiguracionContable = typeof configuracionContable.$inferSelect;
 
+// Determinación de cuentas · mapa editable tipoGasto → cuenta PCGE (estilo ERP: config, no hardcode).
+// esActivo=true → el motor rutea a activo fijo (33x) en vez de gasto (6x). esGasto=false → no es gasto
+// (financiamiento/CxC); el motor no lo provisiona como compra.
+export const gastoCuentaMap = pgTable('gasto_cuenta_map', {
+  tipoGasto: varchar('tipo_gasto', { length: 60 }).primaryKey(),
+  cuenta: varchar('cuenta', { length: 10 }).notNull(),
+  esActivo: boolean('es_activo').notNull().default(false),
+  esGasto: boolean('es_gasto').notNull().default(true),
+  clase: varchar('clase', { length: 10 }).notNull().default('CD'), // CD | GG_OBRA | GG_CORP · sugerencia para el form
+  actualizadoEn: timestamp('actualizado_en').notNull().defaultNow(),
+});
+export type GastoCuentaMap = typeof gastoCuentaMap.$inferSelect;
+
 // Gastos (Fact de Compras) · costo REAL ejecutado por proyecto
 export const gastos = pgTable(
   'gastos',
@@ -639,6 +659,10 @@ export const gastos = pgTable(
     exonerado: decimal('exonerado', { precision: 14, scale: 2 }).notNull().default('0'),
     total: decimal('total', { precision: 14, scale: 2 }).notNull().default('0'),
     tipoGasto: varchar('tipo_gasto', { length: 40 }), // Compra Materiales · Planilla · etc
+    destino: varchar('destino', { length: 12 }).notNull().default('proyecto'), // proyecto | corporativo
+    clasificacion: varchar('clasificacion', { length: 10 }).notNull().default('CD'), // CD | GG_OBRA | GG_CORP
+    clasificacionOrigen: varchar('clasificacion_origen', { length: 12 }).notNull().default('AUTOMATICO'), // AUTOMATICO | USUARIO | BACKFILL
+    prorrateable: boolean('prorrateable').notNull().default(false),
     observaciones: text('observaciones'),
     lockedAt: timestamp('locked_at'), // H2 · congelado por cierre de periodo
     createdAt: timestamp('created_at').notNull().defaultNow(),
