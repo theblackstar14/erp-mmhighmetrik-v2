@@ -127,12 +127,21 @@ function GastosSection({ proyectoId }: { proyectoId: string }) {
   );
 }
 
+// Tipos de gasto que por defecto sugieren registrar en inventario (herramientas/equipos/EPPS)
+const TIPOS_INVENTARIABLES = new Set(['Herramientas', 'Maquinaria y equipo', 'EPPS']);
+
 function GastoForm({ proyectoId, cuentas, onDone }: { proyectoId: string; cuentas: { id: string; descripcion: string | null; codigo: string }[]; onDone: () => void }) {
+  const claseMapQ = useQuery({ queryKey: ['cuentas-tipo'], queryFn: () => api.contabilidad.getCuentasTipo() });
+  const claseDe = (tipo: string): 'CD' | 'GG_OBRA' => {
+    const m = claseMapQ.data?.mapa.find((x) => x.tipoGasto === tipo);
+    return m?.clase === 'GG_OBRA' ? 'GG_OBRA' : 'CD'; // en obra solo CD/GG_OBRA (GG_CORP se trata como GG_OBRA)
+  };
+
   const empty: GastoInput = {
     fecha: new Date().toISOString().slice(0, 10), tipoRegistro: 'Gasto Directo', tipoIgv: 'IGV',
     proveedorRuc: '', proveedorRazon: '', tipoComprobante: 'Factura', serie: '', numero: '',
     moneda: 'PEN', formaPago: 'Transferencia', fuentePago: 'Cuenta Corriente', cuentaId: null,
-    descripcionItem: '', subtotal: 0, igv: 0, exonerado: 0, total: 0, tipoGasto: 'Compra Materiales', observaciones: '',
+    descripcionItem: '', subtotal: 0, igv: 0, exonerado: 0, total: 0, tipoGasto: 'Compra Materiales', observaciones: '', inventariable: false, destino: 'proyecto', clasificacion: 'CD',
   };
   const [f, setF] = useState<GastoInput>(empty);
   const set = (patch: Partial<GastoInput>) => setF({ ...f, ...patch });
@@ -150,7 +159,7 @@ function GastoForm({ proyectoId, cuentas, onDone }: { proyectoId: string; cuenta
     <div className="rounded-md border border-line bg-bg-sunken/40 p-3 space-y-2">
       <div className="flex flex-wrap items-center gap-2">
         <input className={inputCls} type="date" value={f.fecha} onChange={(e) => set({ fecha: e.target.value })} />
-        <Sel value={f.tipoGasto ?? ''} onChange={(v) => set({ tipoGasto: v })} opts={TIPOS_GASTO} />
+        <Sel value={f.tipoGasto ?? ''} onChange={(v) => set({ tipoGasto: v, inventariable: TIPOS_INVENTARIABLES.has(v), clasificacion: claseDe(v) })} opts={TIPOS_GASTO} />
         <input className={cn(inputCls, 'w-28')} placeholder="RUC" value={f.proveedorRuc ?? ''} onChange={(e) => set({ proveedorRuc: e.target.value })} />
         <input className={cn(inputCls, 'flex-1 min-w-[140px]')} placeholder="Proveedor / razón social" value={f.proveedorRazon ?? ''} onChange={(e) => set({ proveedorRazon: e.target.value })} />
       </div>
@@ -172,7 +181,25 @@ function GastoForm({ proyectoId, cuentas, onDone }: { proyectoId: string; cuenta
         <input className={cn(inputCls, 'w-28')} type="number" value={f.subtotal || ''} onChange={(e) => onSubtotal(Number(e.target.value))} />
         <span className="text-[11px] text-ink-3">IGV {fmtPEN(f.igv ?? 0)}</span>
         <span className="text-[12px] font-semibold">Total {fmtPEN(f.total ?? 0)}</span>
-        <button disabled={!canSubmit || create.isPending} onClick={() => create.mutate()} className="ml-auto inline-flex items-center gap-1 h-7 px-3 rounded-md bg-primary text-primary-foreground text-[11.5px] font-medium disabled:opacity-50">
+        <div className="col-span-2 w-full">
+          <span className="text-[10.5px] font-mono uppercase tracking-wider text-ink-4">¿A qué parte de la obra corresponde?</span>
+          <div className="mt-1 grid grid-cols-2 gap-2">
+            <button type="button" onClick={() => set({ clasificacion: 'CD' })}
+              className={cn('rounded-md border p-2 text-left text-[11.5px] transition-colors', f.clasificacion === 'CD' ? 'border-primary bg-primary/5' : 'border-line hover:bg-bg-sunken')}>
+              <div className="font-medium">Costo Directo</div>
+              <div className="text-[10px] text-ink-4">Va a una partida del presupuesto (cemento, fierro, mano de obra)</div>
+            </button>
+            <button type="button" onClick={() => set({ clasificacion: 'GG_OBRA' })}
+              className={cn('rounded-md border p-2 text-left text-[11.5px] transition-colors', f.clasificacion === 'GG_OBRA' ? 'border-primary bg-primary/5' : 'border-line hover:bg-bg-sunken')}>
+              <div className="font-medium">Gasto General de Obra</div>
+              <div className="text-[10px] text-ink-4">Gasto general de la obra (guardianía, campamento, viáticos)</div>
+            </button>
+          </div>
+        </div>
+        <label className="ml-auto inline-flex items-center gap-1.5 text-[11px] text-ink-2 cursor-pointer select-none" title="Crea un ítem en Inventario (Por completar) ligado a este gasto">
+          <input type="checkbox" checked={!!f.inventariable} onChange={(e) => set({ inventariable: e.target.checked })} /> Registrar en inventario
+        </label>
+        <button disabled={!canSubmit || create.isPending} onClick={() => create.mutate()} className="inline-flex items-center gap-1 h-7 px-3 rounded-md bg-primary text-primary-foreground text-[11.5px] font-medium disabled:opacity-50">
           {create.isPending ? 'Guardando...' : 'Guardar gasto'}
         </button>
       </div>
