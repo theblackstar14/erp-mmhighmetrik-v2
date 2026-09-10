@@ -20,6 +20,7 @@ import inversionesRoutes from './routes/inversiones.js';
 import logisticaRoutes from './routes/logistica.js';
 import notificacionesRoutes from './routes/notificaciones.js';
 import oficinaRoutes from './routes/oficina.js';
+import planillaOficinaRoutes from './routes/planillaOficina.js';
 import profesionalesRoutes from './routes/profesionales.js';
 import proyectosRoutes from './routes/proyectos.js';
 import reportesRoutes from './routes/reportes.js';
@@ -72,6 +73,7 @@ app.use('/api', documentosRoutes); // NAS Synology · documentos por proyecto
 app.use('/api', finanzasRoutes); // gastos reales (Fact de Compras) · cuentas bancarias
 app.use('/api', planillaRoutes); // FIN-4 · planilla construcción civil
 app.use('/api', oficinaRoutes); // FIN-5 · oficina · rendiciones / viáticos
+app.use('/api/oficina', planillaOficinaRoutes); // FIN-5B · planilla oficina (régimen general)
 app.use('/api/contabilidad', contabilidadRoutes); // PCGE · asientos · diario/mayor · fiscal
 app.use('/api/conciliacion', conciliacionRoutes); // H3 · conciliación bancaria (ERP ↔ extracto)
 app.use('/api', activosRoutes); // activos · herramientas y equipos + traslados
