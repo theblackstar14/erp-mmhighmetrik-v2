@@ -2193,6 +2193,7 @@ export type PlanillaOficinaMes = {
 export type PlanillaOficinaDetalle = {
   id: string; planillaMesId: string; empleadoId: string; boletaCorrelativo: string | null;
   nombre: string | null; cargo: string | null; dni: string | null; afp: string | null; cuspp: string | null; cuentaBancaria: string | null;
+  fechaIngreso: string | null; fechaCese: string | null;
   diasTrab: number | null; horasTrab: number | null;
   sueldoMensual: string; valorHora: string; cantHe25: string; montoHe25: string; cantHe35: string; montoHe35: string; totalHe: string;
   diasDominical: number | null; montoDominical: string; diasFeriado: number | null; montoFeriado: string;
