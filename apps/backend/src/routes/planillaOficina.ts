@@ -1,5 +1,5 @@
 import { db, schema } from '@erp/db';
-import { and, asc, eq, gt, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, sql } from 'drizzle-orm';
 import { Router } from 'express';
 import { calcularDetalleOficina } from '../lib/planillaOficinaCalc.js';
 import { requireAuth } from '../middleware/auth.js';
@@ -492,6 +492,92 @@ router.patch('/planilla-detalle/:id', async (req, res) => {
     .returning();
 
   res.json({ detalle: updated });
+});
+
+// ─── Helper: saldo pendiente de un adelanto ──────────────────
+async function saldoAdelanto(adelantoId: string, montoTotal: number): Promise<number> {
+  const [row] = await db
+    .select({ total: sql<string>`COALESCE(SUM(monto), 0)` })
+    .from(schema.adelantoCuotaAplicada)
+    .where(eq(schema.adelantoCuotaAplicada.adelantoId, adelantoId));
+  const aplicado = Number(row?.total ?? 0);
+  return Math.round((montoTotal - aplicado) * 100) / 100;
+}
+
+// ─── POST /api/oficina/adelantos ─────────────────────────────
+router.post('/adelantos', async (req, res) => {
+  const { empleadoId, fecha, montoTotal, numCuotas, motivo } = req.body as Record<string, unknown>;
+
+  // Validate
+  if (!empleadoId || typeof empleadoId !== 'string') {
+    return res.status(400).json({ error: 'empleadoId es requerido' });
+  }
+  if (!Number.isFinite(Number(montoTotal)) || Number(montoTotal) <= 0) {
+    return res.status(400).json({ error: 'montoTotal debe ser un número positivo' });
+  }
+  const numCuotasInt = Math.floor(Number(numCuotas));
+  if (!Number.isFinite(numCuotasInt) || numCuotasInt < 1) {
+    return res.status(400).json({ error: 'numCuotas debe ser un entero >= 1' });
+  }
+  if (!fecha || typeof fecha !== 'string') {
+    return res.status(400).json({ error: 'fecha es requerida (YYYY-MM-DD)' });
+  }
+
+  // Verify empleado exists
+  const [emp] = await db
+    .select({ id: schema.empleados.id })
+    .from(schema.empleados)
+    .where(eq(schema.empleados.id, empleadoId))
+    .limit(1);
+  if (!emp) return res.status(400).json({ error: `Empleado '${empleadoId}' no encontrado` });
+
+  const montoTotalNum = Math.round(Number(montoTotal) * 100) / 100;
+
+  const [row] = await db
+    .insert(schema.adelantoOficina)
+    .values({
+      empleadoId,
+      fecha,
+      montoTotal: String(montoTotalNum),
+      numCuotas: numCuotasInt,
+      motivo: motivo ? String(motivo) : null,
+      estado: 'vigente',
+      createdBy: req.user!.id,
+    })
+    .returning();
+
+  const montoCuota = Math.round((montoTotalNum / numCuotasInt) * 100) / 100;
+
+  res.json({
+    adelanto: {
+      ...row,
+      montoCuota,
+      saldoPendiente: montoTotalNum,
+    },
+  });
+});
+
+// ─── GET /api/oficina/adelantos?empleadoId= ──────────────────
+router.get('/adelantos', async (req, res) => {
+  const empleadoId = req.query.empleadoId as string | undefined;
+  if (!empleadoId) return res.status(400).json({ error: 'Parámetro empleadoId requerido' });
+
+  const rows = await db
+    .select()
+    .from(schema.adelantoOficina)
+    .where(eq(schema.adelantoOficina.empleadoId, empleadoId))
+    .orderBy(desc(schema.adelantoOficina.fecha));
+
+  const adelantos = await Promise.all(
+    rows.map(async (a) => {
+      const montoTotalNum = Number(a.montoTotal);
+      const montoCuota = Math.round((montoTotalNum / a.numCuotas) * 100) / 100;
+      const saldoPendiente = await saldoAdelanto(a.id, montoTotalNum);
+      return { ...a, montoCuota, saldoPendiente };
+    }),
+  );
+
+  res.json({ adelantos });
 });
 
 export default router;
