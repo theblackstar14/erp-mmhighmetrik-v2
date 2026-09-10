@@ -191,7 +191,7 @@ export const api = {
     getCashflow: (id: string) => req<CashflowResponse>(`/api/proyectos/${id}/cashflow`),
     getPartidasCostos: (id: string) =>
       req<{ costos: Record<string, { ejecutado: number; comprometido: number }> }>(`/api/proyectos/${id}/partidas-costos`),
-    setValorizacionEstado: (proyectoId: string, valId: string, estado: string, opts?: { cuentaId?: string; fechaCobro?: string; comprobante?: { tipo?: string; serie?: string; numero?: string; fecha?: string; fechaVenc?: string; detraccion?: number } }) =>
+    setValorizacionEstado: (proyectoId: string, valId: string, estado: string, opts?: { cuentaId?: string; fechaCobro?: string; cuentaContable?: string; comprobante?: { tipo?: string; serie?: string; numero?: string; fecha?: string; fechaVenc?: string; detraccion?: number } }) =>
       req<{ ok: boolean; valorizacion: Valorizacion }>(`/api/proyectos/${proyectoId}/valorizaciones/${valId}/estado`, {
         method: 'PATCH',
         body: JSON.stringify({ estado, ...opts }),
@@ -331,6 +331,24 @@ export const api = {
     addItem: (id: string, data: RendicionItemInput) => req<{ ok: boolean }>(`/api/oficina/rendiciones/${id}/items`, { method: 'POST', body: JSON.stringify(data) }),
     deleteItem: (itemId: string) => req<{ ok: boolean }>(`/api/oficina/rendicion-items/${itemId}`, { method: 'DELETE' }),
     accion: (id: string, accion: 'enviar' | 'aprobar' | 'rechazar' | 'rendir' | 'cerrar', body?: Record<string, unknown>) => req<{ rendicion: Rendicion }>(`/api/oficina/rendiciones/${id}/${accion}`, { method: 'POST', body: JSON.stringify(body ?? {}) }),
+
+    // Planilla de oficina (empleados administrativos)
+    getPlanillaOficina: (mes: string) => req<{ mes: PlanillaOficinaMes | null; detalle: PlanillaOficinaDetalle[] }>(`/api/oficina/planilla?mes=${encodeURIComponent(mes)}`),
+    crearPlanillaOficina: (mes: string) => req<{ mes: PlanillaOficinaMes }>(`/api/oficina/planilla`, { method: 'POST', body: JSON.stringify({ mes }) }),
+    calcularPlanillaOficina: (mesId: string) => req<{ mes: PlanillaOficinaMes; detalle: PlanillaOficinaDetalle[] }>(`/api/oficina/planilla/${mesId}/calcular`, { method: 'POST' }),
+    cerrarPlanillaOficina: (mesId: string) => req<{ mes: PlanillaOficinaMes; asientoId: string }>(`/api/oficina/planilla/${mesId}/cerrar`, { method: 'POST' }),
+    reabrirPlanillaOficina: (mesId: string) => req<{ mes: PlanillaOficinaMes }>(`/api/oficina/planilla/${mesId}/reabrir`, { method: 'POST' }),
+    editarDetalleOficina: (detalleId: string, data: Record<string, unknown>) => req<{ detalle: PlanillaOficinaDetalle }>(`/api/oficina/planilla-detalle/${detalleId}`, { method: 'PATCH', body: JSON.stringify(data) }),
+    listAdelantosOficina: (empleadoId: string) => req<{ adelantos: AdelantoOficina[] }>(`/api/oficina/adelantos?empleadoId=${empleadoId}`),
+    crearAdelantoOficina: (data: { empleadoId: string; fecha: string; montoTotal: number; numCuotas: number; motivo?: string }) => req<{ adelanto: AdelantoOficina }>(`/api/oficina/adelantos`, { method: 'POST', body: JSON.stringify(data) }),
+    docsDetalleOficina: (detalleId: string) => req<{ boleta: boolean; comprobante: boolean }>(`/api/oficina/planilla-detalle/${detalleId}/docs`),
+    getConfigOficina: () => req<ConfigOficina>(`/api/oficina/config-planilla`),
+    putConfigOficina: (data: Partial<ConfigOficina>) => req<ConfigOficina>(`/api/oficina/config-planilla`, { method: 'PUT', body: JSON.stringify(data) }),
+    subirDocumentoOficina: async (form: FormData): Promise<{ ok: boolean; nasPath: string }> => {
+      const res = await fetch(`${API_BASE}/api/oficina/documentos/upload`, { method: 'POST', credentials: 'include', body: form });
+      if (!res.ok) { const b = await res.json().catch(() => ({})); throw new ApiError(res.status, b.error ?? res.statusText, b); }
+      return res.json();
+    },
   },
 
   // Documentos · NAS Synology por proyecto
@@ -439,12 +457,19 @@ export const api = {
     generarRetencion: (proyectoId: string) =>
       req<{ garantia: Garantia; total: number }>(`/api/proyectos/${proyectoId}/garantias/generar-retencion`, { method: 'POST' }),
 
-    listAdelantos: (proyectoId: string) => req<{ adelantos: Adelanto[] }>(`/api/proyectos/${proyectoId}/adelantos`),
+    listAdelantos: (proyectoId: string) => req<{ adelantos: Adelanto[]; resumen: { totalAdelantos: number; amortizadoManual: number; amortizadoValos: number; amortizadoReal: number; pendiente: number } }>(`/api/proyectos/${proyectoId}/adelantos`),
     createAdelanto: (proyectoId: string, data: AdelantoInput) =>
       req<{ adelanto: Adelanto }>(`/api/proyectos/${proyectoId}/adelantos`, { method: 'POST', body: JSON.stringify(data) }),
     updateAdelanto: (id: string, data: Partial<AdelantoInput>) =>
       req<{ adelanto: Adelanto }>(`/api/adelantos/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     deleteAdelanto: (id: string) => req<{ ok: boolean }>(`/api/adelantos/${id}`, { method: 'DELETE' }),
+
+    // Liquidación de obra (Fase 1)
+    getLiquidacion: (proyectoId: string) => req<{ liquidacion: Liquidacion | null; preview: LiquidacionPreview }>(`/api/proyectos/${proyectoId}/liquidacion`),
+    practicarLiquidacion: (proyectoId: string, data?: { fecha?: string }) =>
+      req<{ liquidacion: Liquidacion }>(`/api/proyectos/${proyectoId}/liquidacion/practicar`, { method: 'POST', body: JSON.stringify(data ?? {}) }),
+    reabrirLiquidacion: (id: string, motivo: string) =>
+      req<{ liquidacion: Liquidacion }>(`/api/liquidaciones/${id}/reabrir`, { method: 'POST', body: JSON.stringify({ motivo }) }),
   },
 
   // Logística
@@ -626,6 +651,20 @@ export const api = {
   // Contabilidad · PCGE 2020 (contador interno)
   contabilidad: {
     getPlan: (periodo?: string) => req<{ cuentas: CuentaPlan[] }>(`/api/contabilidad/plan${periodo ? `?periodo=${periodo}` : ''}`),
+    // WS1 · sugerencia de cuenta (2 niveles: proveedor reciente → fallback mapa tipoGasto). Pista, no verdad.
+    sugerirCuenta: (opts: { proveedorRuc?: string; tipoGasto?: string }) => {
+      const qs = new URLSearchParams();
+      if (opts.proveedorRuc) qs.set('proveedorRuc', opts.proveedorRuc);
+      if (opts.tipoGasto) qs.set('tipoGasto', opts.tipoGasto);
+      return req<{ cuenta: string | null; origen?: 'SUGERIDO' | 'AUTOMATICO' }>(`/api/contabilidad/sugerir-cuenta?${qs}`);
+    },
+    // WS1 · autocomplete de cuenta contable (código/descripción, activas, por empresa). NO expone CD/GG editable.
+    searchPlan: (q: string, opts?: { empresaId?: number; soloHoja?: boolean }) => {
+      const qs = new URLSearchParams({ q });
+      if (opts?.empresaId) qs.set('empresaId', String(opts.empresaId));
+      if (opts?.soloHoja) qs.set('soloHoja', '1');
+      return req<{ cuentas: PlanCuentaBusqueda[] }>(`/api/contabilidad/plan?${qs}`);
+    },
     getCuentasTipo: () => req<{ mapa: GastoCuentaMapRow[]; plan: { codigo: string; nombre: string }[] }>('/api/contabilidad/cuentas-tipo'),
     updateCuentaTipo: (tipo: string, data: { cuenta: string; esActivo: boolean; esGasto: boolean; clase?: string }) =>
       req<{ ok: boolean; row: GastoCuentaMapRow }>(`/api/contabilidad/cuentas-tipo/${encodeURIComponent(tipo)}`, { method: 'PUT', body: JSON.stringify(data) }),
@@ -713,6 +752,7 @@ export const api = {
     conciliar: (lineaId: string, movimientoId: string) => req<{ linea: ExtractoLineaUI }>(`/api/conciliacion/lineas/${lineaId}/conciliar`, { method: 'POST', body: JSON.stringify({ movimientoId }) }),
     setEstado: (lineaId: string, estado: string, motivo?: string) => req<{ linea: ExtractoLineaUI }>(`/api/conciliacion/lineas/${lineaId}/estado`, { method: 'POST', body: JSON.stringify({ estado, motivo }) }),
     metricas: (periodo?: string) => req<ConciliacionMetricas>(`/api/conciliacion/metricas${periodo ? `?periodo=${periodo}` : ''}`),
+    resumen: (cuenta: string, periodo: string) => req<ConciliacionResumen>(`/api/conciliacion/resumen?cuenta=${cuenta}&periodo=${periodo}`),
   },
 
   // Avances
@@ -877,7 +917,7 @@ export type EmpresaRow = {
 export type GgUtModo = 'separado' | 'embebido_cd' | 'simple_pct';
 
 export type CostosObra = {
-  cd: { presupuesto: number; ejecutado: number };
+  cd: { presupuesto: number; ejecutado: number; gastos: number; manoObra: number };
   ggObra: { presupuesto: number | null; ejecutado: number; separable: boolean };
   costoTotal: number; valorizacion: number; resultadoObra: number;
   compartidosSinDistribuir: number; ggUtModo: string;
@@ -1590,6 +1630,23 @@ export type AdelantoInput = {
   notas?: string | null;
 };
 
+// ─── Liquidación de obra (Fase 1) ─────────────────────────────
+export type LiquidacionPreview = {
+  componentes: {
+    facturadoConIgv: number; valorizadoSinIgv: number; reajustes: number; deducciones: number; multas: number;
+    amortizAdelantos: number; retencionAcum: number; cobrado: number;
+  };
+  saldoFinal: number;
+  conciliacion: { valorizadoBrutoIgv: number; saldo1212: number; retencionMezclada: number; porCobrarNeto: number; motorSegregaRetencion: boolean; nota: string };
+  valos: number;
+  valosCobradas: number;
+};
+export type Liquidacion = {
+  id: string; proyectoId: string; fechaPractica: string; estado: 'practicada' | 'reabierta';
+  snapshot: LiquidacionPreview | null; saldoFinal: string; hash: string | null;
+  motivoReapertura: string | null; reabiertaAt: string | null; createdAt: string;
+};
+
 // ─── P&L por obra · "mi bolsillo" ─────────────────────────────
 export type PnlResponse = {
   proyecto: { id: string; codigo: string; nombre: string };
@@ -1764,7 +1821,11 @@ export type GastoInput = {
   destino?: 'proyecto' | 'corporativo';
   clasificacion?: 'CD' | 'GG_OBRA' | 'GG_CORP';
   prorrateable?: boolean;
+  cuentaContable?: string | null; // WS1 · cuenta contable manual (Kelly). CD/GG se deriva de ella.
+  cuentaContableOrigen?: 'USUARIO' | 'SUGERIDO' | null;
 };
+// WS1 · fila del autocomplete de plan contable (GET /contabilidad/plan?q=)
+export type PlanCuentaBusqueda = { codigo: string; descripcion: string; tipo: string; nivel: number; esDivisionaria: boolean; empresaId: number | null; activa: boolean; clasificable: boolean | null; claseObra: 'CD' | 'GG_OBRA' | null };
 export type GastoStats = { count: number; totalGeneral: number; subtotalGeneral: number; porTipo: Record<string, number> };
 export type CuentaBancaria = { id: string; codigo: string; banco: string | null; moneda: string; descripcion: string | null; cuentaContable: string | null; activo: boolean };
 
@@ -1817,6 +1878,9 @@ export type MovimientoInput = {
   naturalezaContable?: string | null;
   ordenCompraId?: string | null;
   valorizacionId?: string | null;
+  gastoId?: string | null;
+  cuentaContable?: string | null; // WS1 · cuenta contra manual (Kelly)
+  cuentaContableOrigen?: 'USUARIO' | 'SUGERIDO' | null;
 };
 export type SaldoCuenta = { cuenta: CuentaBancaria; ingresos: number; egresos: number; saldo: number; movimientos: number };
 
@@ -1987,6 +2051,15 @@ export type AuditEvento = { id: string; action: string; entityType: string | nul
 export type ExtractoBancario = { id: string; cuentaId: string | null; banco: string | null; moneda: string; nombreArchivo: string | null; totalFilas: number; importadoEn: string };
 export type ExtractoLineaUI = { id: string; extractoId: string; fecha: string; descripcion: string | null; referencia: string | null; monto: string; moneda: string; estado: string; movimientoId: string | null; score: string | null; confianza: string | null; movimiento: Movimiento | null };
 export type ConciliacionMetricas = { periodo: string | null; total: number; conciliado: number; pendiente: number; diferencia: number; ignorado: number; pctConciliado: number; diferenciaNeta: number; agingMaxDias: number };
+export type PartidaConcil = { id: string; fecha: string; desc: string | null; monto: number; clase: string; aging: number };
+export type ConciliacionResumen = {
+  cuenta: { id: string; codigo: string; descripcion: string | null; banco: string | null; cuentaContable: string | null };
+  periodo: string;
+  kpis: { saldoBanco: number; saldoLibro: number; diferencia: number; estado: 'cuadrado' | 'descuadrado'; partidasLibroPendientes: number; movimientosBancoPendientes: number };
+  saldoExtracto: { viaColumna: number | null; viaMovimientos: number | null; usado: number; estimado: boolean; inconsistente: boolean };
+  partidas: { libroNoBanco: PartidaConcil[]; bancoNoLibro: PartidaConcil[] };
+  calidad: { total: number; conciliados: number; pendientes: number; pctConciliado: number };
+};
 export type ReporteSombra = {
   periodo: string;
   oficial: { legacyNeto: number; movimientosNeto: number; diff: number };
@@ -2091,7 +2164,7 @@ export type PlanillaDetalle = {
   montoSctrSalud: string; montoSctrPension: string; montoSencico: string; montoCostoTotal: string;
 };
 export type PlanillaTotales = { obreros: number; totalIngreso: number; totalDescuentos: number; netoPago: number; esSalud: number; sctr: number; sencico: number; costoTotal: number; afecto: number };
-export type PlanillaLinea = { empleadoId: string; dias: number; jornadaDominical: boolean; horasExtra60: number; horasExtra100: number; escolaridad: number; renta5ta: number; adelanto: number; sindical: number };
+export type PlanillaLinea = { empleadoId: string; dias: number; jornadaDominical: boolean; horasExtra60: number; horasExtra100: number; escolaridad: number; renta5ta: number; adelanto: number; sindical: number; cuentaContable?: string | null };
 
 // ─── Oficina · rendiciones (FIN-5) ───────────────────────────
 export type Rendicion = {
@@ -2110,3 +2183,29 @@ export type SaldoRendir = { userId: string | null; nombre: string; saldo: number
 export type SaldosRendirResponse = { saldos: SaldoRendir[]; total: number; miSaldo: number; miCount: number };
 export type RendicionInput = { modo: 'reembolso' | 'anticipo'; tipo: string; concepto?: string | null; fecha: string; proyectoId?: string | null; cuentaId?: string | null; montoAnticipo?: number };
 export type RendicionItemInput = { tipoComprobante: 'factura' | 'boleta' | 'rh' | 'recibo'; serie?: string | null; numero?: string | null; ruc?: string | null; razon?: string | null; fecha?: string | null; categoria?: string | null; subtotal: number; igv: number; total: number; deducible: boolean; archivo?: string | null };
+
+// ─── Oficina · planilla administrativa ───────────────────────────
+export type PlanillaOficinaMes = {
+  id: string; empresaId: number; mes: string;
+  estado: 'borrador' | 'calculada' | 'cerrada' | 'pagada';
+  asientoId: string | null; cerradoEn: string | null;
+};
+export type PlanillaOficinaDetalle = {
+  id: string; planillaMesId: string; empleadoId: string; boletaCorrelativo: string | null;
+  nombre: string | null; cargo: string | null; dni: string | null; afp: string | null; cuspp: string | null; cuentaBancaria: string | null;
+  diasTrab: number | null; horasTrab: number | null;
+  sueldoMensual: string; valorHora: string; cantHe25: string; montoHe25: string; cantHe35: string; montoHe35: string; totalHe: string;
+  diasDominical: number | null; montoDominical: string; diasFeriado: number | null; montoFeriado: string;
+  asigFamiliar: string; gratificacion: string; vacaciones: string; comisiones: string; bonificacion: string; totalBruto: string;
+  onp: string; afpAporte: string; afpSeguro: string; afpComision: string; imptoRenta5ta: string; retencionJudicial: string;
+  adelantoCuota: string; otrosDescuentos: string; totalDescuento: string;
+  essalud: string; essaludVida: string; totalAporte: string; netoPago: string; costoTotal: string;
+  cuentaContable: string | null; cuentaContableOrigen: string | null;
+};
+export type AdelantoOficina = {
+  id: string; empleadoId: string; fecha: string; montoTotal: string; numCuotas: number;
+  motivo: string | null; estado: 'vigente' | 'cancelado'; montoCuota: number; saldoPendiente: number;
+};
+export type ConfigOficina = {
+  pctEssalud: number; pctOnp: number; pctAfpAporte: number; rmv: number; uit: number; topeSeguroAfp: number; horasMesBase: number;
+};
