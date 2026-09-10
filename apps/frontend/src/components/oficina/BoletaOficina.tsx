@@ -173,7 +173,6 @@ function BoletaSheet({
             <div><span className="bol-kv-label">R.U.C.</span><span className="bol-colon">:</span> {ruc ?? '—'}</div>
           </div>
           <div className="bol-correlativo-box">
-            <div className="bol-correlativo-hint">CARGO</div>
             <div className="bol-correlativo-lbl">N° BOLETA</div>
             <div className="bol-correlativo-val">{correlativo || '—'}</div>
           </div>
@@ -453,13 +452,6 @@ const BOLETA_STYLES = `
   border: 1pt solid #000;
   padding: 1.5mm 3mm;
   min-width: 32mm;
-}
-.bol-correlativo-hint {
-  font-size: 7pt;
-  color: #6B6B68;
-  text-transform: uppercase;
-  letter-spacing: 1pt;
-  font-weight: 700;
 }
 .bol-correlativo-lbl {
   font-size: 7.5pt;
