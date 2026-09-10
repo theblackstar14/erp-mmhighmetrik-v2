@@ -10,6 +10,7 @@ import { cargarDerivarCtx } from '../lib/clasificacion.js';
 import { crearAsiento, type LineaIn } from './contabilidad.js';
 import { periodoCerrado } from '../lib/periodos.js';
 import { registrarDocumento, docsDetalle } from '../lib/documentoAdjunto.js';
+import { generarBoletaPdf } from '../lib/boletaOficinaPdf.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -905,7 +906,57 @@ router.post('/planilla/:mesId/cerrar', requireOficinaEdit, async (req, res) => {
     .where(eq(schema.planillaOficinaMes.id, mesId!))
     .returning();
 
-  res.json({ mes: updatedMes, asientoId });
+  // ── Step 6: Boleta PDF batch (best-effort, outside accounting tx) ──
+  // Load empresa row for razonSocial/ruc/direccion. Fail-safe: use empty strings if missing.
+  let empresaData = { razonSocial: '', ruc: '', direccion: '' };
+  try {
+    const [empRow] = await db
+      .select({
+        razonSocial: schema.empresas.razonSocial,
+        ruc: schema.empresas.ruc,
+        direccion: schema.empresas.direccion,
+      })
+      .from(schema.empresas)
+      .where(eq(schema.empresas.id, mesRow.empresaId))
+      .limit(1);
+    if (empRow) {
+      empresaData = {
+        razonSocial: empRow.razonSocial ?? '',
+        ruc: empRow.ruc ?? '',
+        direccion: empRow.direccion ?? '',
+      };
+    }
+  } catch (_e) {
+    // empresa lookup failure must not abort cierre
+  }
+
+  let boletasSubidas = 0;
+  const boletaErrores: string[] = [];
+
+  for (const detalle of detalleRows) {
+    try {
+      // Idempotent: skip if boleta_pago already exists for this detalle
+      const docs = await docsDetalle(detalle.id);
+      if (docs.boleta) continue;
+
+      const pdf = await generarBoletaPdf(detalle, empresaData, mesRow.mes);
+      await registrarDocumento({
+        entidadTipo: 'planilla_oficina_detalle',
+        entidadId: detalle.id,
+        docTipo: 'boleta_pago',
+        fileBuffer: pdf,
+        nombreArchivo: 'boleta.pdf',
+        subidoPor: req.user?.id ?? null,
+        subPath: `${mesRow.mes}/${detalle.dni ?? detalle.id}`,
+      });
+      boletasSubidas++;
+    } catch (e) {
+      boletaErrores.push(`${detalle.dni ?? detalle.id}: ${(e as Error).message}`);
+      console.warn('boleta NAS fallo', detalle.id, (e as Error).message);
+    }
+  }
+
+  res.json({ mes: updatedMes, asientoId, boletasSubidas });
 });
 
 // ─── POST /api/oficina/planilla/:mesId/reabrir ───────────────

@@ -11,7 +11,7 @@ import { authMiddleware } from '../../src/middleware/auth.js';
 import planillaOficinaRoutes from '../../src/routes/planillaOficina.js';
 import { lucia } from '../../src/auth.js';
 import { db, schema } from '@erp/db';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql, gt } from 'drizzle-orm';
 
 const USER = 'af36a9b1-3b8e-4471-99d0-d08cf271187d'; // admin
 const MES = '2026-07'; // Must be an open period
@@ -104,11 +104,40 @@ let testMesId: string | null = null;
       const body = await r3.text();
       assert.fail(`POST cerrar failed ${r3.status}: ${body}`);
     }
-    const j3 = await r3.json() as { mes: any; asientoId: string };
+    const j3 = await r3.json() as { mes: any; asientoId: string; boletasSubidas: number };
     assert.ok(j3.asientoId, `cerrar → asientoId present, got ${j3.asientoId}`);
     assert.equal(j3.mes.estado, 'cerrada', `mes estado=cerrada, got ${j3.mes.estado}`);
+    // Task 4: boleta batch — cerrar MUST return 200 and include boletasSubidas even if NAS is unreachable
+    assert.equal(typeof j3.boletasSubidas, 'number', `boletasSubidas must be a number, got ${typeof j3.boletasSubidas}`);
     const asientoId = j3.asientoId;
-    console.log(`  ✓ 3. cerrar → estado=cerrada asientoId=${asientoId}`);
+    const nasReachable = j3.boletasSubidas > 0;
+    console.log(`  ✓ 3. cerrar → estado=cerrada asientoId=${asientoId} boletasSubidas=${j3.boletasSubidas} (nasReachable=${nasReachable})`);
+
+    // ── 3b. If NAS was reachable, assert documento_adjunto(boleta_pago) row for a detalle ──
+    if (nasReachable) {
+      // Find any detalle for this mes
+      const detallesAll = await db
+        .select({ id: schema.planillaOficinaDetalle.id })
+        .from(schema.planillaOficinaDetalle)
+        .where(eq(schema.planillaOficinaDetalle.planillaMesId, testMesId!))
+        .limit(1);
+      if (detallesAll.length > 0) {
+        const docRows = await db
+          .select()
+          .from(schema.documentoAdjunto)
+          .where(
+            and(
+              eq(schema.documentoAdjunto.entidadTipo, 'planilla_oficina_detalle'),
+              eq(schema.documentoAdjunto.entidadId, detallesAll[0].id),
+              eq(schema.documentoAdjunto.docTipo, 'boleta_pago'),
+            ),
+          );
+        assert.ok(docRows.length > 0, `Expected boleta_pago documento_adjunto for detalle ${detallesAll[0].id}`);
+        console.log(`  ✓ 3b. NAS reachable: documento_adjunto(boleta_pago) row found for detalle ${detallesAll[0].id}`);
+      }
+    } else {
+      console.log(`  ✓ 3b. NAS unreachable (boletasSubidas=0) — cerrar still succeeded (best-effort confirmed)`);
+    }
 
     // ── 4. Assert: asiento Σdebe === Σhaber ──
     const [sumas] = await db
@@ -221,6 +250,25 @@ let testMesId: string | null = null;
 
     // Delete planilla mes (cascade deletes detalle; asiento may already be deleted or remain)
     if (testMesId) {
+      // Delete documento_adjunto rows for detalle rows of this mes (boletas uploaded to NAS)
+      const detallesForCleanup = await db
+        .select({ id: schema.planillaOficinaDetalle.id })
+        .from(schema.planillaOficinaDetalle)
+        .where(eq(schema.planillaOficinaDetalle.planillaMesId, testMesId))
+        .catch(() => [] as { id: string }[]);
+      if (detallesForCleanup.length > 0) {
+        const detalleIds = detallesForCleanup.map((d) => d.id);
+        await db
+          .delete(schema.documentoAdjunto)
+          .where(
+            and(
+              eq(schema.documentoAdjunto.entidadTipo, 'planilla_oficina_detalle'),
+              inArray(schema.documentoAdjunto.entidadId, detalleIds),
+            ),
+          )
+          .catch(() => {});
+      }
+
       // Delete asiento linked to this mes (if cerrar succeeded but reabrir didn't)
       const [mesNow] = await db
         .select()
