@@ -181,7 +181,7 @@ router.post('/planilla/:mesId/calcular', requireOficinaEdit, async (req, res) =>
 
   // Load AFP tasas
   const afpTasasList = await db.select().from(schema.afpTasas);
-  const afpTasasMap = new Map(afpTasasList.map((t) => [t.afp, t]));
+  const afpTasasMap = new Map(afpTasasList.map((t) => [afpKey(t.afp), t]));
 
   // Build base TasasOficina from config
   const cfg = await getConfig();
@@ -628,11 +628,23 @@ router.post('/planilla/:mesId/cerrar', requireOficinaEdit, async (req, res) => {
     return res.status(400).json({ error: `Solo se puede cerrar en estado 'calculada'; estado actual: '${mesRow.estado}'` });
   }
 
+  // FIX 1: Validate accounting period BEFORE applying cuotas (mirror reabrir guard)
+  // periodo = mes (already 'YYYY-MM'); last day doesn't change the period.
+  const periodo = mesRow.mes;
+  if (await periodoCerrado(periodo)) {
+    return res.status(423).json({ error: `Periodo contable ${periodo} cerrado; reabrelo primero` });
+  }
+
   // Load detalle rows
   const detalleRows = await db
     .select()
     .from(schema.planillaOficinaDetalle)
     .where(eq(schema.planillaOficinaDetalle.planillaMesId, mesId!));
+
+  // FIX 3: Guard against empty month (no detalle rows → crearAsiento would throw)
+  if (detalleRows.length === 0) {
+    return res.status(400).json({ error: 'La planilla no tiene detalle; calcula primero' });
+  }
 
   // Compute last day of mes
   const [y, m] = mesRow.mes.split('-').map(Number) as [number, number];
