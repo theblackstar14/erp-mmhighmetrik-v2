@@ -1253,6 +1253,9 @@ export const planillaOficinaDetalle = pgTable(
     costoTotal: decimal('costo_total', { precision: 14, scale: 2 }).default('0'),
     cuentaContable: varchar('cuenta_contable', { length: 10 }).references(() => planContable.codigo),
     cuentaContableOrigen: varchar('cuenta_contable_origen', { length: 10 }),
+    fechaIngreso: date('fecha_ingreso'),
+    fechaCese: date('fecha_cese'),
+    renta5taManual: boolean('renta5ta_manual').notNull().default(false),
   },
   (t) => ({
     mesIdx: index('pod_mes_idx').on(t.planillaMesId),

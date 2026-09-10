@@ -4,6 +4,7 @@ import type { NextFunction, Request, Response } from 'express';
 import { Router } from 'express';
 import multer from 'multer';
 import { calcularDetalleOficina } from '../lib/planillaOficinaCalc.js';
+import { calcularRta5ta } from '../lib/rta5taCalc.js';
 import { requireAuth } from '../middleware/auth.js';
 import { cargarDerivarCtx } from '../lib/clasificacion.js';
 import { crearAsiento, type LineaIn } from './contabilidad.js';
@@ -262,7 +263,7 @@ router.post('/planilla/:mesId/calcular', requireOficinaEdit, async (req, res) =>
     const prev = existingByEmpleado.get(emp.id);
     const manualInputs = prev
       ? {
-          imptoRenta5ta: Number(prev.imptoRenta5ta ?? 0),
+          // imptoRenta5ta is governed by renta5taManual flag — NOT blanket-preserved here
           retencionJudicial: Number(prev.retencionJudicial ?? 0),
           cantHe25: Number(prev.cantHe25 ?? 0),
           cantHe35: Number(prev.cantHe35 ?? 0),
@@ -277,7 +278,6 @@ router.post('/planilla/:mesId/calcular', requireOficinaEdit, async (req, res) =>
           horasTrab: prev.horasTrab ?? 240,
         }
       : {
-          imptoRenta5ta: 0,
           retencionJudicial: 0,
           cantHe25: 0,
           cantHe35: 0,
@@ -295,6 +295,21 @@ router.post('/planilla/:mesId/calcular', requireOficinaEdit, async (req, res) =>
     const adelantoCuota = adelantoCuotaByEmpleado.get(emp.id) ?? 0;
     const sueldoMensual = Number(emp.sueldoBaseMensual ?? 0);
 
+    // Compute AUTO Renta 5ta (v1 approximation: continuous employment from January)
+    const mesNumero = Number(mesRow.mes.slice(5, 7));
+    const acumuladoPercibidoAntes = sueldoMensual * (mesNumero - 1);
+    const autoRenta5ta = calcularRta5ta({
+      sueldoMensual,
+      mesNumero,
+      acumuladoPercibidoAntes,
+      retencionesPrevias: 0,
+      uit: Number(cfg.uit),
+    }).retencionMes;
+
+    // Preserve Kelly's override if renta5taManual flag is set on existing detalle
+    const useManualRenta5ta = !!(prev && prev.renta5taManual);
+    const imptoRenta5taFinal = useManualRenta5ta ? Number(prev!.imptoRenta5ta ?? 0) : autoRenta5ta;
+
     const calc = calcularDetalleOficina(
       {
         sueldoMensual,
@@ -308,7 +323,7 @@ router.post('/planilla/:mesId/calcular', requireOficinaEdit, async (req, res) =>
         vacaciones: manualInputs.vacaciones,
         comisiones: manualInputs.comisiones,
         bonificacion: manualInputs.bonificacion,
-        imptoRenta5ta: manualInputs.imptoRenta5ta,
+        imptoRenta5ta: imptoRenta5taFinal,
         retencionJudicial: manualInputs.retencionJudicial,
         adelantoCuota,
         otrosDescuentos: manualInputs.otrosDescuentos,
@@ -366,6 +381,9 @@ router.post('/planilla/:mesId/calcular', requireOficinaEdit, async (req, res) =>
       costoTotal: String(calc.costoTotal),
       cuentaContable: null,
       cuentaContableOrigen: null,
+      fechaIngreso: emp.fechaIngreso ?? null,
+      fechaCese: emp.fechaCese ?? null,
+      renta5taManual: useManualRenta5ta,
     });
   }
 
@@ -490,6 +508,9 @@ router.patch('/planilla-detalle/:id', requireOficinaEdit, async (req, res) => {
       ? (b.cuentaContable ? 'USUARIO' : null)
       : detRow.cuentaContableOrigen;
 
+  // If imptoRenta5ta is provided in the PATCH body, Kelly is taking manual control
+  const setRenta5taManual = b.imptoRenta5ta !== undefined ? true : detRow.renta5taManual;
+
   const [updated] = await db
     .update(schema.planillaOficinaDetalle)
     .set({
@@ -520,6 +541,7 @@ router.patch('/planilla-detalle/:id', requireOficinaEdit, async (req, res) => {
       costoTotal: String(calc.costoTotal),
       cuentaContable: newCuentaContable,
       cuentaContableOrigen: newCuentaContableOrigen,
+      renta5taManual: setRenta5taManual,
     })
     .where(eq(schema.planillaOficinaDetalle.id, id!))
     .returning();
