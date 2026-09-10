@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Fingerprint, Pencil, Plus, Receipt, Trash2, UserCog, Users, X } from 'lucide-react';
+import { Check, Fingerprint, Pencil, Plus, Receipt, Trash2, UserCog, Users, Wallet, X } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { useState } from 'react';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog.js';
@@ -8,6 +8,7 @@ import { TabFade } from '@/components/ui/Skeleton.js';
 import { type EmpleadoInput, type Profesional, type ProfesionalInput, type Rendicion, type RendicionItemInput, api } from '@/lib/api.js';
 import { useAuthStore } from '@/lib/auth-store.js';
 import { cn, fmtDate, fmtPEN } from '@/lib/utils.js';
+import { PlanillaOficinaTab } from '@/components/oficina/PlanillaOficinaTab.js';
 
 const TIPOS = [
   { v: 'viatico', l: 'Viático' }, { v: 'movilidad', l: 'Movilidad' }, { v: 'utiles', l: 'Útiles' },
@@ -27,14 +28,20 @@ const ESTADO: Record<string, { l: string; cls: string }> = {
 };
 const inputCls = 'h-8 px-2 rounded-md border border-line bg-bg-elev text-[12px] min-w-0';
 const TABS = [
-  { id: 'rendiciones', lbl: 'Rendiciones', icon: Receipt },
-  { id: 'profesionales', lbl: 'Profesionales', icon: UserCog },
-  { id: 'personal', lbl: 'Personal admin', icon: Users },
-  { id: 'asistencia', lbl: 'Asistencia', icon: Fingerprint },
+  { id: 'rendiciones',  lbl: 'Rendiciones',  icon: Receipt,      gated: false },
+  { id: 'profesionales', lbl: 'Profesionales', icon: UserCog,    gated: false },
+  { id: 'personal',    lbl: 'Personal',       icon: Users,        gated: false },
+  { id: 'planilla',    lbl: 'Planilla',       icon: Wallet,       gated: true  },
+  { id: 'asistencia',  lbl: 'Asistencia',     icon: Fingerprint,  gated: true  },
 ] as const;
 
 export function OficinaPage() {
   const [tab, setTab] = useState<(typeof TABS)[number]['id']>('rendiciones');
+  const empresaActiva = useAuthStore((s) => s.empresaActiva);
+  const isAdminOrContadora = empresaActiva?.rol === 'admin' || empresaActiva?.rol === 'contadora';
+
+  const visibleTabs = TABS.filter((t) => !t.gated || isAdminOrContadora);
+
   return (
     <div className="space-y-5">
       <header>
@@ -42,7 +49,7 @@ export function OficinaPage() {
         <p className="text-[13px] text-ink-3 mt-0.5">Rendiciones y viáticos · personal administrativo · asistencia</p>
       </header>
       <div className="flex gap-1 border-b border-line">
-        {TABS.map((t) => (
+        {visibleTabs.map((t) => (
           <button key={t.id} onClick={() => setTab(t.id)} className={cn('inline-flex items-center gap-1.5 px-3 py-2 text-[12.5px] font-medium border-b-2 -mb-px transition-colors', tab === t.id ? 'border-primary text-primary' : 'border-transparent text-ink-3 hover:text-ink-2')}>
             <t.icon className="h-3.5 w-3.5" /> {t.lbl}
           </button>
@@ -52,7 +59,8 @@ export function OficinaPage() {
         {tab === 'rendiciones' && <RendicionesTab />}
         {tab === 'profesionales' && <ProfesionalesTab />}
         {tab === 'personal' && <PersonalAdminTab />}
-        {tab === 'asistencia' && <AsistenciaHuella />}
+        {tab === 'planilla' && isAdminOrContadora && <PlanillaOficinaTab />}
+        {tab === 'asistencia' && isAdminOrContadora && <AsistenciaHuella />}
       </TabFade>
     </div>
   );
@@ -62,23 +70,56 @@ export function OficinaPage() {
 function RendicionesTab() {
   const user = useAuthStore((s) => s.user);
   const puedeAprobar = useAuthStore((s) => s.can)('oficina', 'edicion');
-  const [scope, setScope] = useState<'mias' | 'aprobar' | 'todas'>('todas');
-  const [nueva, setNueva] = useState(false);
+  const [scope, setScope] = useState<'mias' | 'aprobar' | 'todas'>('mias');
+  const [nueva, setNueva] = useState<null | 'reembolso' | 'anticipo'>(null);
   const [detId, setDetId] = useState<string | null>(null);
   const q = useQuery({ queryKey: ['rendiciones', scope], queryFn: () => api.oficina.listRendiciones(scope) });
+  const saldosQ = useQuery({ queryKey: ['saldos-rendir'], queryFn: () => api.oficina.getSaldosRendir() });
   const rends = q.data?.rendiciones ?? [];
+  const miSaldo = saldosQ.data?.miSaldo ?? 0;
+  const refetchAll = () => { q.refetch(); saldosQ.refetch(); };
 
   const monto = (r: Rendicion) => (r.modo === 'anticipo' && r.estado !== 'cerrado' ? Number(r.montoAnticipo) : Number(r.montoRendido));
-  const scopes = [{ v: 'todas', l: 'Todas' }, { v: 'mias', l: 'Mías' }, ...(puedeAprobar ? [{ v: 'aprobar', l: 'Por aprobar' }] : [])] as const;
+  const scopes = [{ v: 'mias', l: 'Mías' }, { v: 'todas', l: 'Todas' }, ...(puedeAprobar ? [{ v: 'aprobar', l: 'Por aprobar' }] : [])] as const;
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
+      {/* Mi rendición · saldo por rendir + acciones */}
+      <div className="rounded-xl border border-line bg-bg-elev p-5 flex flex-col sm:flex-row sm:items-center gap-4">
+        <div className="flex-1">
+          <div className="text-[12px] text-ink-3">Mi saldo por rendir</div>
+          <div className={cn('mt-1 text-[30px] font-bold font-mono tabular-nums leading-none', miSaldo > 0.01 ? 'text-warn-ink' : 'text-ok')}>{fmtPEN(miSaldo)}</div>
+          <div className="text-[11px] text-ink-4 mt-1">{miSaldo > 0.01 ? `${saldosQ.data?.miCount ?? 0} anticipo(s) sin justificar` : 'Al día · nada pendiente de rendir'}</div>
+        </div>
+        <div className="flex gap-2 shrink-0">
+          <button onClick={() => setNueva('anticipo')} className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-md bg-primary text-primary-foreground text-[12.5px] font-medium"><Wallet className="h-4 w-4" /> Solicitar anticipo</button>
+          <button onClick={() => setNueva('reembolso')} className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-md border border-line text-ink-2 text-[12.5px] font-medium hover:bg-bg-sunken"><Receipt className="h-4 w-4" /> Registrar reembolso</button>
+        </div>
+      </div>
+
+      {/* Rollup para aprobadores · por rendir por persona (reemplaza las cuentas REND-* a mano) */}
+      {puedeAprobar && (saldosQ.data?.saldos.length ?? 0) > 0 && (
+        <div className="rounded-lg border border-line bg-bg-elev p-4">
+          <div className="flex items-center justify-between mb-2.5">
+            <h3 className="text-[13px] font-semibold flex items-center gap-1.5"><Users className="h-4 w-4 text-ink-3" /> Por rendir por persona</h3>
+            <span className="font-mono text-[12.5px] font-semibold text-warn-ink tabular-nums">{fmtPEN(saldosQ.data!.total)}</span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+            {saldosQ.data!.saldos.map((s) => (
+              <div key={s.userId ?? s.nombre} className="flex items-center justify-between rounded-md bg-bg-sunken/50 px-3 py-2">
+                <div className="min-w-0"><div className="text-[12px] font-medium truncate">{s.nombre}</div><div className="text-[10px] text-ink-4">{s.count} anticipo(s)</div></div>
+                <span className="font-mono text-[12.5px] tabular-nums text-warn-ink shrink-0 ml-2">{fmtPEN(s.saldo)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex items-center gap-1">
           {scopes.map((s) => <button key={s.v} onClick={() => setScope(s.v as typeof scope)} className={cn('h-8 px-3 rounded-md text-[11.5px] border', scope === s.v ? 'bg-primary text-primary-foreground border-primary' : 'border-line text-ink-2')}>{s.l}</button>)}
         </div>
         {scope === 'aprobar' && <span className="text-[11px] text-ink-4">{rends.length} esperando acción</span>}
-        <button onClick={() => setNueva(true)} className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md bg-primary text-primary-foreground text-[12px] font-medium ml-auto"><Plus className="h-3.5 w-3.5" /> Nueva rendición</button>
       </div>
 
       <div className="rounded-md border border-line bg-bg-elev overflow-x-auto">
@@ -103,17 +144,17 @@ function RendicionesTab() {
         </table>
       </div>
 
-      {nueva && <NuevaRendicion onClose={() => setNueva(false)} onCreated={(id) => { q.refetch(); setNueva(false); setDetId(id); }} />}
-      {detId && <RendicionDetalle id={detId} puedeAprobar={puedeAprobar} esMio={(r) => r.solicitanteUserId === user?.id} onClose={() => setDetId(null)} onChanged={() => q.refetch()} />}
+      {nueva && <NuevaRendicion initialMode={nueva} onClose={() => setNueva(null)} onCreated={(id) => { refetchAll(); setNueva(null); setDetId(id); }} />}
+      {detId && <RendicionDetalle id={detId} puedeAprobar={puedeAprobar} esMio={(r) => r.solicitanteUserId === user?.id} onClose={() => setDetId(null)} onChanged={refetchAll} />}
     </div>
   );
 }
 
-function NuevaRendicion({ onClose, onCreated }: { onClose: () => void; onCreated: (id: string) => void }) {
+function NuevaRendicion({ initialMode = 'reembolso', onClose, onCreated }: { initialMode?: 'reembolso' | 'anticipo'; onClose: () => void; onCreated: (id: string) => void }) {
   const proyQ = useQuery({ queryKey: ['proyectos-list'], queryFn: () => api.proyectos.list() });
   const cuentasQ = useQuery({ queryKey: ['cuentas'], queryFn: () => api.finanzas.listCuentas() });
   const hoy = new Date().toISOString().slice(0, 10);
-  const [f, setF] = useState({ modo: 'reembolso' as 'reembolso' | 'anticipo', tipo: 'viatico', concepto: '', fecha: hoy, proyectoId: '', cuentaId: '', montoAnticipo: 0 });
+  const [f, setF] = useState({ modo: initialMode, tipo: 'viatico', concepto: '', fecha: hoy, proyectoId: '', cuentaId: '', montoAnticipo: 0 });
   const create = useMutation({
     mutationFn: () => api.oficina.crearRendicion({ ...f, proyectoId: f.proyectoId || null, cuentaId: f.cuentaId || null }),
     onSuccess: (r) => onCreated(r.rendicion.id),
@@ -247,7 +288,7 @@ function ItemForm({ rendId, onAdded }: { rendId: string; onAdded: () => void }) 
       <select className={cn(inputCls, 'w-24')} value={f.tipoComprobante} onChange={(e) => onTipo(e.target.value as RendicionItemInput['tipoComprobante'])}>{COMPROB.map((c) => <option key={c.v} value={c.v}>{c.l}</option>)}</select>
       <input className={cn(inputCls, 'w-16')} placeholder="serie" value={f.serie ?? ''} onChange={(e) => setF({ ...f, serie: e.target.value })} />
       <input className={cn(inputCls, 'w-20')} placeholder="número" value={f.numero ?? ''} onChange={(e) => setF({ ...f, numero: e.target.value })} />
-      <input className={cn(inputCls, 'w-24')} placeholder="RUC" value={f.ruc ?? ''} onChange={(e) => setF({ ...f, ruc: e.target.value })} />
+      <input inputMode="numeric" maxLength={11} className={cn(inputCls, 'w-24', f.ruc && f.ruc.length !== 11 && 'border-rose-500')} placeholder="RUC" value={f.ruc ?? ''} onChange={(e) => setF({ ...f, ruc: e.target.value.replace(/\D/g, '').slice(0, 11) })} />
       <input className={cn(inputCls, 'flex-1 min-w-[100px]')} placeholder="razón / detalle" value={f.razon ?? ''} onChange={(e) => setF({ ...f, razon: e.target.value })} />
       <select className={cn(inputCls, 'w-28')} value={f.categoria ?? ''} onChange={(e) => setF({ ...f, categoria: e.target.value })}>{CAT_ITEM.map((c) => <option key={c} value={c}>{c}</option>)}</select>
       <input className={cn(inputCls, 'w-24 text-right')} type="number" step="0.01" placeholder="total S/" value={f.total || ''} onChange={(e) => onTotal(Number(e.target.value))} />
@@ -378,20 +419,29 @@ function PersonalAdminTab() {
     </div>
   );
 }
+type AdminFormExtra = EmpleadoInput & { sueldoBaseMensual?: number; asignacionFamiliar?: boolean };
+
 function AdminForm({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
-  const [f, setF] = useState<EmpleadoInput>({ nombre: '', numDoc: '', categoria: 'Administrador', sistemaPension: 'S.N.P.', fechaIngreso: '', tipoPlanilla: 'admin' });
-  const save = useMutation({ mutationFn: () => api.planilla.createEmpleado(f), onSuccess: onSaved });
-  const set = (p: Partial<EmpleadoInput>) => setF((s) => ({ ...s, ...p }));
+  const [f, setF] = useState<AdminFormExtra>({ nombre: '', numDoc: '', categoria: 'Administrador', sistemaPension: 'S.N.P.', fechaIngreso: '', tipoPlanilla: 'admin', sueldoBaseMensual: undefined, asignacionFamiliar: false });
+  const save = useMutation({ mutationFn: () => api.planilla.createEmpleado(f as EmpleadoInput), onSuccess: onSaved });
+  const set = (p: Partial<AdminFormExtra>) => setF((s) => ({ ...s, ...p }));
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 animate-backdropIn" onClick={onClose}>
-      <div className="w-[420px] rounded-xl border border-line bg-bg-elev shadow-2xl animate-modalPop" onClick={(e) => e.stopPropagation()}>
+      <div className="w-[460px] rounded-xl border border-line bg-bg-elev shadow-2xl animate-modalPop" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-line px-4 py-3"><h3 className="text-[14px] font-semibold">Nuevo administrativo</h3><button onClick={onClose} className="text-ink-4 hover:text-ink-2"><X className="h-4 w-4" /></button></div>
         <div className="p-4 grid grid-cols-2 gap-2.5">
           <Lbl t="Nombre" span2><input className={cn(inputCls, 'w-full')} value={f.nombre} onChange={(e) => set({ nombre: e.target.value })} /></Lbl>
-          <Lbl t="DNI"><input className={cn(inputCls, 'w-full')} value={f.numDoc ?? ''} onChange={(e) => set({ numDoc: e.target.value })} /></Lbl>
+          <Lbl t="DNI"><input inputMode="numeric" maxLength={8} className={cn(inputCls, 'w-full', f.numDoc && f.numDoc.length !== 8 && 'border-rose-500')} value={f.numDoc ?? ''} onChange={(e) => set({ numDoc: e.target.value.replace(/\D/g, '').slice(0, 8) })} /></Lbl>
           <Lbl t="Cargo"><input className={cn(inputCls, 'w-full')} value={f.categoria ?? ''} onChange={(e) => set({ categoria: e.target.value })} placeholder="Contador, Ingeniero…" /></Lbl>
           <Lbl t="Sistema pensión"><select className={cn(inputCls, 'w-full')} value={f.sistemaPension ?? ''} onChange={(e) => set({ sistemaPension: e.target.value })}>{['S.N.P.', 'AFP Habitat', 'AFP Integra', 'AFP Prima', 'AFP Profuturo'].map((a) => <option key={a}>{a}</option>)}</select></Lbl>
           <Lbl t="Fecha ingreso"><input type="date" className={cn(inputCls, 'w-full')} value={f.fechaIngreso ?? ''} onChange={(e) => set({ fechaIngreso: e.target.value })} /></Lbl>
+          <Lbl t="Sueldo base S/"><input type="number" step="0.01" min="0" className={cn(inputCls, 'w-full')} value={f.sueldoBaseMensual ?? ''} onChange={(e) => set({ sueldoBaseMensual: e.target.value ? Number(e.target.value) : undefined })} placeholder="0.00" /></Lbl>
+          <Lbl t="Asig. familiar" span2>
+            <label className="flex items-center gap-2 h-8 cursor-pointer">
+              <input type="checkbox" checked={f.asignacionFamiliar ?? false} onChange={(e) => set({ asignacionFamiliar: e.target.checked })} className="h-4 w-4 rounded border-line accent-primary" />
+              <span className="text-[12px] text-ink-2">Tiene hijos (aplica asignación familiar)</span>
+            </label>
+          </Lbl>
         </div>
         <div className="flex justify-end gap-2 border-t border-line px-4 py-3">
           <button onClick={onClose} className="h-8 px-3 rounded-md border border-line text-[12px] text-ink-2">Cancelar</button>
