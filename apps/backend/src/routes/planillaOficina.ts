@@ -1,5 +1,5 @@
 import { db, schema } from '@erp/db';
-import { and, asc, desc, eq, gt, inArray, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, ne, sql } from 'drizzle-orm';
 import { Router } from 'express';
 import { calcularDetalleOficina } from '../lib/planillaOficinaCalc.js';
 import { requireAuth } from '../middleware/auth.js';
@@ -798,31 +798,50 @@ router.post('/planilla/:mesId/cerrar', async (req, res) => {
     });
   }
 
-  // ── Step 4: Create accounting entry via WS1 engine ──
-  const asiento = await crearAsiento({
-    fecha,
-    glosa: 'Planilla oficina ' + mesRow.mes,
-    lineas,
-    origen: 'planilla_oficina',
-    origenId: mesId!,
-    empresaId: mesRow.empresaId,
-    derivarCtx,
-    userId: req.user!.id,
-  });
+  // ── Step 4: Create accounting entry via WS1 engine (idempotent) ──
+  // If a previous cerrar call created the asiento but the mes update failed, reuse it
+  // instead of creating a duplicate.
+  const [existente] = await db
+    .select({ id: schema.asientos.id })
+    .from(schema.asientos)
+    .where(and(
+      eq(schema.asientos.origen, 'planilla_oficina'),
+      eq(schema.asientos.origenId, mesId!),
+      ne(schema.asientos.status, 'anulado'),
+    ))
+    .limit(1);
+
+  let asientoId: string;
+  if (existente) {
+    // Reuse existing asiento — no duplicate created on retry
+    asientoId = existente.id;
+  } else {
+    const asiento = await crearAsiento({
+      fecha,
+      glosa: 'Planilla oficina ' + mesRow.mes,
+      lineas,
+      origen: 'planilla_oficina',
+      origenId: mesId!,
+      empresaId: mesRow.empresaId,
+      derivarCtx,
+      userId: req.user!.id,
+    });
+    asientoId = asiento.id;
+  }
 
   // ── Step 5: Update mes row ──
   const [updatedMes] = await db
     .update(schema.planillaOficinaMes)
     .set({
       estado: 'cerrada',
-      asientoId: asiento.id,
+      asientoId,
       cerradoPor: req.user!.id,
       cerradoEn: new Date(),
     })
     .where(eq(schema.planillaOficinaMes.id, mesId!))
     .returning();
 
-  res.json({ mes: updatedMes, asientoId: asiento.id });
+  res.json({ mes: updatedMes, asientoId });
 });
 
 // ─── POST /api/oficina/planilla/:mesId/reabrir ───────────────

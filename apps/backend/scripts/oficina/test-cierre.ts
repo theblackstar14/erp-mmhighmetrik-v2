@@ -142,6 +142,35 @@ let testMesId: string | null = null;
     assert.equal(ade6.saldoPendiente, 600, `saldoPendiente=600 after cuota, got ${ade6.saldoPendiente}`);
     console.log(`  ✓ 6. adelanto saldoPendiente=${ade6.saldoPendiente} (was 900, cuota 300 applied)`);
 
+    // ── 6b. Idempotency check: simulate orphan-then-retry scenario ──
+    // Directly reset mes to estado='calculada', asientoId=null (leaving asiento in DB)
+    await db
+      .update(schema.planillaOficinaMes)
+      .set({ estado: 'calculada', asientoId: null })
+      .where(eq(schema.planillaOficinaMes.id, testMesId!));
+
+    // Retry cerrar → should reuse the existing asiento, not create a duplicate
+    const r6b = await post(`/api/oficina/planilla/${testMesId}/cerrar`, {});
+    if (r6b.status !== 200) {
+      const body = await r6b.text();
+      assert.fail(`POST cerrar retry (idempotency) failed ${r6b.status}: ${body}`);
+    }
+    const j6b = await r6b.json() as { mes: any; asientoId: string };
+    assert.ok(j6b.asientoId, `cerrar retry → asientoId present`);
+    assert.equal(j6b.mes.estado, 'cerrada', `mes estado=cerrada after retry`);
+
+    // Assert: still exactly ONE non-anulado asiento for this mes
+    const asientoRowsRetry = await db
+      .select({ id: schema.asientos.id })
+      .from(schema.asientos)
+      .where(and(
+        eq(schema.asientos.origen, 'planilla_oficina'),
+        eq(schema.asientos.origenId, testMesId!),
+      ));
+    assert.equal(asientoRowsRetry.length, 1, `Expected exactly 1 asiento after idempotent retry, got ${asientoRowsRetry.length}`);
+    assert.equal(asientoRowsRetry[0].id, asientoId, `Retry reused same asientoId=${asientoId}, not a new one`);
+    console.log(`  ✓ 6b. idempotency retry → 1 asiento (no duplicate), reused id=${asientoRowsRetry[0].id}`);
+
     // ── 7. POST reabrir → 200, estado=calculada ──
     const r7 = await post(`/api/oficina/planilla/${testMesId}/reabrir`, {});
     if (r7.status !== 200) {
@@ -202,6 +231,14 @@ let testMesId: string | null = null;
       if (mesNow?.asientoId) {
         await db.delete(schema.asientos).where(eq(schema.asientos.id, mesNow.asientoId)).catch(() => {});
       }
+      // Also clean up any orphaned asientos for this mes (e.g. after idempotency reset)
+      await db
+        .delete(schema.asientos)
+        .where(and(
+          eq(schema.asientos.origen, 'planilla_oficina'),
+          eq(schema.asientos.origenId, testMesId),
+        ))
+        .catch(() => {});
       await db.delete(schema.planillaOficinaMes).where(eq(schema.planillaOficinaMes.id, testMesId)).catch(() => {});
     }
 
