@@ -1,14 +1,22 @@
 import { db, schema } from '@erp/db';
 import { and, asc, desc, eq, gt, inArray, ne, sql } from 'drizzle-orm';
 import { Router } from 'express';
+import multer from 'multer';
 import { calcularDetalleOficina } from '../lib/planillaOficinaCalc.js';
 import { requireAuth } from '../middleware/auth.js';
 import { cargarDerivarCtx } from '../lib/clasificacion.js';
 import { crearAsiento, type LineaIn } from './contabilidad.js';
 import { periodoCerrado } from '../lib/periodos.js';
+import { registrarDocumento, docsDetalle } from '../lib/documentoAdjunto.js';
 
 const router = Router();
 router.use(requireAuth);
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
+
+const DOC_TIPOS_PERMITIDOS = new Set([
+  'boleta_pago', 'comprobante_pago', 'factura', 'rh', 'boleta', 'voucher', 'otro',
+]);
 
 // ─── Helper singleton ─────────────────────────────────────────
 async function getConfig() {
@@ -940,6 +948,73 @@ router.post('/planilla/:mesId/reabrir', async (req, res) => {
   });
 
   res.json(result);
+});
+
+// ─── POST /api/oficina/documentos/upload ─────────────────────
+// Multipart: field 'file' + body fields entidadTipo, entidadId, docTipo.
+// For planilla_oficina_detalle entities, derives subPath from mes+dni.
+router.post('/documentos/upload', upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'Sin archivo (field name: file)' });
+
+  const { entidadTipo, entidadId, docTipo } = req.body as Record<string, string>;
+
+  if (!entidadTipo || !entidadId || !docTipo) {
+    return res.status(400).json({ error: 'Faltan campos: entidadTipo, entidadId, docTipo' });
+  }
+  if (!DOC_TIPOS_PERMITIDOS.has(docTipo)) {
+    return res.status(400).json({
+      error: `docTipo '${docTipo}' no permitido. Valores: ${[...DOC_TIPOS_PERMITIDOS].join('|')}`,
+    });
+  }
+
+  try {
+    // For planilla_oficina_detalle, derive subPath = mes/dni
+    let subPath: string | undefined;
+    if (entidadTipo === 'planilla_oficina_detalle') {
+      const [det] = await db
+        .select({
+          dni: schema.planillaOficinaDetalle.dni,
+          planillaMesId: schema.planillaOficinaDetalle.planillaMesId,
+        })
+        .from(schema.planillaOficinaDetalle)
+        .where(eq(schema.planillaOficinaDetalle.id, entidadId))
+        .limit(1);
+
+      if (!det) return res.status(404).json({ error: 'planilla_oficina_detalle no encontrado' });
+
+      const [mes] = await db
+        .select({ mes: schema.planillaOficinaMes.mes })
+        .from(schema.planillaOficinaMes)
+        .where(eq(schema.planillaOficinaMes.id, det.planillaMesId))
+        .limit(1);
+
+      subPath = `${mes?.mes ?? 'sin-mes'}/${det.dni ?? 'sin-dni'}`;
+    }
+
+    const { nasPath } = await registrarDocumento({
+      entidadTipo,
+      entidadId,
+      docTipo,
+      fileBuffer: req.file.buffer,
+      nombreArchivo: req.file.originalname,
+      subidoPor: req.user?.id ?? null,
+      subPath,
+    });
+
+    res.json({ ok: true, nasPath });
+  } catch (e) {
+    res.status(502).json({ error: `Upload error: ${(e as Error).message}` });
+  }
+});
+
+// ─── GET /api/oficina/planilla-detalle/:id/docs ───────────────
+router.get('/planilla-detalle/:id/docs', async (req, res) => {
+  try {
+    const result = await docsDetalle(req.params.id!);
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
 });
 
 export default router;
