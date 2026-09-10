@@ -1,5 +1,6 @@
 import { db, schema } from '@erp/db';
 import { and, asc, desc, eq, gt, inArray, ne, sql } from 'drizzle-orm';
+import type { NextFunction, Request, Response } from 'express';
 import { Router } from 'express';
 import multer from 'multer';
 import { calcularDetalleOficina } from '../lib/planillaOficinaCalc.js';
@@ -11,6 +12,27 @@ import { registrarDocumento, docsDetalle } from '../lib/documentoAdjunto.js';
 
 const router = Router();
 router.use(requireAuth);
+
+// ─── requireOficinaEdit ───────────────────────────────────────
+// Allows only users whose RBAC role (via usuario_empresa) is 'admin' or
+// 'contabilidad' in ANY empresa. This gates all mutating planilla endpoints.
+async function requireOficinaEdit(req: Request, res: Response, next: NextFunction) {
+  const userId = req.user?.id;
+  if (!userId) return res.status(401).json({ error: 'No autenticado' });
+
+  const rows = await db
+    .select({ rolNombre: schema.roles.nombre })
+    .from(schema.usuarioEmpresa)
+    .innerJoin(schema.roles, eq(schema.usuarioEmpresa.roleId, schema.roles.id))
+    .where(eq(schema.usuarioEmpresa.userId, userId));
+
+  const allowed = new Set(['admin', 'contabilidad']);
+  const hasAccess = rows.some((r) => allowed.has(r.rolNombre));
+  if (!hasAccess) {
+    return res.status(403).json({ error: 'Permisos insuficientes: se requiere rol admin o contabilidad' });
+  }
+  next();
+}
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
@@ -59,7 +81,7 @@ router.get('/config-planilla', async (_req, res) => {
 });
 
 // ─── PUT /api/oficina/config-planilla ────────────────────────
-router.put('/config-planilla', async (req, res) => {
+router.put('/config-planilla', requireOficinaEdit, async (req, res) => {
   const b = req.body as Record<string, unknown>;
   const allowed = ['rmv', 'uit', 'topeSeguroAfp', 'horasMesBase', 'pctEssalud', 'pctOnp'] as const;
 
@@ -92,7 +114,7 @@ router.put('/config-planilla', async (req, res) => {
 
 // ─── POST /api/oficina/planilla ──────────────────────────────
 // body: { mes: 'YYYY-MM' } → upsert planilla_oficina_mes for empresa_id=1
-router.post('/planilla', async (req, res) => {
+router.post('/planilla', requireOficinaEdit, async (req, res) => {
   const { mes } = req.body as { mes?: string };
   if (!mes || !/^\d{4}-\d{2}$/.test(mes)) {
     return res.status(400).json({ error: 'mes debe tener formato YYYY-MM' });
@@ -137,7 +159,7 @@ router.get('/planilla', async (req, res) => {
 });
 
 // ─── POST /api/oficina/planilla/:mesId/calcular ──────────────
-router.post('/planilla/:mesId/calcular', async (req, res) => {
+router.post('/planilla/:mesId/calcular', requireOficinaEdit, async (req, res) => {
   const { mesId } = req.params;
 
   const [mesRow] = await db
@@ -367,7 +389,7 @@ router.post('/planilla/:mesId/calcular', async (req, res) => {
 
 // ─── PATCH /api/oficina/planilla-detalle/:id ─────────────────
 // Update manual input fields + re-run engine for that one row.
-router.patch('/planilla-detalle/:id', async (req, res) => {
+router.patch('/planilla-detalle/:id', requireOficinaEdit, async (req, res) => {
   const { id } = req.params;
 
   // Load detalle row
@@ -516,7 +538,7 @@ async function saldoAdelanto(adelantoId: string, montoTotal: number): Promise<nu
 }
 
 // ─── POST /api/oficina/adelantos ─────────────────────────────
-router.post('/adelantos', async (req, res) => {
+router.post('/adelantos', requireOficinaEdit, async (req, res) => {
   const { empleadoId, fecha, montoTotal, numCuotas, motivo } = req.body as Record<string, unknown>;
 
   // Validate
@@ -592,7 +614,7 @@ router.get('/adelantos', async (req, res) => {
 });
 
 // ─── POST /api/oficina/planilla/:mesId/cerrar ────────────────
-router.post('/planilla/:mesId/cerrar', async (req, res) => {
+router.post('/planilla/:mesId/cerrar', requireOficinaEdit, async (req, res) => {
   const { mesId } = req.params;
 
   const [mesRow] = await db
@@ -853,7 +875,7 @@ router.post('/planilla/:mesId/cerrar', async (req, res) => {
 });
 
 // ─── POST /api/oficina/planilla/:mesId/reabrir ───────────────
-router.post('/planilla/:mesId/reabrir', async (req, res) => {
+router.post('/planilla/:mesId/reabrir', requireOficinaEdit, async (req, res) => {
   const { mesId } = req.params;
 
   const [mesRow] = await db
@@ -953,7 +975,7 @@ router.post('/planilla/:mesId/reabrir', async (req, res) => {
 // ─── POST /api/oficina/documentos/upload ─────────────────────
 // Multipart: field 'file' + body fields entidadTipo, entidadId, docTipo.
 // For planilla_oficina_detalle entities, derives subPath from mes+dni.
-router.post('/documentos/upload', upload.single('file'), async (req, res) => {
+router.post('/documentos/upload', requireOficinaEdit, upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'Sin archivo (field name: file)' });
 
   const { entidadTipo, entidadId, docTipo } = req.body as Record<string, string>;

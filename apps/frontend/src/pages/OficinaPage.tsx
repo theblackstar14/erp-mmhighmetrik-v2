@@ -38,9 +38,9 @@ const TABS = [
 export function OficinaPage() {
   const [tab, setTab] = useState<(typeof TABS)[number]['id']>('rendiciones');
   const empresaActiva = useAuthStore((s) => s.empresaActiva);
-  const isAdminOrContadora = empresaActiva?.rol === 'admin' || empresaActiva?.rol === 'contadora';
+  const isAdminOrContab = empresaActiva?.rol === 'admin' || empresaActiva?.rol === 'contabilidad';
 
-  const visibleTabs = TABS.filter((t) => !t.gated || isAdminOrContadora);
+  const visibleTabs = TABS.filter((t) => !t.gated || isAdminOrContab);
 
   return (
     <div className="space-y-5">
@@ -59,8 +59,8 @@ export function OficinaPage() {
         {tab === 'rendiciones' && <RendicionesTab />}
         {tab === 'profesionales' && <ProfesionalesTab />}
         {tab === 'personal' && <PersonalAdminTab />}
-        {tab === 'planilla' && isAdminOrContadora && <PlanillaOficinaTab />}
-        {tab === 'asistencia' && isAdminOrContadora && <AsistenciaHuella />}
+        {tab === 'planilla' && isAdminOrContab && <PlanillaOficinaTab />}
+        {tab === 'asistencia' && isAdminOrContab && <AsistenciaHuella />}
       </TabFade>
     </div>
   );
