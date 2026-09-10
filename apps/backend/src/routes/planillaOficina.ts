@@ -30,6 +30,10 @@ function cfgToDto(cfg: Awaited<ReturnType<typeof getConfig>>) {
 // If ever stored as percent (>1), convert ÷100.
 const frac = (v: unknown) => { const n = Number(v); return n > 1 ? n / 100 : n; };
 
+// Strip (F)/(M) comisión suffix from sistemaPension for afpTasas table lookup.
+// e.g. 'AFP Profuturo(F)' → 'AFP Profuturo', 'AFP Integra(M)' → 'AFP Integra'
+const afpKey = (s: string | null | undefined) => (s ? s.replace(/\s*\([FM]\)\s*$/i, '').trim() : '');
+
 // AFP vs ONP decision from sistemaPension string
 function sistemaPensionToTipo(sp: string | null): 'AFP' | 'ONP' {
   const up = (sp ?? '').toUpperCase().replace(/[.\s]/g, '');
@@ -150,10 +154,10 @@ router.post('/planilla/:mesId/calcular', async (req, res) => {
   const cfg = await getConfig();
   const baseTasas = cfgToDto(cfg);
 
-  // Build afp snapshot map (all AFPs as fractions)
+  // Build afp snapshot map (all AFPs as fractions), keyed by STRIPPED name (no (F)/(M) suffix)
   const afpSnapshotMap: Record<string, { pctSeguro: number; pctComision: number }> = {};
   for (const t of afpTasasList) {
-    afpSnapshotMap[t.afp] = { pctSeguro: frac(t.pctSeguro), pctComision: frac(t.pctComision) };
+    afpSnapshotMap[afpKey(t.afp)] = { pctSeguro: frac(t.pctSeguro), pctComision: frac(t.pctComision) };
   }
 
   // Snapshot: config + afp tasas
@@ -211,8 +215,9 @@ router.post('/planilla/:mesId/calcular', async (req, res) => {
   const rows: (typeof schema.planillaOficinaDetalle.$inferInsert)[] = [];
   for (const emp of empleados) {
     const tipoSP = sistemaPensionToTipo(emp.sistemaPension);
+    // Keep original sistemaPension (with suffix) for display on boleta; strip only for tasa lookup
     const afpName = tipoSP === 'AFP' ? (emp.sistemaPension ?? null) : null;
-    const afpTasa = afpName ? afpTasasMap.get(afpName) : undefined;
+    const afpTasa = afpName ? afpTasasMap.get(afpKey(afpName)) : undefined;
 
     const afpForEngine = afpTasa
       ? { pctSeguro: frac(afpTasa.pctSeguro), pctComision: frac(afpTasa.pctComision) }
@@ -418,7 +423,8 @@ router.patch('/planilla-detalle/:id', async (req, res) => {
       }
     : cfgToDto(await getConfig());
 
-  const afpRates = detRow.afp && snapshot.afp ? snapshot.afp[detRow.afp] : undefined;
+  // Strip (F)/(M) suffix from stored afp name before looking up snapshot (keys are stripped)
+  const afpRates = detRow.afp && snapshot.afp ? snapshot.afp[afpKey(detRow.afp)] : undefined;
   const afpForEngine = afpRates ? { pctSeguro: afpRates.pctSeguro, pctComision: afpRates.pctComision } : undefined;
 
   const calc = calcularDetalleOficina(
