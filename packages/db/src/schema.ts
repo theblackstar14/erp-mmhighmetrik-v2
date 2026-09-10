@@ -378,6 +378,9 @@ export const valorizaciones = pgTable(
     montoIgv: decimal('monto_igv', { precision: 14, scale: 2 }).notNull(),
     montoTotal: decimal('monto_total', { precision: 14, scale: 2 }).notNull(),
     pctAvance: decimal('pct_avance', { precision: 5, scale: 2 }).notNull(),
+    // WS1 · cuenta de ingreso (Kelly confirma · default fuerte 7041). CD/GG no aplica (70x).
+    cuentaContable: varchar('cuenta_contable', { length: 10 }).references(() => planContable.codigo),
+    cuentaContableOrigen: varchar('cuenta_contable_origen', { length: 10 }), // USUARIO | SUGERIDO | AUTOMATICO
     factorReajusteK: decimal('factor_reajuste_k', { precision: 8, scale: 6 }), // FP global
     montoReajuste: decimal('monto_reajuste', { precision: 14, scale: 2 }),
     // Detalle Reajuste S10
@@ -536,7 +539,13 @@ export const planContable = pgTable('plan_contable', {
   tipo: varchar('tipo', { length: 30 }).notNull(), // Activo · Pasivo · Patrimonio · Ingreso · Gasto · Costo
   parentCodigo: varchar('parent_codigo', { length: 10 }),
   nivel: integer('nivel').notNull(),
+  // WS0 · promoción a cuenta_contable canónica (in situ)
+  clasificable: boolean('clasificable'), // true si cuenta de gasto/costo (elem 6/9) · alimenta derivarClase
+  esDivisionaria: boolean('es_divisionaria').notNull().default(false),
+  empresaId: integer('empresa_id').references(() => empresas.id, { onDelete: 'set null' }), // null = compartida
+  activa: boolean('activa').notNull().default(true),
 });
+export type PlanContable = typeof planContable.$inferSelect;
 
 // ─── Asientos contables ──────────────────────────────────────
 export const asientos = pgTable(
@@ -562,11 +571,18 @@ export const asientos = pgTable(
     userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
     createdAt: timestamp('created_at').notNull().defaultNow(),
     updatedAt: timestamp('updated_at').notNull().defaultNow(),
+    // WS0 · un asiento = una empresa (único lugar de la verdad de empresa · header, no línea)
+    empresaId: integer('empresa_id').notNull().references(() => empresas.id),
+    anulaAAsientoId: uuid('anula_a_asiento_id'), // self-ref (contra-asiento) · FK en DB
+    hash: varchar('hash', { length: 64 }), // idempotencia de contenido (apertura, etc.)
   },
   (t) => ({
     fechaIdx: index('asientos_fecha_idx').on(t.fecha),
     correlativoUq: index('asientos_correlativo_uq').on(t.correlativo),
     proyectoIdx: index('asientos_proyecto_idx').on(t.proyectoId),
+    empresaIdx: index('asientos_empresa_idx').on(t.empresaId),
+    // idempotencia apertura: máx 1 apertura activa por empresa (índice único parcial · existe en DB)
+    aperturaUq: uniqueIndex('asientos_apertura_uq').on(t.empresaId).where(sql`origen = 'apertura' AND status <> 'anulado'`),
   }),
 );
 
@@ -576,16 +592,106 @@ export const asientosLineas = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     asientoId: uuid('asiento_id').notNull().references(() => asientos.id, { onDelete: 'cascade' }),
     correlativo: integer('correlativo').notNull(), // 1,2,3...
-    cuenta: varchar('cuenta', { length: 10 }).notNull(),
+    cuenta: varchar('cuenta', { length: 10 }).notNull(), // legacy varchar (se mantiene · = cuenta_contable)
     descripcion: text('descripcion'),
     debe: decimal('debe', { precision: 14, scale: 2 }).default('0'),
     haber: decimal('haber', { precision: 14, scale: 2 }).default('0'),
+    // WS0 · la cuenta contable es el EJE (FK), obra por LÍNEA, clase DERIVADA (nunca input)
+    cuentaContable: varchar('cuenta_contable', { length: 10 }).references(() => planContable.codigo), // FK VALIDADA en DB (WS-1 hardening · historico limpio)
+    obraId: uuid('obra_id').references(() => proyectos.id, { onDelete: 'set null' }),
+    claseDerivada: varchar('clase_derivada', { length: 10 }), // CD | GG_OBRA | GG_CORP · cache de derivarClase()
+    cuentaOrigen: varchar('cuenta_origen', { length: 10 }), // WS1 · MANUAL | SUGERIDO | INFERIDO (procedencia de la cuenta)
   },
   (t) => ({
     asientoIdx: index('lineas_asiento_idx').on(t.asientoId),
     cuentaIdx: index('lineas_cuenta_idx').on(t.cuenta),
+    cuentaContableIdx: index('lineas_cuenta_contable_idx').on(t.cuentaContable),
+    obraIdx: index('lineas_obra_idx').on(t.obraId),
   }),
 );
+
+// ─── WS0 · Sub-mayor CxC/CxP (documento_pendiente) ────────────
+// El asiento golpea la cuenta CONTROL (1212/4212) a nivel mayor; el detalle por tercero/documento
+// (aging, pago parcial, apertura) vive aquí. saldo_pendiente = DERIVADO = monto_original − Σ aplicaciones activas.
+export const documentoPendiente = pgTable(
+  'documento_pendiente',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    empresaId: integer('empresa_id').notNull().references(() => empresas.id),
+    tipo: varchar('tipo', { length: 3 }).notNull(), // cxc | cxp (CHECK en DB)
+    cuentaControl: varchar('cuenta_control', { length: 10 }).notNull().references(() => planContable.codigo),
+    terceroRuc: varchar('tercero_ruc', { length: 11 }),
+    terceroRazon: varchar('tercero_razon', { length: 255 }),
+    docTipo: varchar('doc_tipo', { length: 20 }),
+    docSerie: varchar('doc_serie', { length: 20 }),
+    docNumero: varchar('doc_numero', { length: 30 }),
+    fechaEmision: date('fecha_emision'),
+    fechaVenc: date('fecha_venc'),
+    moneda: varchar('moneda', { length: 3 }).notNull().default('PEN'),
+    tipoCambio: decimal('tipo_cambio', { precision: 8, scale: 4 }),
+    montoOriginal: decimal('monto_original', { precision: 14, scale: 2 }).notNull(), // moneda nativa
+    montoPen: decimal('monto_pen', { precision: 14, scale: 2 }).notNull(), // equivalente PEN (mayor)
+    saldoPendiente: decimal('saldo_pendiente', { precision: 14, scale: 2 }).notNull(), // DERIVADO (cache)
+    estado: varchar('estado', { length: 10 }).notNull().default('abierto'), // abierto | parcial | cancelado (CHECK)
+    obraId: uuid('obra_id').references(() => proyectos.id, { onDelete: 'set null' }),
+    asientoOrigenId: uuid('asiento_origen_id').references(() => asientos.id, { onDelete: 'set null' }),
+    docOrigenTipo: varchar('doc_origen_tipo', { length: 20 }),
+    docOrigenId: uuid('doc_origen_id'),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+    updatedAt: timestamp('updated_at').notNull().defaultNow(),
+  },
+  (t) => ({
+    uq: uniqueIndex('docpend_uq').on(t.empresaId, t.tipo, t.docTipo, t.docSerie, t.docNumero),
+    controlIdx: index('docpend_control_idx').on(t.empresaId, t.cuentaControl),
+    asientoIdx: index('docpend_asiento_idx').on(t.asientoOrigenId),
+  }),
+);
+export type DocumentoPendiente = typeof documentoPendiente.$inferSelect;
+
+// ─── WS0 · Aplicación pago↔documento (N↔M) ────────────────────
+// El saldo se DERIVA de estas aplicaciones (nunca se resta a ciegas). Anular pago → estado=anulada → saldo se recompone.
+export const aplicacionDocumento = pgTable(
+  'aplicacion_documento',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    documentoPendienteId: uuid('documento_pendiente_id').notNull().references(() => documentoPendiente.id, { onDelete: 'cascade' }),
+    asientoId: uuid('asiento_id').notNull().references(() => asientos.id, { onDelete: 'cascade' }),
+    asientoLineaId: uuid('asiento_linea_id').references(() => asientosLineas.id, { onDelete: 'set null' }),
+    montoAplicado: decimal('monto_aplicado', { precision: 14, scale: 2 }).notNull(), // > 0 (CHECK)
+    moneda: varchar('moneda', { length: 3 }).notNull().default('PEN'),
+    tipoCambio: decimal('tipo_cambio', { precision: 8, scale: 4 }),
+    fecha: date('fecha'),
+    estado: varchar('estado', { length: 10 }).notNull().default('activa'), // activa | anulada (CHECK)
+    createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+    origenRef: varchar('origen_ref', { length: 80 }),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+  },
+  (t) => ({
+    // idempotencia: un asiento aplica una sola vez a un documento (N↔M por filas distintas)
+    asientoDocUq: uniqueIndex('aplic_asiento_doc_uq').on(t.asientoId, t.documentoPendienteId),
+    docIdx: index('aplic_doc_idx').on(t.documentoPendienteId),
+  }),
+);
+export type AplicacionDocumento = typeof aplicacionDocumento.$inferSelect;
+
+// ─── WS0 · mapa_cuenta_clase (DATA de derivarClase · cuenta→clase_obra) ───
+export const mapaCuentaClase = pgTable('mapa_cuenta_clase', {
+  cuenta: varchar('cuenta', { length: 10 }).primaryKey().references(() => planContable.codigo),
+  claseObra: varchar('clase_obra', { length: 10 }).notNull(), // CD | GG_OBRA (CHECK) · GG_CORP se deriva por obra_id null
+});
+export type MapaCuentaClase = typeof mapaCuentaClase.$inferSelect;
+
+// ─── WS0 · asiento_plantilla (patrones débito/haber · precarga de formularios) ───
+export const asientoPlantilla = pgTable('asiento_plantilla', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  codigo: varchar('codigo', { length: 30 }).notNull().unique(),
+  nombre: varchar('nombre', { length: 120 }).notNull(),
+  origen: varchar('origen', { length: 20 }).notNull(),
+  lineasPatron: jsonb('lineas_patron').$type<Array<Record<string, unknown>>>().notNull().default([]),
+  activa: boolean('activa').notNull().default(true),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+});
+export type AsientoPlantilla = typeof asientoPlantilla.$inferSelect;
 
 // ─── FIN-1 · Finanzas operativas (modelo "Plantilla MM" · ledger de gastos) ───
 // Cuentas bancarias / caja chica
@@ -662,6 +768,9 @@ export const gastos = pgTable(
     destino: varchar('destino', { length: 12 }).notNull().default('proyecto'), // proyecto | corporativo
     clasificacion: varchar('clasificacion', { length: 10 }).notNull().default('CD'), // CD | GG_OBRA | GG_CORP
     clasificacionOrigen: varchar('clasificacion_origen', { length: 12 }).notNull().default('AUTOMATICO'), // AUTOMATICO | USUARIO | BACKFILL
+    // WS1 · cuenta contable MANUAL (Kelly). null = no eligió → motor infiere. El motor la re-lee y NO la pisa.
+    cuentaContable: varchar('cuenta_contable', { length: 10 }).references(() => planContable.codigo),
+    cuentaContableOrigen: varchar('cuenta_contable_origen', { length: 10 }), // MANUAL | SUGERIDO (null = no elegida)
     prorrateable: boolean('prorrateable').notNull().default(false),
     observaciones: text('observaciones'),
     lockedAt: timestamp('locked_at'), // H2 · congelado por cierre de periodo
@@ -708,6 +817,9 @@ export const movimientos = pgTable(
     transferenciaId: uuid('transferencia_id'), // liga las 2 filas de una transferencia
     // F1 · contabilidad: naturaleza estructurada (→ cuenta PCGE) + link a documento (contrapartida exacta)
     naturalezaContable: varchar('naturaleza_contable', { length: 30 }), // key de NATURALEZAS_CONTABLES (@erp/shared)
+    // WS1 · cuenta contable contra MANUAL (Kelly). null = infiere de naturaleza. Motor la re-lee y NO la pisa.
+    cuentaContable: varchar('cuenta_contable', { length: 10 }).references(() => planContable.codigo),
+    cuentaContableOrigen: varchar('cuenta_contable_origen', { length: 10 }), // MANUAL | SUGERIDO
     ordenCompraId: uuid('orden_compra_id'), // si el movimiento paga/cobra una OC · uuid plano (orden tablas)
     valorizacionId: uuid('valorizacion_id'), // si el movimiento cobra una valorización
     fechaVencimiento: date('fecha_vencimiento'),
@@ -926,6 +1038,11 @@ export const empleados = pgTable('empleados', {
   proyectoId: uuid('proyecto_id').references(() => proyectos.id, { onDelete: 'set null' }), // obra asignada (null = oficina)
   sctrVigencia: date('sctr_vigencia'), // vencimiento póliza SCTR
   activo: boolean('activo').notNull().default(true),
+  // Planilla oficina (regimen general)
+  cargo: varchar('cargo', { length: 80 }),
+  sueldoBaseMensual: decimal('sueldo_base_mensual', { precision: 14, scale: 2 }),
+  fechaCese: date('fecha_cese'),
+  asignacionFamiliar: boolean('asignacion_familiar').notNull().default(false),
   createdAt: timestamp('created_at').notNull().defaultNow(),
 });
 export type Empleado = typeof empleados.$inferSelect;
@@ -944,6 +1061,10 @@ export const configPlanilla = pgTable('config_planilla', {
   pctBonifAltura: decimal('pct_bonif_altura', { precision: 6, scale: 4 }).notNull().default('0.07'),
   pctBonifAgua: decimal('pct_bonif_agua', { precision: 6, scale: 4 }).notNull().default('0.20'),
   asignEscolarJornales: decimal('asign_escolar_jornales', { precision: 6, scale: 2 }).notNull().default('30'), // jornales/año/hijo
+  // Planilla oficina (regimen general)
+  rmv: decimal('rmv', { precision: 14, scale: 2 }).notNull().default('1025'),
+  topeSeguroAfp: decimal('tope_seguro_afp', { precision: 14, scale: 2 }).notNull().default('12786.4'),
+  horasMesBase: integer('horas_mes_base').notNull().default(240),
 });
 export type ConfigPlanilla = typeof configPlanilla.$inferSelect;
 
@@ -1011,6 +1132,9 @@ export const planillaDetalle = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     semanaId: uuid('semana_id').notNull().references(() => planillaSemanas.id, { onDelete: 'cascade' }),
     empleadoId: uuid('empleado_id').references(() => empleados.id, { onDelete: 'set null' }),
+    // WS1 · cuenta de costo del obrero (Kelly imputa · default fuerte 621). El motor agrupa por cuenta.
+    cuentaContable: varchar('cuenta_contable', { length: 10 }).references(() => planContable.codigo),
+    cuentaContableOrigen: varchar('cuenta_contable_origen', { length: 10 }), // USUARIO | SUGERIDO | AUTOMATICO
     // snapshot (congelado al correr)
     nombre: varchar('nombre', { length: 200 }),
     categoria: varchar('categoria', { length: 30 }),
@@ -1059,6 +1183,147 @@ export const planillaDetalle = pgTable(
   }),
 );
 export type PlanillaDetalle = typeof planillaDetalle.$inferSelect;
+
+// ─── Planilla oficina (regimen general) ──────────────────────
+export const planillaOficinaMes = pgTable(
+  'planilla_oficina_mes',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    empresaId: integer('empresa_id').notNull().references(() => empresas.id),
+    mes: varchar('mes', { length: 7 }).notNull(),
+    estado: varchar('estado', { length: 12 }).notNull().default('borrador'),
+    tasasSnapshot: jsonb('tasas_snapshot').$type<Record<string, unknown>>(),
+    asientoId: uuid('asiento_id').references(() => asientos.id, { onDelete: 'set null' }),
+    createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+    cerradoPor: uuid('cerrado_por').references(() => users.id, { onDelete: 'set null' }),
+    cerradoEn: timestamp('cerrado_en'),
+  },
+  (t) => ({
+    empresaMesUq: uniqueIndex('pom_empresa_mes_uq').on(t.empresaId, t.mes),
+  }),
+);
+export type PlanillaOficinaMes = typeof planillaOficinaMes.$inferSelect;
+
+export const planillaOficinaDetalle = pgTable(
+  'planilla_oficina_detalle',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    planillaMesId: uuid('planilla_mes_id').notNull().references(() => planillaOficinaMes.id, { onDelete: 'cascade' }),
+    empleadoId: uuid('empleado_id').notNull().references(() => empleados.id),
+    boletaCorrelativo: varchar('boleta_correlativo', { length: 20 }),
+    nombre: varchar('nombre', { length: 200 }),
+    cargo: varchar('cargo', { length: 80 }),
+    dni: varchar('dni', { length: 15 }),
+    afp: varchar('afp', { length: 40 }),
+    cuspp: varchar('cuspp', { length: 40 }),
+    cuentaBancaria: varchar('cuenta_bancaria', { length: 40 }),
+    diasTrab: integer('dias_trab').default(30),
+    horasTrab: integer('horas_trab').default(240),
+    sueldoMensual: decimal('sueldo_mensual', { precision: 14, scale: 2 }).default('0'),
+    valorHora: decimal('valor_hora', { precision: 14, scale: 4 }).default('0'),
+    cantHe25: decimal('cant_he25', { precision: 8, scale: 2 }).default('0'),
+    montoHe25: decimal('monto_he25', { precision: 14, scale: 2 }).default('0'),
+    cantHe35: decimal('cant_he35', { precision: 8, scale: 2 }).default('0'),
+    montoHe35: decimal('monto_he35', { precision: 14, scale: 2 }).default('0'),
+    totalHe: decimal('total_he', { precision: 14, scale: 2 }).default('0'),
+    diasDominical: integer('dias_dominical').default(0),
+    montoDominical: decimal('monto_dominical', { precision: 14, scale: 2 }).default('0'),
+    diasFeriado: integer('dias_feriado').default(0),
+    montoFeriado: decimal('monto_feriado', { precision: 14, scale: 2 }).default('0'),
+    asigFamiliar: decimal('asig_familiar', { precision: 14, scale: 2 }).default('0'),
+    gratificacion: decimal('gratificacion', { precision: 14, scale: 2 }).default('0'),
+    vacaciones: decimal('vacaciones', { precision: 14, scale: 2 }).default('0'),
+    comisiones: decimal('comisiones', { precision: 14, scale: 2 }).default('0'),
+    bonificacion: decimal('bonificacion', { precision: 14, scale: 2 }).default('0'),
+    totalBruto: decimal('total_bruto', { precision: 14, scale: 2 }).default('0'),
+    onp: decimal('onp', { precision: 14, scale: 2 }).default('0'),
+    afpAporte: decimal('afp_aporte', { precision: 14, scale: 2 }).default('0'),
+    afpSeguro: decimal('afp_seguro', { precision: 14, scale: 2 }).default('0'),
+    afpComision: decimal('afp_comision', { precision: 14, scale: 2 }).default('0'),
+    imptoRenta5ta: decimal('impto_renta5ta', { precision: 14, scale: 2 }).default('0'),
+    retencionJudicial: decimal('retencion_judicial', { precision: 14, scale: 2 }).default('0'),
+    adelantoCuota: decimal('adelanto_cuota', { precision: 14, scale: 2 }).default('0'),
+    otrosDescuentos: decimal('otros_descuentos', { precision: 14, scale: 2 }).default('0'),
+    totalDescuento: decimal('total_descuento', { precision: 14, scale: 2 }).default('0'),
+    essalud: decimal('essalud', { precision: 14, scale: 2 }).default('0'),
+    essaludVida: decimal('essalud_vida', { precision: 14, scale: 2 }).default('0'),
+    totalAporte: decimal('total_aporte', { precision: 14, scale: 2 }).default('0'),
+    netoPago: decimal('neto_pago', { precision: 14, scale: 2 }).default('0'),
+    costoTotal: decimal('costo_total', { precision: 14, scale: 2 }).default('0'),
+    cuentaContable: varchar('cuenta_contable', { length: 10 }).references(() => planContable.codigo),
+    cuentaContableOrigen: varchar('cuenta_contable_origen', { length: 10 }),
+  },
+  (t) => ({
+    mesIdx: index('pod_mes_idx').on(t.planillaMesId),
+  }),
+);
+export type PlanillaOficinaDetalle = typeof planillaOficinaDetalle.$inferSelect;
+
+export const adelantoOficina = pgTable(
+  'adelanto_oficina',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    empleadoId: uuid('empleado_id').notNull().references(() => empleados.id),
+    fecha: date('fecha').notNull(),
+    montoTotal: decimal('monto_total', { precision: 14, scale: 2 }).notNull(),
+    numCuotas: integer('num_cuotas').notNull().default(1),
+    motivo: varchar('motivo', { length: 200 }),
+    estado: varchar('estado', { length: 12 }).notNull().default('vigente'),
+    createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+  },
+  (t) => ({
+    empleadoIdx: index('adel_empleado_idx').on(t.empleadoId),
+  }),
+);
+export type AdelantoOficina = typeof adelantoOficina.$inferSelect;
+
+export const adelantoCuotaAplicada = pgTable(
+  'adelanto_cuota_aplicada',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    adelantoId: uuid('adelanto_id').notNull().references(() => adelantoOficina.id, { onDelete: 'cascade' }),
+    planillaDetalleId: uuid('planilla_detalle_id').notNull().references(() => planillaOficinaDetalle.id, { onDelete: 'cascade' }),
+    monto: decimal('monto', { precision: 14, scale: 2 }).notNull(),
+    fecha: date('fecha').notNull(),
+  },
+  (t) => ({
+    acaUq: uniqueIndex('aca_uq').on(t.adelantoId, t.planillaDetalleId),
+  }),
+);
+export type AdelantoCuotaAplicada = typeof adelantoCuotaAplicada.$inferSelect;
+
+export const descuentoOficina = pgTable(
+  'descuento_oficina',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    planillaDetalleId: uuid('planilla_detalle_id').notNull().references(() => planillaOficinaDetalle.id, { onDelete: 'cascade' }),
+    tipo: varchar('tipo', { length: 20 }).notNull(),
+    monto: decimal('monto', { precision: 14, scale: 2 }).notNull(),
+    motivo: varchar('motivo', { length: 200 }),
+  },
+);
+export type DescuentoOficina = typeof descuentoOficina.$inferSelect;
+
+export const documentoAdjunto = pgTable(
+  'documento_adjunto',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    entidadTipo: varchar('entidad_tipo', { length: 30 }).notNull(),
+    entidadId: uuid('entidad_id').notNull(),
+    docTipo: varchar('doc_tipo', { length: 20 }).notNull(),
+    nasPath: varchar('nas_path', { length: 400 }).notNull(),
+    nombreArchivo: varchar('nombre_archivo', { length: 200 }),
+    subidoPor: uuid('subido_por').references(() => users.id, { onDelete: 'set null' }),
+    fecha: date('fecha'),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+  },
+  (t) => ({
+    entidadIdx: index('docadj_entidad_idx').on(t.entidadTipo, t.entidadId),
+  }),
+);
+export type DocumentoAdjunto = typeof documentoAdjunto.$inferSelect;
 
 // ─── FIN-5 · Oficina · Rendiciones / Viáticos ────────────────
 // Cualquier usuario registra un gasto; admin/contador aprueba → genera gasto + egreso.
@@ -1226,6 +1491,32 @@ export const adelantos = pgTable(
     proyectoIdx: index('adelantos_proyecto_idx').on(t.proyectoId),
   }),
 );
+
+// ─── Liquidación de obra (snapshot del saldo final · reversible) ──
+export const liquidacionEstadoEnum = pgEnum('liquidacion_estado', ['practicada', 'reabierta']);
+
+export const liquidaciones = pgTable(
+  'liquidaciones',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    proyectoId: uuid('proyecto_id').notNull().references(() => proyectos.id, { onDelete: 'cascade' }),
+    fechaPractica: date('fecha_practica').notNull(),
+    practicadaPorUserId: uuid('practicada_por_user_id'),
+    estado: liquidacionEstadoEnum('estado').notNull().default('practicada'),
+    snapshot: jsonb('snapshot'), // desglose congelado (cada componente del saldo + conciliación)
+    saldoFinal: decimal('saldo_final', { precision: 16, scale: 2 }).notNull().default('0'),
+    hash: text('hash'),
+    reabiertaPorUserId: uuid('reabierta_por_user_id'),
+    motivoReapertura: text('motivo_reapertura'),
+    reabiertaAt: timestamp('reabierta_at'),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+    updatedAt: timestamp('updated_at').notNull().defaultNow(),
+  },
+  (t) => ({
+    proyectoIdx: index('liquidaciones_proyecto_idx').on(t.proyectoId),
+  }),
+);
+export type Liquidacion = typeof liquidaciones.$inferSelect;
 
 // ─── Penalidades catálogo + aplicadas ────────────────────────
 export const penalidadesCatalogo = pgTable(
