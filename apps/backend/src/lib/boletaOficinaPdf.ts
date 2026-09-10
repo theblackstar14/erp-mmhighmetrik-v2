@@ -26,7 +26,6 @@ export type BoletaDetalle = {
   sueldoMensual: string | number;
   totalHe: string | number;
   montoDominical: string | number;
-  montoFeriado: string | number;
   asigFamiliar: string | number;
   gratificacion: string | number;
   vacaciones: string | number;
@@ -260,8 +259,8 @@ export function generarBoletaPdf(
       doc.moveTo(colRight.x + motivoW + emplW, yR).lineTo(colRight.x + motivoW + emplW, yR + rowH).stroke();
       doc.fontSize(7).font('Helvetica').fillColor(C.ink)
         .text(label, colRight.x + 2, yR + 2, { width: motivoW - 4 })
-        .text(empl > 0 ? fmt(empl) : '', colRight.x + motivoW + 2, yR + 2, { width: emplW - 4, align: 'right' })
-        .text(trab > 0 ? fmt(trab) : '', colRight.x + motivoW + emplW + 2, yR + 2, { width: trabW - 4, align: 'right' });
+        .text(fmt(empl), colRight.x + motivoW + 2, yR + 2, { width: emplW - 4, align: 'right' })
+        .text(fmt(trab), colRight.x + motivoW + emplW + 2, yR + 2, { width: trabW - 4, align: 'right' });
       yR += rowH;
     }
 

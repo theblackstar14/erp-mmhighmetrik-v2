@@ -92,21 +92,20 @@ export function BoletaOficina({
   detalle,
   razonSocial,
   ruc,
+  direccion,
   mes,
   onClose,
 }: {
   detalle: PlanillaOficinaDetalle;
   razonSocial?: string;
   ruc?: string;
+  direccion?: string;
   mes?: string;
   onClose: () => void;
 }) {
   const d = detalle;
   const mesLabel = mesMmAA(mes);
   const lastDay = lastDayOfMes(mes);
-
-  // Derive direccion from prop (may be extended later; show dash if absent)
-  const direccion: string | undefined = undefined;
 
   return (
     <div
@@ -147,12 +146,10 @@ export function BoletaOficina({
               <div><span className="font-semibold">Direccion:</span> {direccion ?? '—'}</div>
               <div><span className="font-semibold">R.U.C.:</span> {ruc ?? '—'}</div>
             </div>
-            {d.boletaCorrelativo && (
-              <div className="text-right">
-                <div className="text-[9.5px] font-mono uppercase text-ink-4">N° Boleta</div>
-                <div className="text-[14px] font-mono font-semibold">{d.boletaCorrelativo}</div>
-              </div>
-            )}
+            <div className="text-right">
+              <div className="text-[9.5px] font-mono uppercase text-ink-4">N° Boleta</div>
+              <div className="text-[14px] font-mono font-semibold">{d.boletaCorrelativo ?? ''}</div>
+            </div>
           </div>
 
           {/* DATOS DEL TRABAJADOR */}

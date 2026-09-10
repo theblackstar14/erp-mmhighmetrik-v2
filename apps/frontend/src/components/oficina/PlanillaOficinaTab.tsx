@@ -8,6 +8,7 @@ import { CuentaContableSelect } from '@/components/contabilidad/CuentaContableSe
 import { DocumentoAdjunto } from '@/components/oficina/DocumentoAdjunto.js';
 import { BoletaOficina } from '@/components/oficina/BoletaOficina.js';
 import { AdelantosPanel } from '@/components/oficina/AdelantosPanel.js';
+import { useAuthStore } from '@/lib/auth-store.js';
 
 const ESTADO_BADGE: Record<string, { l: string; cls: string }> = {
   borrador:  { l: 'Borrador',   cls: 'bg-bg-sunken text-ink-3' },
@@ -47,6 +48,19 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
 
 export function PlanillaOficinaTab() {
   const qc = useQueryClient();
+
+  // Empresa activa from auth store + full row (ruc/direccion) from admin endpoint
+  const { empresaActiva, empresas: empresasMembresía } = useAuthStore();
+  const { data: empresasData } = useQuery({
+    queryKey: ['admin-empresas'],
+    queryFn: () => api.admin.empresas.list(),
+    staleTime: 5 * 60 * 1000,
+  });
+  const empresaRow = empresasData?.empresas.find((e) => e.id === empresaActiva?.id);
+  const membresiaRow = empresasMembresía.find((e) => e.id === empresaActiva?.id);
+  const empresaRazonSocial = empresaRow?.razonSocial ?? membresiaRow?.razonSocial ?? undefined;
+  const empresaRuc = empresaRow?.ruc ?? undefined;
+  const empresaDireccion = empresaRow?.direccion ?? undefined;
 
   // Default to current month YYYY-MM
   const [mes, setMes] = useState(() => new Date().toISOString().slice(0, 7));
@@ -253,6 +267,9 @@ export function PlanillaOficinaTab() {
         <BoletaOficina
           detalle={modal.det}
           mes={mes}
+          razonSocial={empresaRazonSocial}
+          ruc={empresaRuc}
+          direccion={empresaDireccion}
           onClose={() => setModal(null)}
         />
       )}

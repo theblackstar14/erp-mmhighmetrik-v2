@@ -956,7 +956,7 @@ router.post('/planilla/:mesId/cerrar', requireOficinaEdit, async (req, res) => {
     }
   }
 
-  res.json({ mes: updatedMes, asientoId, boletasSubidas });
+  res.json({ mes: updatedMes, asientoId, boletasSubidas, boletasFallidas: boletaErrores.length });
 });
 
 // ─── POST /api/oficina/planilla/:mesId/reabrir ───────────────
