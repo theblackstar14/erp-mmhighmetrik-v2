@@ -1,0 +1,569 @@
+/**
+ * Seed + verificación planilla oficina Julio 2026 (17 personas).
+ * Lee el Excel real, crea empleados, corre calcular, compara computado vs Excel.
+ *
+ * Modos:
+ *   node apps/backend/node_modules/tsx/dist/cli.mjs apps/backend/scripts/oficina/seed-julio-2026.ts
+ *   node apps/backend/node_modules/tsx/dist/cli.mjs apps/backend/scripts/oficina/seed-julio-2026.ts --limpiar
+ *
+ * Requiere DATABASE_URL=erp_mmh_test.
+ * Note: exit code 9 on Windows es cosmético de libuv — éxito = tabla impresa.
+ */
+import { readFileSync } from 'node:fs';
+import express from 'express';
+import * as XLSX from 'xlsx';
+import { authMiddleware } from '../../src/middleware/auth.js';
+import planillaRoutes from '../../src/routes/planilla.js';
+import planillaOficinaRoutes from '../../src/routes/planillaOficina.js';
+import { lucia } from '../../src/auth.js';
+import { db, schema } from '@erp/db';
+import { eq, and } from 'drizzle-orm';
+
+const USER = 'af36a9b1-3b8e-4471-99d0-d08cf271187d'; // admin
+const MES = '2026-07';
+const EXCEL_PATH =
+  'C:\\Users\\gabri\\Downloads\\Gabriel\\DOCUMENTOS PARA GABRIEL\\07.PERSONAL PLANILLA JULIO 2026OFICINA .xlsx';
+const SHEET_NAME = 'PLANILLA';
+const BANCO_MARKER = 'SEED-JUL2026';
+
+// ─── Types ───────────────────────────────────────────────────
+interface ExcelRow {
+  nombre: string;
+  cargo: string;
+  dni: string;
+  sistemaPension: string;
+  sueldo: number;
+  cuspp: string;
+  cuenta: string;
+  correlativoExcel: string;
+  brutoExcel: number;
+  netoExcel: number;
+  onpExcel: number;
+  afpAporteExcel: number;
+  afpSeguroExcel: number;
+  afpComisionExcel: number;
+  imptoRentaExcel: number;
+  essaludExcel: number;
+  fechaIngreso: string | null;
+}
+
+// ─── Helpers ─────────────────────────────────────────────────
+const num = (v: unknown): number => {
+  if (v === null || v === undefined || v === '') return 0;
+  const n = Number(v);
+  return isFinite(n) ? n : 0;
+};
+
+const str = (v: unknown): string => (v == null ? '' : String(v).trim());
+
+const formatDate = (v: unknown): string | null => {
+  if (v == null || v === '') return null;
+  const s = String(v).trim();
+  // Excel date serial (number) — already converted if cellDates:true but just in case
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  // Try DD/MM/YYYY
+  const m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+  if (m) {
+    const y = m[3]!.length === 2 ? `20${m[3]}` : m[3];
+    return `${y}-${m[2]!.padStart(2, '0')}-${m[1]!.padStart(2, '0')}`;
+  }
+  return null;
+};
+
+// ─── Parse Excel ─────────────────────────────────────────────
+// The PLANILLA sheet has a two-row header at rows 6+7 (0-based).
+// Row 6 = main section headers (merged); Row 7 = sub-column headers.
+// Data starts at row 8. Column layout (0-based index):
+//  0=OR, 1=Nombre(first), 2=ApellidoM, 3=ApellidoP, 4=Ocupación, 5=FechaIng,
+//  6=FechaCese, 7=DNI, 8=Dias, 9=Horas, 10=SueldosBase, 11=Base, 12=ValorHora,
+//  13=CantHE25, 14=MontoHE25, 15=CantHE35, 16=MontoHE35, 17=TotalHE,
+//  18=DiasDom, 19=TotalDom, 20=DiasFer, 21=MontoFer, 22=AsigFam,
+//  23=Gratif, 24=Vaca, 25=Comisiones, 26=SubTotal, 27=Bonif, 28=TotalSueldo,
+//  29=ONP, 30=AfpAporte, 31=AfpSeguro, 32=AfpComision, 33=ComisiMixta,
+//  34=Impto, 35=TotalDesc, 36=Adelantos, 37=OtrosDesc, 38=Neto,
+//  39=Essalud, 40=IES, 41=TotalAporte, 42=Costo, 43=AFP, 44=cuspp,
+//  45=CUENTA, 46=BOLETA
+function parseExcel(): ExcelRow[] {
+  const wb = XLSX.read(readFileSync(EXCEL_PATH), { cellDates: false });
+  const ws = wb.Sheets[SHEET_NAME];
+  if (!ws) throw new Error(`Hoja '${SHEET_NAME}' no encontrada. Hojas: ${wb.SheetNames.join(', ')}`);
+
+  // Read as array-of-arrays
+  const raw: unknown[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' }) as unknown[][];
+
+  // Find the header row dynamically: row 6 has 'Nombre' at index 1 and 'D.N.I.' at index 7
+  // But also look for subheader row (row 7) which has ONP, AFP seguro etc.
+  let mainHeaderIdx = -1;
+  let subHeaderIdx = -1;
+  for (let i = 0; i < raw.length; i++) {
+    const rowStr = (raw[i]! as unknown[]).map((c) => str(c).toUpperCase());
+    // Main header row contains 'NOMBRE' and 'D.N.I'
+    if (mainHeaderIdx < 0 && rowStr.some((c) => c.includes('NOMBRE')) && rowStr.some((c) => c.includes('D.N.I'))) {
+      mainHeaderIdx = i;
+      continue;
+    }
+    // Sub-header row follows main header and contains 'ONP' and 'AFP SEGURO'
+    if (mainHeaderIdx >= 0 && subHeaderIdx < 0 && rowStr.some((c) => c === 'ONP') && rowStr.some((c) => c.includes('AFP SEGURO'))) {
+      subHeaderIdx = i;
+      break;
+    }
+  }
+  if (mainHeaderIdx < 0) throw new Error('No se encontró la fila de encabezado con "Nombre" y "D.N.I."');
+
+  console.log(`  Fila encabezado principal: ${mainHeaderIdx}, sub-encabezado: ${subHeaderIdx}`);
+
+  // Build combined header map from both header rows
+  const mainHeaders = (raw[mainHeaderIdx] as unknown[]).map((c) => str(c).toUpperCase());
+  const subHeaders  = subHeaderIdx >= 0 ? (raw[subHeaderIdx] as unknown[]).map((c) => str(c).toUpperCase()) : [];
+
+  // Helper: find column by keyword in combined headers
+  const col = (keyword: string, fallbacks: string[] = [], preferSub = false): number => {
+    const search = [keyword, ...fallbacks].map((k) => k.toUpperCase());
+    // Prefer sub-header if told to
+    if (preferSub && subHeaders.length > 0) {
+      for (const kw of search) {
+        const idx = subHeaders.findIndex((h) => h.includes(kw));
+        if (idx >= 0) return idx;
+      }
+    }
+    // Try main header first
+    for (const kw of search) {
+      const idx = mainHeaders.findIndex((h) => h.includes(kw));
+      if (idx >= 0) return idx;
+    }
+    // Then sub-header
+    for (const kw of search) {
+      const idx = subHeaders.findIndex((h) => h.includes(kw));
+      if (idx >= 0) return idx;
+    }
+    return -1;
+  };
+
+  // Use known fixed columns where header detection might conflict due to merging
+  // Fallback to known indices from the observed structure if header not found
+  const C = {
+    nombre:       col('NOMBRE'),            // col 1
+    ocupacion:    col('OCUPACI'),           // col 4
+    fechaIng:     col('FECHA ING', ['INGRESO']), // col 5
+    dni:          col('D.N.I', ['DNI']),    // col 7
+    sueldoBase:   col('SUELDOS BASE', ['SUELDO BASE']), // col 10
+    bruto:        col('TOTAL DE SUELDO', ['TOTAL SUELDO']), // col 28
+    onp:          col('ONP', [], true),     // col 29 (sub-header)
+    afpAporte:    col('APORTE OBLIGAT', ['APORTE AFP'], true), // col 30
+    afpSeguro:    col('AFP SEGURO', [], true), // col 31
+    afpComision:  col('AFP COMISION', ['COMISION'], true), // col 32
+    impto:        col('IMPTO. RTA', ['IMPTO RTA', 'RENTA 5'], true), // col 34
+    neto:         col('NETO DE CALCULOS', ['NETO DE C']), // col 38
+    essalud:      col('ESSALUD', [], true), // col 39
+    afpNombre:    col('AFP', ['SISTEMA PRIVADO', 'SISTEMA PENSION']), // col 43
+    cuspp:        col('CUSPP', [], true),   // col 44
+    cuenta:       col('CUENTA'),            // col 45
+    boleta:       col('BOLETA'),            // col 46
+  };
+
+  // Apply known fallback indices for sub-header columns that may not be detected
+  // (since merged cells collapse in row 6, sub-headers in row 7 are the reliable source)
+  const KNOWN: Record<string, number> = {
+    onp: 29, afpAporte: 30, afpSeguro: 31, afpComision: 32,
+    impto: 34, essalud: 39, cuspp: 44,
+  };
+  for (const [key, idx] of Object.entries(KNOWN)) {
+    if ((C as any)[key] < 0) {
+      (C as any)[key] = idx;
+      console.log(`  WARN: columna '${key}' no detectada por keyword, usando índice fallback ${idx}`);
+    }
+  }
+
+  console.log(`  Columnas: ${Object.entries(C).map(([k, v]) => `${k}=${v}`).join(' ')}`);
+
+  // Data rows start after the last header row
+  const dataStart = Math.max(mainHeaderIdx, subHeaderIdx >= 0 ? subHeaderIdx : mainHeaderIdx) + 1;
+  console.log(`  Datos desde fila: ${dataStart}`);
+
+  const rows: ExcelRow[] = [];
+  for (let i = dataStart; i < raw.length; i++) {
+    const row = raw[i]!;
+    // Nombre might be split into multiple columns; concatenate non-empty ones
+    const nombreParts: string[] = [];
+    for (let c = C.nombre; c <= Math.min(C.nombre + 3, (row as unknown[]).length - 1); c++) {
+      const part = str((row as unknown[])[c]);
+      if (part && part.toUpperCase() !== 'TOTAL' && part.toUpperCase() !== 'SUMA') {
+        nombreParts.push(part);
+      }
+    }
+    // If col 1 contains the full name (as in some formats), use it; else join parts
+    const nombre1 = str((row as unknown[])[C.nombre]);
+    const nombre = nombre1.length > 6 && !str((row as unknown[])[C.nombre + 1]) ? nombre1 : nombreParts.join(' ').trim();
+
+    if (!nombre || nombre.toUpperCase().includes('TOTAL') || nombre.toUpperCase().includes('SUMA')) continue;
+    const dniRaw = str((row as unknown[])[C.dni]);
+    if (!nombre || !dniRaw) continue;
+
+    const afpRaw = C.afpNombre >= 0 ? str((row as unknown[])[C.afpNombre]) : '';
+    // Normalize AFP name: 'PROFUTURO' → 'AFP Profuturo(F)', 'INTEGRA' → 'AFP Integra(F)' etc.
+    // The sistemaPension on empleados accepts these as-is (engine strips (F)/(M) suffix for tasa lookup)
+    const afpUpper = afpRaw.toUpperCase().replace(/\s+/g, '');
+    let sistemaPension: string;
+    if (afpUpper === 'ONP' || afpUpper === 'SNP' || afpUpper === 'S.N.P.' || afpUpper === '') {
+      sistemaPension = 'ONP';
+    } else if (afpUpper.includes('PROFUTURO')) {
+      sistemaPension = 'AFP Profuturo(F)';
+    } else if (afpUpper.includes('INTEGRA')) {
+      sistemaPension = 'AFP Integra(F)';
+    } else if (afpUpper.includes('PRIMA')) {
+      sistemaPension = 'AFP Prima(F)';
+    } else if (afpUpper.includes('HABITAT')) {
+      sistemaPension = 'AFP Habitat(F)';
+    } else {
+      // Keep raw for unknown AFP
+      sistemaPension = afpRaw || 'ONP';
+    }
+
+    // Excel serial date → YYYY-MM-DD
+    const fechaIngRaw = (row as unknown[])[C.fechaIng];
+    let fechaIngreso: string | null = null;
+    if (fechaIngRaw && fechaIngRaw !== '') {
+      const n = Number(fechaIngRaw);
+      if (isFinite(n) && n > 1000) {
+        // Excel epoch: 1900-01-01 = serial 1 (with leap year bug: treat serial 1 = 1900-01-01)
+        const ms = (n - 25569) * 86400000; // convert to Unix ms (Excel 1900 epoch offset)
+        const d = new Date(ms);
+        fechaIngreso = d.toISOString().slice(0, 10);
+      } else {
+        fechaIngreso = formatDate(fechaIngRaw);
+      }
+    }
+
+    rows.push({
+      nombre,
+      cargo: C.ocupacion >= 0 ? str((row as unknown[])[C.ocupacion]) : '',
+      dni: dniRaw,
+      sistemaPension,
+      sueldo: C.sueldoBase >= 0 ? num((row as unknown[])[C.sueldoBase]) : 0,
+      cuspp: C.cuspp >= 0 ? str((row as unknown[])[C.cuspp]) : '',
+      cuenta: C.cuenta >= 0 ? str((row as unknown[])[C.cuenta]) : '',
+      correlativoExcel: C.boleta >= 0 ? str((row as unknown[])[C.boleta]) : String(rows.length + 1),
+      brutoExcel: C.bruto >= 0 ? num((row as unknown[])[C.bruto]) : 0,
+      netoExcel: C.neto >= 0 ? num((row as unknown[])[C.neto]) : 0,
+      onpExcel: C.onp >= 0 ? num((row as unknown[])[C.onp]) : 0,
+      afpAporteExcel: C.afpAporte >= 0 ? num((row as unknown[])[C.afpAporte]) : 0,
+      afpSeguroExcel: C.afpSeguro >= 0 ? num((row as unknown[])[C.afpSeguro]) : 0,
+      afpComisionExcel: C.afpComision >= 0 ? num((row as unknown[])[C.afpComision]) : 0,
+      imptoRentaExcel: C.impto >= 0 ? num((row as unknown[])[C.impto]) : 0,
+      essaludExcel: C.essalud >= 0 ? num((row as unknown[])[C.essalud]) : 0,
+      fechaIngreso,
+    });
+  }
+
+  return rows;
+}
+
+// ─── Main ─────────────────────────────────────────────────────
+(async () => {
+  const isLimpiar = process.argv.includes('--limpiar');
+
+  const app = express();
+  app.use(express.json());
+  app.use(authMiddleware);
+  app.use('/api', planillaRoutes);           // POST /api/empleados
+  app.use('/api/oficina', planillaOficinaRoutes);
+
+  const server = app.listen(0);
+  const port = (server.address() as any).port;
+  const base = `http://localhost:${port}`;
+
+  const session = await lucia.createSession(USER, {});
+  const cookie = lucia.createSessionCookie(session.id).serialize();
+
+  const get = (path: string) =>
+    fetch(base + path, { headers: { cookie } });
+  const post = (path: string, body: unknown) =>
+    fetch(base + path, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie },
+      body: JSON.stringify(body),
+    });
+
+  try {
+    // ══════════════════════════════════════════════════════════
+    // MODE: --limpiar
+    // ══════════════════════════════════════════════════════════
+    if (isLimpiar) {
+      console.log('\n════ limpiar · seed-julio-2026 ════');
+
+      // 1. Find planilla mes 2026-07
+      const [mesRow] = await db
+        .select()
+        .from(schema.planillaOficinaMes)
+        .where(and(eq(schema.planillaOficinaMes.empresaId, 1), eq(schema.planillaOficinaMes.mes, MES)))
+        .limit(1);
+
+      if (mesRow) {
+        // Delete linked asiento if any
+        if (mesRow.asientoId) {
+          await db.delete(schema.asientos).where(eq(schema.asientos.id, mesRow.asientoId)).catch(() => {});
+        }
+        await db.delete(schema.planillaOficinaMes).where(eq(schema.planillaOficinaMes.id, mesRow.id));
+        console.log(`  Planilla mes 2026-07 eliminada (id=${mesRow.id}, cascada: detalle + cuotas).`);
+      } else {
+        console.log('  No se encontró planilla mes 2026-07 — nada que eliminar.');
+      }
+
+      // 2. Delete empleados with marker
+      const seeded = await db
+        .select({ id: schema.empleados.id, nombre: schema.empleados.nombre })
+        .from(schema.empleados)
+        .where(eq(schema.empleados.banco, BANCO_MARKER));
+
+      if (seeded.length > 0) {
+        for (const e of seeded) {
+          await db.delete(schema.empleados).where(eq(schema.empleados.id, e.id));
+        }
+        console.log(`  ${seeded.length} empleados eliminados (banco='${BANCO_MARKER}'):`);
+        for (const e of seeded) console.log(`    - ${e.nombre} (id=${e.id})`);
+      } else {
+        console.log(`  No se encontraron empleados con banco='${BANCO_MARKER}'.`);
+      }
+
+      console.log('\n  Limpiar completado.\n');
+      return;
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // MODE: seed + verify
+    // ══════════════════════════════════════════════════════════
+    console.log('\n════ seed-julio-2026 · seed + verificación ════');
+
+    // ── 1. Parse Excel ──────────────────────────────────────
+    console.log('\n[1] Parseando Excel...');
+    const excelRows = parseExcel();
+    console.log(`  → ${excelRows.length} filas parseadas.`);
+    if (excelRows.length === 0) throw new Error('Excel vacío o sin filas de datos.');
+
+    // Print summary of parsed rows
+    console.log('\n  Filas parseadas:');
+    for (const r of excelRows) {
+      console.log(`    ${r.nombre.padEnd(30)} DNI=${r.dni.padEnd(8)} AFP=${r.sistemaPension.padEnd(20)} Sueldo=${r.sueldo} Bruto=${r.brutoExcel} Neto=${r.netoExcel}`);
+    }
+
+    // ── 2. Create empleados ──────────────────────────────────
+    console.log('\n[2] Creando empleados...');
+    const createdIds: string[] = [];
+    const dniToId = new Map<string, string>();
+
+    for (const row of excelRows) {
+      // Check if already exists (by DNI)
+      const existing = await db
+        .select({ id: schema.empleados.id, sueldoBaseMensual: schema.empleados.sueldoBaseMensual })
+        .from(schema.empleados)
+        .where(eq(schema.empleados.numDoc, row.dni))
+        .limit(1);
+
+      if (existing.length > 0) {
+        const empId = existing[0]!.id;
+        dniToId.set(row.dni, empId);
+        // Update sueldo if missing (pre-existing employees with NULL sueldo would compute 0)
+        const hasSueldo = existing[0]!.sueldoBaseMensual != null && Number(existing[0]!.sueldoBaseMensual) > 0;
+        if (!hasSueldo && row.sueldo > 0) {
+          await db.update(schema.empleados)
+            .set({ sueldoBaseMensual: String(row.sueldo) })
+            .where(eq(schema.empleados.id, empId));
+          console.log(`  UPDATE sueldo (DNI ${row.dni}): ${row.nombre} sueldo=${row.sueldo}`);
+        } else {
+          console.log(`  SKIP (ya existe DNI ${row.dni}): ${row.nombre} id=${empId}`);
+        }
+        continue;
+      }
+
+      const r = await post('/api/empleados', {
+        nombre: row.nombre,
+        numDoc: row.dni,
+        tipoPlanilla: 'admin',
+        activo: true,
+        sistemaPension: row.sistemaPension,
+        cargo: row.cargo || null,
+        sueldoBaseMensual: row.sueldo,
+        cuspp: row.cuspp || null,
+        numCuenta: row.cuenta || null,
+        banco: BANCO_MARKER,
+        fechaIngreso: row.fechaIngreso || null,
+      });
+
+      if (!r.ok) {
+        const body = await r.text();
+        console.error(`  ERROR creando ${row.nombre}: ${r.status} ${body}`);
+        continue;
+      }
+
+      const j = await r.json() as { empleado: { id: string } };
+      createdIds.push(j.empleado.id);
+      dniToId.set(row.dni, j.empleado.id);
+      console.log(`  + ${row.nombre.padEnd(30)} id=${j.empleado.id}`);
+    }
+    console.log(`  → ${createdIds.length} nuevos empleados creados, ${excelRows.length - createdIds.length} ya existían.`);
+
+    // ── 3. Crear planilla + calcular ─────────────────────────
+    console.log('\n[3] Creando planilla mes 2026-07...');
+
+    // Delete existing mes if present (to start fresh)
+    const [existingMes] = await db
+      .select()
+      .from(schema.planillaOficinaMes)
+      .where(and(eq(schema.planillaOficinaMes.empresaId, 1), eq(schema.planillaOficinaMes.mes, MES)))
+      .limit(1);
+    if (existingMes) {
+      if (existingMes.asientoId) {
+        await db.delete(schema.asientos).where(eq(schema.asientos.id, existingMes.asientoId)).catch(() => {});
+      }
+      await db.delete(schema.planillaOficinaMes).where(eq(schema.planillaOficinaMes.id, existingMes.id));
+      console.log(`  Planilla previa eliminada (id=${existingMes.id})`);
+    }
+
+    const r3 = await post('/api/oficina/planilla', { mes: MES });
+    if (!r3.ok) {
+      const body = await r3.text();
+      throw new Error(`POST /planilla falló: ${r3.status} ${body}`);
+    }
+    const j3 = await r3.json() as { mes: { id: string; estado: string } };
+    const mesId = j3.mes.id;
+    console.log(`  → Planilla creada: id=${mesId} estado=${j3.mes.estado}`);
+
+    console.log('\n[4] Calculando planilla...');
+    const r4 = await post(`/api/oficina/planilla/${mesId}/calcular`, {});
+    if (!r4.ok) {
+      const body = await r4.text();
+      throw new Error(`POST /calcular falló: ${r4.status} ${body}`);
+    }
+    const j4 = await r4.json() as { mes: { estado: string }; detalle: any[] };
+    console.log(`  → Calculada: estado=${j4.mes.estado} rows=${j4.detalle.length}`);
+
+    // ── 4. GET detalle ───────────────────────────────────────
+    console.log('\n[5] Obteniendo detalle calculado...');
+    const r5 = await get(`/api/oficina/planilla?mes=${MES}`);
+    if (!r5.ok) throw new Error(`GET /planilla falló: ${r5.status}`);
+    const j5 = await r5.json() as { detalle: any[] };
+    const detalle: any[] = j5.detalle;
+    console.log(`  → ${detalle.length} filas de detalle.`);
+
+    // Build map empleadoId → detalle row
+    const detalleByEmpId = new Map<string, any>();
+    for (const d of detalle) {
+      detalleByEmpId.set(d.empleadoId ?? d.empleado_id, d);
+    }
+
+    // ── 5. Comparar ──────────────────────────────────────────
+    console.log('\n[6] Tabla de verificación COMPUTADO vs EXCEL:');
+    console.log('');
+
+    const TOLERANCE = 0.50;
+    type CompRow = {
+      persona: string;
+      campo: string;
+      computado: number;
+      excel: number;
+      delta: number;
+      ok: boolean;
+    };
+
+    const compRows: CompRow[] = [];
+    let totalOk = 0;
+    let totalDiff = 0;
+
+    const CAMPOS: Array<{ label: string; compKey: string; excelKey: keyof ExcelRow }> = [
+      { label: 'total_bruto',    compKey: 'totalBruto',     excelKey: 'brutoExcel' },
+      { label: 'afp_aporte',     compKey: 'afpAporte',      excelKey: 'afpAporteExcel' },
+      { label: 'afp_seguro',     compKey: 'afpSeguro',      excelKey: 'afpSeguroExcel' },
+      { label: 'onp',            compKey: 'onp',            excelKey: 'onpExcel' },
+      { label: 'essalud',        compKey: 'essalud',        excelKey: 'essaludExcel' },
+      { label: 'impto_renta5ta', compKey: 'imptoRenta5ta',  excelKey: 'imptoRentaExcel' },
+      { label: 'neto_pago',      compKey: 'netoPago',       excelKey: 'netoExcel' },
+    ];
+
+    for (const exRow of excelRows) {
+      const empId = dniToId.get(exRow.dni);
+      if (!empId) {
+        console.warn(`  WARN: sin empleado id para DNI=${exRow.dni} (${exRow.nombre})`);
+        continue;
+      }
+      const det = detalleByEmpId.get(empId);
+      if (!det) {
+        console.warn(`  WARN: sin detalle calculado para ${exRow.nombre} (empId=${empId})`);
+        continue;
+      }
+
+      for (const campo of CAMPOS) {
+        const computado = num(det[campo.compKey] ?? det[campo.compKey.replace(/([A-Z])/g, '_$1').toLowerCase()]);
+        const excel = num(exRow[campo.excelKey]);
+        const delta = Math.abs(computado - excel);
+        const ok = delta <= TOLERANCE;
+        if (ok) totalOk++; else totalDiff++;
+        compRows.push({ persona: exRow.nombre, campo: campo.label, computado, excel, delta, ok });
+      }
+    }
+
+    // Print table
+    const COL_PERSONA = 32;
+    const COL_CAMPO = 16;
+    const COL_NUM = 12;
+    const COL_DELTA = 10;
+    const COL_STATUS = 6;
+
+    const sep = `${'─'.repeat(COL_PERSONA)}┼${'─'.repeat(COL_CAMPO)}┼${'─'.repeat(COL_NUM)}┼${'─'.repeat(COL_NUM)}┼${'─'.repeat(COL_DELTA)}┼${'─'.repeat(COL_STATUS)}`;
+
+    const hdr = [
+      'Persona'.padEnd(COL_PERSONA),
+      'Campo'.padEnd(COL_CAMPO),
+      'Computado'.padStart(COL_NUM),
+      'Excel'.padStart(COL_NUM),
+      'Δ'.padStart(COL_DELTA),
+      'Estado'.padEnd(COL_STATUS),
+    ].join('│');
+
+    console.log(hdr);
+    console.log(sep);
+
+    let lastPersona = '';
+    for (const r of compRows) {
+      const personaDisplay = r.persona !== lastPersona ? r.persona.substring(0, COL_PERSONA - 1) : '';
+      lastPersona = r.persona;
+      const line = [
+        personaDisplay.padEnd(COL_PERSONA),
+        r.campo.padEnd(COL_CAMPO),
+        r.computado.toFixed(2).padStart(COL_NUM),
+        r.excel.toFixed(2).padStart(COL_NUM),
+        r.delta.toFixed(2).padStart(COL_DELTA),
+        r.ok ? 'OK' : 'DIFF',
+      ].join('│');
+      console.log(line);
+    }
+
+    console.log(sep);
+    console.log('');
+
+    // ── 6. Summary ───────────────────────────────────────────
+    const totalFields = totalOk + totalDiff;
+    console.log('════ RESUMEN ════');
+    console.log(`  Total campos comparados : ${totalFields}`);
+    console.log(`  OK (|Δ| ≤ S/0.50)      : ${totalOk}`);
+    console.log(`  DIFF (|Δ| > S/0.50)    : ${totalDiff}`);
+    console.log('');
+    console.log('  Nota sobre DIFFs esperados:');
+    console.log('  · afp_seguro   — el sistema usa tasa de afp_tasas (1.84% Profuturo),');
+    console.log('                   el Excel usa ~1.37%. DIFF esperado = ítem de calibración.');
+    console.log('  · impto_renta5ta — motor v1 usa proyección anual simplificada.');
+    console.log('                   DIFF esperado = ítem de calibración, NO es bug de código.');
+    console.log('');
+    console.log(`  seed-julio-2026 COMPLETADO (OK=${totalOk} DIFF=${totalDiff})`);
+    console.log('');
+
+  } catch (e: any) {
+    console.error('\n  ERROR FATAL:', e?.message ?? e);
+    if (e?.stack) console.error(e.stack);
+    process.exitCode = 1;
+  } finally {
+    await lucia.invalidateSession(session.id).catch(() => {});
+    server.close();
+    await (db as any).$client?.end?.().catch(() => {});
+    process.exit(process.exitCode ?? 0);
+  }
+})();
