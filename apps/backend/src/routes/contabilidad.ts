@@ -15,6 +15,7 @@ import { createHash } from 'node:crypto';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { audit } from '../lib/audit.js';
 import { freezePeriodo, unfreezePeriodo } from '../lib/periodos.js';
+import { derivarClaseCore, cargarDerivarCtx, type DerivarCtx } from '../lib/clasificacion.js';
 import { construirTaxonomia } from '../lib/conciliacionTaxonomia.js';
 import * as ple from '../lib/ple.js';
 
@@ -81,13 +82,21 @@ async function nextCorrelativoAsiento(periodo: string): Promise<string> {
 }
 
 // Inserta asiento + líneas (valida cuadre) · status registrado
-type LineaIn = { cuenta: string; descripcion?: string | null; debe: number; haber: number };
-async function crearAsiento(opts: {
+// WS1 · cada línea persiste cuenta_contable + obra_id + clase_derivada + cuenta_origen.
+//   cuentaContable: cuenta MANUAL (Kelly) si viene; si no, = cuenta inferida (compat).
+//   cuentaOrigen: MANUAL|SUGERIDO (viene del origen) o INFERIDO (default del motor).
+export type LineaIn = {
+  cuenta: string; descripcion?: string | null; debe: number; haber: number;
+  cuentaContable?: string | null; obraId?: string | null; cuentaOrigen?: 'USUARIO' | 'SUGERIDO' | 'AUTOMATICO' | null;
+};
+export async function crearAsiento(opts: {
   fecha: string; glosa: string; lineas: LineaIn[];
   origen?: string; origenId?: string | null; proyectoId?: string | null;
   moneda?: string; tipoCambio?: number | null; docOrigen?: string | null; tipoDoc?: string | null;
   contraparteRuc?: string | null; contraparteRazon?: string | null; status?: 'borrador' | 'registrado';
   userId?: string | null; // H1.2 · trazabilidad de quién generó el asiento
+  empresaId?: number; // WS1 · un asiento = una empresa (header). Default MM=1 (operativo actual).
+  derivarCtx?: DerivarCtx; // WS1 · contexto precargado (clasificable + mapa) para derivar clase sin N queries
   // overrides para /generar · evitan re-query por asiento (correlativo/periodo/plan) → quita O(n²)
   nextCorrelativo?: () => string; skipPeriodoCheck?: boolean; validCuentas?: Set<string>;
 }) {
@@ -135,22 +144,91 @@ async function crearAsiento(opts: {
     contraparteRazon: opts.contraparteRazon ?? null,
     status: opts.status ?? 'registrado',
     userId: opts.userId ?? null,
+    empresaId: opts.empresaId ?? 1, // WS1 · header empresa (default MM=1 · operativo actual es mono-empresa)
   }).returning();
+  // WS1 · ctx para derivar clase (preload si viene de /generar; si no, carga una vez para este asiento)
+  const ctx = opts.derivarCtx ?? (await cargarDerivarCtx());
   // 1 INSERT batch de líneas (antes: 1 round-trip por línea)
   await db.insert(schema.asientosLineas).values(
-    lineas.map((l, idx) => ({
-      asientoId: asiento!.id,
-      correlativo: idx + 1,
-      cuenta: l.cuenta,
-      descripcion: l.descripcion ?? null,
-      debe: D2(l.debe),
-      haber: D2(l.haber),
-    })),
+    lineas.map((l, idx) => {
+      const cuentaContable = l.cuentaContable ?? l.cuenta; // manual si vino, si no = cuenta inferida (compat)
+      // obra por LÍNEA: null explícito (IGV/CxP/control) se respeta; undefined → hereda la del header
+      const obraId = l.obraId !== undefined ? l.obraId : (opts.proyectoId ?? null);
+      return {
+        asientoId: asiento!.id,
+        correlativo: idx + 1,
+        cuenta: l.cuenta,
+        descripcion: l.descripcion ?? null,
+        debe: D2(l.debe),
+        haber: D2(l.haber),
+        cuentaContable,
+        obraId,
+        claseDerivada: derivarClaseCore(ctx.clasificablePorCuenta.get(cuentaContable) ?? false, obraId, ctx.claseObraPorCuenta.get(cuentaContable)),
+        cuentaOrigen: l.cuentaOrigen ?? 'AUTOMATICO', // procedencia: explícita si vino del origen, si no AUTOMATICO
+      };
+    }),
   );
   return asiento!;
 }
 
 // ── Plan contable ────────────────────────────────────────────
+// GET /plan?q= · WS1 autocomplete de cuentas (código/descripción, activas, por empresa).
+//   Devuelve lo necesario para <CuentaContableSelect>. NO expone CD/GG (se deriva, nunca input).
+//   empresaId opcional: filtra compartidas (empresa_id IS NULL) + propias de esa empresa.
+router.get('/plan', async (req, res, next) => {
+  const { q, empresaId, soloHoja } = req.query as { q?: string; empresaId?: string; soloHoja?: string };
+  if (q === undefined) return next(); // sin ?q= → cae al handler de saldos (?periodo=) de abajo
+  const term = q.trim().toLowerCase();
+  const empId = empresaId ? Number(empresaId) : null;
+  const conds = [eq(schema.planContable.activa, true)];
+  if (empId) conds.push(or(isNull(schema.planContable.empresaId), eq(schema.planContable.empresaId, empId))!);
+  if (soloHoja === '1') conds.push(eq(schema.planContable.esDivisionaria, true));
+  if (term) conds.push(or(dsql`lower(${schema.planContable.codigo}) like ${term + '%'}`, dsql`lower(${schema.planContable.descripcion}) like ${'%' + term + '%'}`)!);
+  const rows = await db
+    .select({
+      codigo: schema.planContable.codigo,
+      descripcion: schema.planContable.descripcion,
+      tipo: schema.planContable.tipo,
+      nivel: schema.planContable.nivel,
+      esDivisionaria: schema.planContable.esDivisionaria,
+      empresaId: schema.planContable.empresaId,
+      activa: schema.planContable.activa,
+      clasificable: schema.planContable.clasificable,
+      claseObra: schema.mapaCuentaClase.claseObra, // WS1 · para que el FE pinte el chip CD/GG derivado (NO editable)
+    })
+    .from(schema.planContable)
+    .leftJoin(schema.mapaCuentaClase, eq(schema.mapaCuentaClase.cuenta, schema.planContable.codigo))
+    .where(and(...conds))
+    .orderBy(asc(schema.planContable.codigo))
+    .limit(30);
+  res.json({ cuentas: rows });
+});
+
+// WS1 · GET /sugerir-cuenta?proveedorRuc=&tipoGasto= · prefill (pista, no verdad).
+//   1) cuenta válida más reciente usada con ESE proveedor (SUGERIDO)
+//   2) fallback mapa tipoGasto→cuenta (AUTOMATICO)
+//   Solo cuentas existentes y activas en el plan. Devuelve {cuenta, origen} o {cuenta:null}.
+router.get('/sugerir-cuenta', async (req, res) => {
+  const { proveedorRuc, tipoGasto } = req.query as { proveedorRuc?: string; tipoGasto?: string };
+  const activas = new Set((await db.select({ codigo: schema.planContable.codigo }).from(schema.planContable).where(eq(schema.planContable.activa, true))).map((r) => r.codigo));
+  // nivel 1 · reciente por proveedor
+  if (proveedorRuc?.trim()) {
+    const recientes = await db.select({ cuenta: schema.gastos.cuentaContable })
+      .from(schema.gastos)
+      .where(and(eq(schema.gastos.proveedorRuc, proveedorRuc.trim()), dsql`${schema.gastos.cuentaContable} is not null`))
+      .orderBy(desc(schema.gastos.fecha))
+      .limit(10);
+    const hit = recientes.find((r) => r.cuenta && activas.has(r.cuenta)); // primera activa
+    if (hit?.cuenta) return res.json({ cuenta: hit.cuenta, origen: 'SUGERIDO' });
+  }
+  // nivel 2 · fallback mapa tipoGasto
+  if (tipoGasto?.trim()) {
+    const [m] = await db.select({ cuenta: schema.gastoCuentaMap.cuenta }).from(schema.gastoCuentaMap).where(eq(schema.gastoCuentaMap.tipoGasto, tipoGasto.trim())).limit(1);
+    if (m?.cuenta && activas.has(m.cuenta)) return res.json({ cuenta: m.cuenta, origen: 'AUTOMATICO' });
+  }
+  res.json({ cuenta: null });
+});
+
 // GET /plan?periodo= · cuentas + saldos (movimientos registrados, rollup a padres)
 router.get('/plan', async (req, res) => {
   const { periodo } = req.query as { periodo?: string };
@@ -717,7 +795,8 @@ router.post('/generar', async (req, res) => {
   const corrRows = await db.select({ c: schema.asientos.correlativo }).from(schema.asientos).where(dsql`${schema.asientos.correlativo} LIKE ${corrPref + '%'}`);
   let corrN = corrRows.reduce((m, r) => Math.max(m, Number(r.c.slice(corrPref.length)) || 0), 0);
   const planCodes = new Set((await db.select({ codigo: schema.planContable.codigo }).from(schema.planContable)).map((r) => r.codigo));
-  const asientoBase = { nextCorrelativo: () => `${corrPref}${String(++corrN).padStart(4, '0')}`, skipPeriodoCheck: true as const, validCuentas: planCodes, userId: req.user!.id };
+  const derivarCtx = await cargarDerivarCtx(); // WS1 · preload clasificable+mapa 1 vez (deriva clase sin N queries)
+  const asientoBase = { nextCorrelativo: () => `${corrPref}${String(++corrN).padStart(4, '0')}`, skipPeriodoCheck: true as const, validCuentas: planCodes, userId: req.user!.id, derivarCtx };
   const gen = (o: Parameters<typeof crearAsiento>[0]) => crearAsiento({ ...o, ...asientoBase });
 
   // 1· GASTOS → provisión compra (60x/63x + 40111 / 4212). Determinación de cuenta = mapa editable de la DB.
@@ -743,9 +822,15 @@ router.post('/generar', async (req, res) => {
         contraparteRuc: g.proveedorRuc,
         contraparteRazon: g.proveedorRazon,
         lineas: [
-          { cuenta: cm?.cuenta ?? cuentaGasto(g.tipoGasto), descripcion: g.tipoGasto ?? 'Gasto', debe: subtotal, haber: 0 },
-          { cuenta: '40111', descripcion: 'IGV crédito fiscal', debe: igv, haber: 0 },
-          { cuenta: '4212', descripcion: 'Por pagar', debe: 0, haber: total },
+          // WS1 · cuenta del gasto: la manual (Kelly) si la eligió, si no la inferida (mapa/fallback). obra en la línea.
+          {
+            cuenta: g.cuentaContable ?? cm?.cuenta ?? cuentaGasto(g.tipoGasto),
+            descripcion: g.tipoGasto ?? 'Gasto', debe: subtotal, haber: 0,
+            obraId: g.proyectoId,
+            cuentaOrigen: g.cuentaContable ? ((g.cuentaContableOrigen as 'USUARIO' | 'SUGERIDO' | 'AUTOMATICO' | null) ?? 'AUTOMATICO') : 'AUTOMATICO',
+          },
+          { cuenta: '40111', descripcion: 'IGV crédito fiscal', debe: igv, haber: 0, obraId: null },
+          { cuenta: '4212', descripcion: 'Por pagar', debe: 0, haber: total, obraId: null },
         ],
       });
       resultado.gastos++;
@@ -799,9 +884,14 @@ router.post('/generar', async (req, res) => {
           origenId: v.id,
           proyectoId: v.proyectoId,
           lineas: [
-            { cuenta: '1212', descripcion: `Val N°${v.numero}`, debe: total, haber: 0 },
-            { cuenta: '7041', descripcion: 'Servicios de construcción', debe: 0, haber: sinIgv },
-            { cuenta: '40111', descripcion: 'IGV débito fiscal', debe: 0, haber: Math.max(0, total - sinIgv) || igv },
+            { cuenta: '1212', descripcion: `Val N°${v.numero}`, debe: total, haber: 0, obraId: null },
+            // WS1 · cuenta de ingreso: la que Kelly confirmó (default fuerte 7041). Deriva clase (70x → null).
+            {
+              cuenta: v.cuentaContable ?? '7041', descripcion: 'Servicios de construcción', debe: 0, haber: sinIgv,
+              obraId: v.proyectoId,
+              cuentaOrigen: v.cuentaContable ? ((v.cuentaContableOrigen as 'USUARIO' | 'SUGERIDO' | 'AUTOMATICO' | null) ?? 'AUTOMATICO') : 'AUTOMATICO',
+            },
+            { cuenta: '40111', descripcion: 'IGV débito fiscal', debe: 0, haber: Math.max(0, total - sinIgv) || igv, obraId: null },
           ],
         });
         resultado.valorizaciones++;
@@ -841,6 +931,8 @@ router.post('/generar', async (req, res) => {
     const sum = (f: (d: typeof det[number]) => number) => det.reduce((acc, d) => acc + f(d), 0);
     const ingresos = sum((d) => Number(d.totalIngreso));
     const essalud = sum((d) => Number(d.montoEsSalud));
+    const sctr = sum((d) => Number(d.montoSctrSalud) + Number(d.montoSctrPension)); // cargas patronales de riesgo
+    const sencico = sum((d) => Number(d.montoSencico)); // contribución patronal SENCICO 0.2%
     const onp = sum((d) => Number(d.montoOnp));
     const afp = sum((d) => Number(d.montoAfpAporte) + Number(d.montoAfpComision) + Number(d.montoAfpSeguro));
     const conafov = sum((d) => Number(d.montoConafovicer));
@@ -848,6 +940,19 @@ router.post('/generar', async (req, res) => {
     const otrosDsctos = sum((d) => Number(d.montoAdelanto) + Number(d.montoSindical));
     const neto = sum((d) => Number(d.netoPago));
     if (ingresos <= 0) continue;
+    // WS1 · costo de remuneraciones: agrupar por cuenta contable del detalle (default fuerte 621).
+    // Kelly puede imputar el costo de un obrero a otra cuenta; el motor emite 1 línea por cuenta distinta.
+    const costoPorCuenta = new Map<string, { monto: number; usuario: boolean }>();
+    for (const d of det) {
+      const cta = d.cuentaContable ?? '621';
+      const e = costoPorCuenta.get(cta) ?? { monto: 0, usuario: false };
+      e.monto += Number(d.totalIngreso);
+      if (d.cuentaContable && d.cuentaContableOrigen === 'USUARIO') e.usuario = true;
+      costoPorCuenta.set(cta, e);
+    }
+    const costoLineas: LineaIn[] = [...costoPorCuenta.entries()]
+      .filter(([, v]) => v.monto > 0.004)
+      .map(([cta, v]) => ({ cuenta: cta, descripcion: 'Remuneraciones obreros', debe: v.monto, haber: 0, obraId: s.proyectoId, cuentaOrigen: (v.usuario ? 'USUARIO' : 'AUTOMATICO') as 'USUARIO' | 'AUTOMATICO' }));
     try {
       await gen({
         fecha: s.fechaFin,
@@ -856,9 +961,13 @@ router.post('/generar', async (req, res) => {
         origenId: s.id,
         proyectoId: s.proyectoId,
         lineas: [
-          { cuenta: '621', descripcion: 'Remuneraciones obreros', debe: ingresos, haber: 0 },
+          ...costoLineas,
           { cuenta: '6271', descripcion: 'EsSalud empleador', debe: essalud, haber: 0 },
+          { cuenta: '6273', descripcion: 'SCTR empleador (salud + pensión)', debe: sctr, haber: 0 },
+          { cuenta: '6279', descripcion: 'SENCICO empleador', debe: sencico, haber: 0 },
           { cuenta: '4031', descripcion: 'EsSalud por pagar', debe: 0, haber: essalud },
+          { cuenta: '4034', descripcion: 'SCTR por pagar', debe: 0, haber: sctr },
+          { cuenta: '4033', descripcion: 'SENCICO por pagar', debe: 0, haber: sencico },
           { cuenta: '4032', descripcion: 'ONP por pagar', debe: 0, haber: onp },
           { cuenta: '407', descripcion: 'AFP por pagar', debe: 0, haber: afp },
           { cuenta: '4039', descripcion: 'CONAFOVICER por pagar', debe: 0, haber: conafov },
@@ -889,7 +998,9 @@ router.post('/generar', async (req, res) => {
     const banco = m.cuentaId ? cuentas104.get(m.cuentaId) ?? null : null;
     if (!banco) { resultado.movSkip.sinCuenta104x++; console.warn(`WARN movimiento ${m.codigo ?? m.id} skipped: cuenta bancaria sin 104x configurada`); continue; }
     const total = Number(m.montoBase ?? m.monto); // H3.1 · asiento PCGE en PEN (moneda base)
-    let lineas: { cuenta: string; descripcion?: string | null; debe: number; haber: number }[];
+    let lineas: LineaIn[];
+    let contraTag: string | null = null; // WS1 · cuenta contra (para etiquetar procedencia/obra tras armar líneas)
+    let contraOrigenTag: 'USUARIO' | 'SUGERIDO' | 'AUTOMATICO' = 'AUTOMATICO';
     if (esTransfer) {
       const bancoDest = m.cuentaDestinoId ? cuentas104.get(m.cuentaDestinoId) ?? null : null;
       if (!bancoDest) { resultado.movSkip.sinCuenta104x++; console.warn(`WARN transferencia ${m.id} skipped: cuenta destino sin 104x`); continue; }
@@ -902,6 +1013,10 @@ router.post('/generar', async (req, res) => {
       // contrapartida: doc-link la infiere (pago→4212 · cobro→1212); suelta usa el catálogo; fallback 759/659
       let contra = m.ordenCompraId ? '4212' : m.valorizacionId ? '1212' : (nat in NATURALEZAS_CONTABLES ? cuentaDeNaturaleza(nat) : null);
       if (!contra) contra = m.tipoMovimiento === 'Ingreso' ? '759' : '659';
+      // WS1 · Kelly puede fijar la cuenta contra manual → manda sobre la inferida.
+      if (m.cuentaContable) contra = m.cuentaContable;
+      contraTag = contra;
+      contraOrigenTag = m.cuentaContable ? ((m.cuentaContableOrigen as 'USUARIO' | 'SUGERIDO' | 'AUTOMATICO' | null) ?? 'AUTOMATICO') : 'AUTOMATICO';
       const docLink = !!(m.ordenCompraId || m.valorizacionId);
       const igv = Number(m.igv ?? 0);
       const sub = Number(m.subtotal ?? 0) || total - igv;
@@ -915,6 +1030,11 @@ router.post('/generar', async (req, res) => {
           ? [{ cuenta: contra, descripcion: m.descripcion, debe: total, haber: 0 }, { cuenta: banco, debe: 0, haber: total }]
           : [{ cuenta: contra, debe: sub, haber: 0 }, { cuenta: '40111', descripcion: 'IGV crédito', debe: igv, haber: 0 }, { cuenta: banco, debe: 0, haber: total }];
       }
+    }
+    // WS1 · procedencia por línea: la contra lleva MANUAL/SUGERIDO/INFERIDO + obra; banco/IGV/transfer no son de obra.
+    for (const l of lineas) {
+      if (!esTransfer && contraTag && l.cuenta === contraTag) { l.cuentaOrigen = contraOrigenTag; l.obraId = m.proyectoId; }
+      else l.obraId = null; // banco (104x) / IGV / transferencia no llevan dimensión obra
     }
     if (dryRunMov) { resultado.movimientos++; continue; } // dry-run: cuenta pero no escribe
     try {

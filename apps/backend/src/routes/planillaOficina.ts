@@ -1,8 +1,11 @@
 import { db, schema } from '@erp/db';
-import { and, asc, desc, eq, gt, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, sql } from 'drizzle-orm';
 import { Router } from 'express';
 import { calcularDetalleOficina } from '../lib/planillaOficinaCalc.js';
 import { requireAuth } from '../middleware/auth.js';
+import { cargarDerivarCtx } from '../lib/clasificacion.js';
+import { crearAsiento, type LineaIn } from './contabilidad.js';
+import { periodoCerrado } from '../lib/periodos.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -578,6 +581,346 @@ router.get('/adelantos', async (req, res) => {
   );
 
   res.json({ adelantos });
+});
+
+// ─── POST /api/oficina/planilla/:mesId/cerrar ────────────────
+router.post('/planilla/:mesId/cerrar', async (req, res) => {
+  const { mesId } = req.params;
+
+  const [mesRow] = await db
+    .select()
+    .from(schema.planillaOficinaMes)
+    .where(eq(schema.planillaOficinaMes.id, mesId!))
+    .limit(1);
+
+  if (!mesRow) return res.status(404).json({ error: 'Planilla mes no encontrada' });
+  if (mesRow.estado !== 'calculada') {
+    return res.status(400).json({ error: `Solo se puede cerrar en estado 'calculada'; estado actual: '${mesRow.estado}'` });
+  }
+
+  // Load detalle rows
+  const detalleRows = await db
+    .select()
+    .from(schema.planillaOficinaDetalle)
+    .where(eq(schema.planillaOficinaDetalle.planillaMesId, mesId!));
+
+  // Compute last day of mes
+  const [y, m] = mesRow.mes.split('-').map(Number) as [number, number];
+  const lastDay = new Date(y, m, 0).getDate();
+  const fecha = mesRow.mes + '-' + String(lastDay).padStart(2, '0');
+
+  // Pre-load derivar context (single load for the whole transaction)
+  const derivarCtx = await cargarDerivarCtx();
+
+  // ── Step 2: Apply advance installments (in a transaction) ──
+  await db.transaction(async (tx) => {
+    for (const det of detalleRows) {
+      const cuotaTotal = Math.round(Number(det.adelantoCuota ?? 0) * 100) / 100;
+      if (cuotaTotal <= 0) continue;
+
+      // Load vigente adelantos for this employee, ordered oldest first
+      const adelantos = await tx
+        .select()
+        .from(schema.adelantoOficina)
+        .where(and(
+          eq(schema.adelantoOficina.empleadoId, det.empleadoId),
+          eq(schema.adelantoOficina.estado, 'vigente'),
+        ))
+        .orderBy(asc(schema.adelantoOficina.fecha));
+
+      let remaining = cuotaTotal;
+      for (const adel of adelantos) {
+        if (remaining <= 0) break;
+
+        // Compute saldo for this adelanto
+        const [saldoRow] = await tx
+          .select({ total: sql<string>`COALESCE(SUM(monto), 0)` })
+          .from(schema.adelantoCuotaAplicada)
+          .where(eq(schema.adelantoCuotaAplicada.adelantoId, adel.id));
+        const aplicado = Number(saldoRow?.total ?? 0);
+        const montoTotal = Number(adel.montoTotal);
+        const saldo = Math.round((montoTotal - aplicado) * 100) / 100;
+
+        if (saldo <= 0) continue;
+
+        const montoCuota = Math.round((montoTotal / adel.numCuotas) * 100) / 100;
+        const applied = Math.round(Math.min(montoCuota, saldo, remaining) * 100) / 100;
+
+        // Insert cuota aplicada (idempotent: on conflict do nothing)
+        await tx
+          .insert(schema.adelantoCuotaAplicada)
+          .values({
+            adelantoId: adel.id,
+            planillaDetalleId: det.id,
+            monto: String(applied),
+            fecha,
+          })
+          .onConflictDoNothing();
+
+        remaining = Math.round((remaining - applied) * 100) / 100;
+
+        // If adelanto is now fully paid, mark cancelled
+        const newSaldo = Math.round((saldo - applied) * 100) / 100;
+        if (newSaldo <= 0) {
+          await tx
+            .update(schema.adelantoOficina)
+            .set({ estado: 'cancelado' })
+            .where(eq(schema.adelantoOficina.id, adel.id));
+        }
+      }
+    }
+  });
+
+  // ── Step 3: Build accounting lines ──
+  // Debit sueldos grouped by cuentaContable (default '621')
+  const suelDoGroupMap = new Map<string, { total: number; hasManual: boolean }>();
+  let totalEssalud = 0;
+  let totalAfp = 0;
+  let totalOnp = 0;
+  let totalRenta5ta = 0;
+  let totalOtros = 0;
+  let totalNeto = 0;
+
+  for (const det of detalleRows) {
+    const cuenta = det.cuentaContable ?? '621';
+    const hasManual = !!det.cuentaContable;
+    const bruto = Math.round(Number(det.totalBruto ?? 0) * 100) / 100;
+    const prev = suelDoGroupMap.get(cuenta);
+    if (prev) {
+      prev.total = Math.round((prev.total + bruto) * 100) / 100;
+      if (hasManual) prev.hasManual = true;
+    } else {
+      suelDoGroupMap.set(cuenta, { total: bruto, hasManual });
+    }
+
+    totalEssalud = Math.round((totalEssalud + Number(det.essalud ?? 0)) * 100) / 100;
+    totalAfp = Math.round((totalAfp + Number(det.afpAporte ?? 0) + Number(det.afpSeguro ?? 0) + Number(det.afpComision ?? 0)) * 100) / 100;
+    totalOnp = Math.round((totalOnp + Number(det.onp ?? 0)) * 100) / 100;
+    totalRenta5ta = Math.round((totalRenta5ta + Number(det.imptoRenta5ta ?? 0)) * 100) / 100;
+    totalOtros = Math.round((totalOtros + Number(det.retencionJudicial ?? 0) + Number(det.otrosDescuentos ?? 0) + Number(det.adelantoCuota ?? 0)) * 100) / 100;
+    totalNeto = Math.round((totalNeto + Number(det.netoPago ?? 0)) * 100) / 100;
+  }
+
+  const lineas: LineaIn[] = [];
+
+  // Debits: sueldos per account group
+  for (const [cuenta, grp] of suelDoGroupMap) {
+    if (grp.total < 0.005) continue;
+    lineas.push({
+      cuenta,
+      descripcion: 'Sueldos y salarios',
+      debe: grp.total,
+      haber: 0,
+      cuentaContable: cuenta,
+      obraId: null,
+      cuentaOrigen: grp.hasManual ? 'USUARIO' : 'AUTOMATICO',
+    });
+  }
+
+  // Debit EsSalud empleador
+  if (totalEssalud >= 0.005) {
+    lineas.push({
+      cuenta: '6271',
+      descripcion: 'EsSalud empleador',
+      debe: totalEssalud,
+      haber: 0,
+      cuentaContable: '6271',
+      obraId: null,
+      cuentaOrigen: 'AUTOMATICO',
+    });
+  }
+
+  // Credits
+  if (totalEssalud >= 0.005) {
+    lineas.push({
+      cuenta: '4031',
+      descripcion: 'EsSalud por pagar',
+      debe: 0,
+      haber: totalEssalud,
+      cuentaContable: '4031',
+      obraId: null,
+      cuentaOrigen: 'AUTOMATICO',
+    });
+  }
+  if (totalAfp >= 0.005) {
+    lineas.push({
+      cuenta: '407',
+      descripcion: 'AFP por pagar',
+      debe: 0,
+      haber: totalAfp,
+      cuentaContable: '407',
+      obraId: null,
+      cuentaOrigen: 'AUTOMATICO',
+    });
+  }
+  if (totalOnp >= 0.005) {
+    lineas.push({
+      cuenta: '4032',
+      descripcion: 'ONP por pagar',
+      debe: 0,
+      haber: totalOnp,
+      cuentaContable: '4032',
+      obraId: null,
+      cuentaOrigen: 'AUTOMATICO',
+    });
+  }
+  if (totalRenta5ta >= 0.005) {
+    lineas.push({
+      cuenta: '40173',
+      descripcion: 'Renta 5ta por pagar',
+      debe: 0,
+      haber: totalRenta5ta,
+      cuentaContable: '40173',
+      obraId: null,
+      cuentaOrigen: 'AUTOMATICO',
+    });
+  }
+  if (totalOtros >= 0.005) {
+    lineas.push({
+      cuenta: '469',
+      descripcion: 'Otros por pagar (judicial + descuentos + adelanto)',
+      debe: 0,
+      haber: totalOtros,
+      cuentaContable: '469',
+      obraId: null,
+      cuentaOrigen: 'AUTOMATICO',
+    });
+  }
+  if (totalNeto >= 0.005) {
+    lineas.push({
+      cuenta: '411',
+      descripcion: 'Neto por pagar',
+      debe: 0,
+      haber: totalNeto,
+      cuentaContable: '411',
+      obraId: null,
+      cuentaOrigen: 'AUTOMATICO',
+    });
+  }
+
+  // ── Step 4: Create accounting entry via WS1 engine ──
+  const asiento = await crearAsiento({
+    fecha,
+    glosa: 'Planilla oficina ' + mesRow.mes,
+    lineas,
+    origen: 'planilla_oficina',
+    origenId: mesId!,
+    empresaId: mesRow.empresaId,
+    derivarCtx,
+    userId: req.user!.id,
+  });
+
+  // ── Step 5: Update mes row ──
+  const [updatedMes] = await db
+    .update(schema.planillaOficinaMes)
+    .set({
+      estado: 'cerrada',
+      asientoId: asiento.id,
+      cerradoPor: req.user!.id,
+      cerradoEn: new Date(),
+    })
+    .where(eq(schema.planillaOficinaMes.id, mesId!))
+    .returning();
+
+  res.json({ mes: updatedMes, asientoId: asiento.id });
+});
+
+// ─── POST /api/oficina/planilla/:mesId/reabrir ───────────────
+router.post('/planilla/:mesId/reabrir', async (req, res) => {
+  const { mesId } = req.params;
+
+  const [mesRow] = await db
+    .select()
+    .from(schema.planillaOficinaMes)
+    .where(eq(schema.planillaOficinaMes.id, mesId!))
+    .limit(1);
+
+  if (!mesRow) return res.status(404).json({ error: 'Planilla mes no encontrada' });
+  if (mesRow.estado !== 'cerrada') {
+    return res.status(400).json({ error: `Solo se puede reabrir en estado 'cerrada'; estado actual: '${mesRow.estado}'` });
+  }
+
+  // Compute the periodo of the cierre fecha (last day of mes)
+  const [y, m] = mesRow.mes.split('-').map(Number) as [number, number];
+  const lastDay = new Date(y, m, 0).getDate();
+  const cierreFecha = mesRow.mes + '-' + String(lastDay).padStart(2, '0');
+  const periodo = cierreFecha.slice(0, 7);
+
+  if (await periodoCerrado(periodo)) {
+    return res.status(423).json({ error: `Periodo contable ${periodo} cerrado; reabrelo primero` });
+  }
+
+  const result = await db.transaction(async (tx) => {
+    // Load detalle ids for this mes
+    const detalles = await tx
+      .select({ id: schema.planillaOficinaDetalle.id })
+      .from(schema.planillaOficinaDetalle)
+      .where(eq(schema.planillaOficinaDetalle.planillaMesId, mesId!));
+
+    if (detalles.length > 0) {
+      const detalleIds = detalles.map((d) => d.id);
+
+      // Find adelantos that were cancelled due to this planilla's cuotas
+      // (adelantos where cuota_aplicada rows exist for these detalle_ids)
+      const cuotasRows = await tx
+        .select({ adelantoId: schema.adelantoCuotaAplicada.adelantoId })
+        .from(schema.adelantoCuotaAplicada)
+        .where(inArray(schema.adelantoCuotaAplicada.planillaDetalleId, detalleIds));
+
+      // Delete cuota_aplicada rows for this mes's detalle
+      await tx
+        .delete(schema.adelantoCuotaAplicada)
+        .where(inArray(schema.adelantoCuotaAplicada.planillaDetalleId, detalleIds));
+
+      // Restore cancelled adelantos that now have saldo > 0
+      const uniqueAdelantoIds = [...new Set(cuotasRows.map((r) => r.adelantoId))];
+      for (const adelantoId of uniqueAdelantoIds) {
+        const [adelRow] = await tx
+          .select()
+          .from(schema.adelantoOficina)
+          .where(eq(schema.adelantoOficina.id, adelantoId))
+          .limit(1);
+        if (!adelRow || adelRow.estado !== 'cancelado') continue;
+
+        const [saldoRow] = await tx
+          .select({ total: sql<string>`COALESCE(SUM(monto), 0)` })
+          .from(schema.adelantoCuotaAplicada)
+          .where(eq(schema.adelantoCuotaAplicada.adelantoId, adelantoId));
+        const aplicado = Number(saldoRow?.total ?? 0);
+        const saldo = Math.round((Number(adelRow.montoTotal) - aplicado) * 100) / 100;
+
+        if (saldo > 0) {
+          await tx
+            .update(schema.adelantoOficina)
+            .set({ estado: 'vigente' })
+            .where(eq(schema.adelantoOficina.id, adelantoId));
+        }
+      }
+    }
+
+    // Delete asiento (cascade deletes asientos_lineas)
+    if (mesRow.asientoId) {
+      await tx
+        .delete(schema.asientos)
+        .where(eq(schema.asientos.id, mesRow.asientoId));
+    }
+
+    // Reset mes to calculada
+    const [updatedMes] = await tx
+      .update(schema.planillaOficinaMes)
+      .set({
+        estado: 'calculada',
+        asientoId: null,
+        cerradoPor: null,
+        cerradoEn: null,
+      })
+      .where(eq(schema.planillaOficinaMes.id, mesId!))
+      .returning();
+
+    return { mes: updatedMes };
+  });
+
+  res.json(result);
 });
 
 export default router;
