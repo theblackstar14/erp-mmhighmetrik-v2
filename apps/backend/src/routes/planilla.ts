@@ -26,6 +26,7 @@ const empSchema = z.object({
   cuspp: z.string().optional().nullable(),
   fechaIngreso: z.string().optional().nullable(),
   categoria: z.string().optional().nullable(),
+  cargo: z.string().optional().nullable(),
   tieneHijos: z.boolean().optional(),
   numHijos: z.number().optional(),
   aplicaMovilidad: z.boolean().optional(),
@@ -36,11 +37,21 @@ const empSchema = z.object({
   banco: z.string().optional().nullable(),
   numCuenta: z.string().optional().nullable(),
   tipoPlanilla: z.enum(['obrero', 'admin']).optional(),
+  sueldoBaseMensual: z.number().optional().nullable(),
+  asignacionFamiliar: z.boolean().optional(),
+  fechaCese: z.string().optional().nullable(),
 });
 router.post('/empleados', async (req, res) => {
   const parse = empSchema.safeParse(req.body);
   if (!parse.success) return res.status(400).json({ error: parse.error.flatten() });
-  const [emp] = await db.insert(schema.empleados).values({ ...parse.data, fechaIngreso: parse.data.fechaIngreso || null, sctrVigencia: parse.data.sctrVigencia || null }).returning();
+  const d = parse.data;
+  const [emp] = await db.insert(schema.empleados).values({
+    ...d,
+    fechaIngreso: d.fechaIngreso || null,
+    sctrVigencia: d.sctrVigencia || null,
+    fechaCese: d.fechaCese || null,
+    sueldoBaseMensual: d.sueldoBaseMensual != null ? String(d.sueldoBaseMensual) : null,
+  }).returning();
   res.json({ empleado: emp });
 });
 router.put('/empleados/:id', async (req, res) => {
@@ -48,7 +59,11 @@ router.put('/empleados/:id', async (req, res) => {
   if (!parse.success) return res.status(400).json({ error: parse.error.flatten() });
   const data = { ...parse.data };
   // fechas vacías → null (columna date no acepta '')
-  for (const k of ['fechaIngreso', 'sctrVigencia'] as const) if (data[k] === '') data[k] = null;
+  for (const k of ['fechaIngreso', 'sctrVigencia', 'fechaCese'] as const) if (data[k] === '') data[k] = null;
+  // decimal column requiere string
+  if ('sueldoBaseMensual' in data) {
+    (data as Record<string, unknown>).sueldoBaseMensual = data.sueldoBaseMensual != null ? String(data.sueldoBaseMensual) : null;
+  }
   const [emp] = await db.update(schema.empleados).set(data).where(eq(schema.empleados.id, req.params.id!)).returning();
   if (!emp) return res.status(404).json({ error: 'Empleado no encontrado' });
   res.json({ empleado: emp });
@@ -218,6 +233,7 @@ const lineaSchema = z.object({
   renta5ta: z.number().default(0),
   adelanto: z.number().default(0),
   sindical: z.number().default(0),
+  cuentaContable: z.string().max(10).optional().nullable(), // WS1 · cuenta de costo del obrero (default 621 en el motor)
 });
 router.post('/planilla-semanas/:id/calcular', async (req, res) => {
   const parse = z.object({ lineas: z.array(lineaSchema) }).safeParse(req.body);
@@ -279,6 +295,7 @@ router.post('/planilla-semanas/:id/calcular', async (req, res) => {
       netoPago: dec(calc.netoPago), montoEsSalud: dec(calc.montoEsSalud),
       montoSctrSalud: dec(calc.montoSctrSalud), montoSctrPension: dec(calc.montoSctrPension), montoSencico: dec(calc.montoSencico),
       montoCostoTotal: dec(calc.montoCostoTotal),
+      cuentaContable: l.cuentaContable ?? null, cuentaContableOrigen: l.cuentaContable ? 'USUARIO' : null, // WS1
     });
   }
   if (rows.length) await db.insert(schema.planillaDetalle).values(rows);

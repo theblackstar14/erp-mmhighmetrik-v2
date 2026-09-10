@@ -70,7 +70,7 @@ export function OficinaPage() {
 function RendicionesTab() {
   const user = useAuthStore((s) => s.user);
   const puedeAprobar = useAuthStore((s) => s.can)('oficina', 'edicion');
-  const [scope, setScope] = useState<'mias' | 'aprobar' | 'todas'>('mias');
+  const [scope, setScope] = useState<'mias' | 'aprobar' | 'todas'>('todas');
   const [nueva, setNueva] = useState<null | 'reembolso' | 'anticipo'>(null);
   const [detId, setDetId] = useState<string | null>(null);
   const q = useQuery({ queryKey: ['rendiciones', scope], queryFn: () => api.oficina.listRendiciones(scope) });
@@ -419,10 +419,10 @@ function PersonalAdminTab() {
     </div>
   );
 }
-type AdminFormExtra = EmpleadoInput & { sueldoBaseMensual?: number; asignacionFamiliar?: boolean };
+type AdminFormExtra = EmpleadoInput & { cargo?: string; sueldoBaseMensual?: number; asignacionFamiliar?: boolean };
 
 function AdminForm({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
-  const [f, setF] = useState<AdminFormExtra>({ nombre: '', numDoc: '', categoria: 'Administrador', sistemaPension: 'S.N.P.', fechaIngreso: '', tipoPlanilla: 'admin', sueldoBaseMensual: undefined, asignacionFamiliar: false });
+  const [f, setF] = useState<AdminFormExtra>({ nombre: '', numDoc: '', categoria: 'Administrador', cargo: '', sistemaPension: 'S.N.P.', fechaIngreso: '', tipoPlanilla: 'admin', sueldoBaseMensual: undefined, asignacionFamiliar: false });
   const save = useMutation({ mutationFn: () => api.planilla.createEmpleado(f as EmpleadoInput), onSuccess: onSaved });
   const set = (p: Partial<AdminFormExtra>) => setF((s) => ({ ...s, ...p }));
   return createPortal(
@@ -432,7 +432,7 @@ function AdminForm({ onClose, onSaved }: { onClose: () => void; onSaved: () => v
         <div className="p-4 grid grid-cols-2 gap-2.5">
           <Lbl t="Nombre" span2><input className={cn(inputCls, 'w-full')} value={f.nombre} onChange={(e) => set({ nombre: e.target.value })} /></Lbl>
           <Lbl t="DNI"><input inputMode="numeric" maxLength={8} className={cn(inputCls, 'w-full', f.numDoc && f.numDoc.length !== 8 && 'border-rose-500')} value={f.numDoc ?? ''} onChange={(e) => set({ numDoc: e.target.value.replace(/\D/g, '').slice(0, 8) })} /></Lbl>
-          <Lbl t="Cargo"><input className={cn(inputCls, 'w-full')} value={f.categoria ?? ''} onChange={(e) => set({ categoria: e.target.value })} placeholder="Contador, Ingeniero…" /></Lbl>
+          <Lbl t="Cargo"><input className={cn(inputCls, 'w-full')} value={f.cargo ?? ''} onChange={(e) => set({ cargo: e.target.value })} placeholder="Contador, Ingeniero…" /></Lbl>
           <Lbl t="Sistema pensión"><select className={cn(inputCls, 'w-full')} value={f.sistemaPension ?? ''} onChange={(e) => set({ sistemaPension: e.target.value })}>{['S.N.P.', 'AFP Habitat', 'AFP Integra', 'AFP Prima', 'AFP Profuturo'].map((a) => <option key={a}>{a}</option>)}</select></Lbl>
           <Lbl t="Fecha ingreso"><input type="date" className={cn(inputCls, 'w-full')} value={f.fechaIngreso ?? ''} onChange={(e) => set({ fechaIngreso: e.target.value })} /></Lbl>
           <Lbl t="Sueldo base S/"><input type="number" step="0.01" min="0" className={cn(inputCls, 'w-full')} value={f.sueldoBaseMensual ?? ''} onChange={(e) => set({ sueldoBaseMensual: e.target.value ? Number(e.target.value) : undefined })} placeholder="0.00" /></Lbl>
