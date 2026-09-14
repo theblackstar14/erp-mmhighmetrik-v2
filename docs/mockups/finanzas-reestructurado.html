@@ -1,0 +1,1246 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Propuesta · Finanzas reestructurado · ERP MM High Metrik</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+/* tokens copiados de apps/frontend/src/index.css (light) */
+:root{
+  --background:hsl(60 10% 96%); --bg-elev:hsl(0 0% 100%); --bg-sunken:hsl(60 8% 93%);
+  --foreground:hsl(0 0% 11%); --ink-2:hsl(60 4% 23%); --ink-3:hsl(60 3% 42%); --ink-4:hsl(60 3% 60%);
+  --line:hsl(60 7% 88%); --line-2:hsl(60 6% 83%); --line-strong:hsl(60 5% 76%);
+  --primary:hsl(230 68% 55%); --primary-fg:#fff; --primary-soft:hsl(224 73% 94%); --primary-ink:hsl(230 64% 30%);
+  --warn:hsl(38 100% 48%); --warn-soft:hsl(41 89% 91%); --warn-ink:hsl(36 100% 24%);
+  --destructive:hsl(5 62% 53%); --destructive-soft:hsl(7 73% 93%);
+  --ok:hsl(154 45% 34%); --ok-soft:hsl(144 36% 90%); --ok-ink:hsl(154 49% 19%);
+  --emerald-600:#059669; --emerald-700:#047857; --emerald-50:#ecfdf5;
+  --rose-600:#e11d48; --rose-700:#be123c; --rose-50:#fff1f2;
+  --amber-600:#d97706; --amber-700:#b45309; --violet-600:#7c3aed; --zinc-400:#a1a1aa;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--background);color:var(--foreground);
+  font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;line-height:1.5;
+  font-feature-settings:'cv02','cv03','cv04','cv11','ss01';-webkit-font-smoothing:antialiased}
+.mono{font-family:'JetBrains Mono','SF Mono',Menlo,Consolas,monospace;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+::selection{background:var(--primary-soft);color:var(--primary-ink)}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:6px;border:2px solid var(--background)}
+::-webkit-scrollbar-thumb:hover{background:var(--line-strong)}
+
+/* animaciones copiadas de tailwind.config.js */
+@keyframes pageEnter{0%{opacity:0;transform:translateY(8px) scale(.99)}100%{opacity:1;transform:none}}
+@keyframes dataIn{0%{opacity:0}100%{opacity:1}}
+@keyframes modalPop{0%{opacity:0;transform:scale(.92)}100%{opacity:1;transform:scale(1)}}
+@keyframes backdropIn{0%{opacity:0}100%{opacity:1}}
+.a-page{animation:pageEnter .35s cubic-bezier(.2,.7,.3,1) both}
+.a-data{animation:dataIn .16s ease-out both}
+.a-pop{animation:modalPop .26s cubic-bezier(.34,1.4,.5,1) both}
+.a-backdrop{animation:backdropIn .18s ease both}
+
+/* shell */
+.app{display:flex;height:100vh;overflow:hidden}
+aside{display:flex;height:100vh;flex-direction:column;overflow:hidden;width:248px;flex:0 0 248px;
+  border-right:1px solid var(--line);background:var(--bg-elev)}
+.brand{display:flex;height:56px;flex-shrink:0;align-items:center;gap:10px;padding:0 16px;border-bottom:1px solid var(--line)}
+.brand .tile{display:flex;height:28px;width:28px;flex-shrink:0;align-items:center;justify-content:center;
+  border-radius:6px;background:#0F1115;color:#fff;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;letter-spacing:-.05em}
+.brand .nm{display:flex;flex:1;flex-direction:column;line-height:1.15;overflow:hidden;white-space:nowrap}
+.brand .nm b{font-size:13px;font-weight:600;letter-spacing:-.01em}
+.brand .nm span{font-family:'JetBrains Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-3)}
+.iconbtn{display:inline-flex;height:28px;width:28px;flex-shrink:0;align-items:center;justify-content:center;
+  border:0;background:none;border-radius:6px;color:var(--ink-3);cursor:pointer}
+.iconbtn:hover{background:var(--bg-sunken);color:var(--foreground)}
+aside nav{flex:1;overflow-y:auto;padding:12px 10px}
+.navgrp{margin-bottom:12px}
+.navgrp>.lbl{padding:0 8px 6px;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:500;
+  text-transform:uppercase;letter-spacing:.1em;color:var(--ink-4)}
+.navitems{display:flex;flex-direction:column;gap:1px}
+.navitem{display:flex;align-items:center;gap:10px;border-radius:6px;padding:6px 8px;font-size:13px;
+  color:var(--ink-2);text-decoration:none;transition:background-color .15s,color .15s;cursor:pointer}
+.navitem:hover{background:var(--bg-sunken);color:var(--foreground)}
+.navitem.on{background:var(--primary-soft);color:var(--primary-ink);font-weight:500}
+.navitem .ic{width:16px;height:16px;flex-shrink:0;color:var(--ink-3)}
+.navitem.on .ic{color:var(--primary)}
+.navitem .txt{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.navitem .bdg{border-radius:4px;border:1px solid var(--line);background:var(--bg-sunken);color:var(--ink-3);
+  font-family:'JetBrains Mono',monospace;font-size:10px;padding:1px 6px}
+.asidefoot{flex-shrink:0;border-top:1px solid var(--line);padding:10px}
+.avmenu{display:flex;align-items:center;gap:8px;width:100%;border:0;background:none;border-radius:6px;padding:6px;cursor:pointer;text-align:left}
+.avmenu:hover{background:var(--bg-sunken)}
+.av{display:flex;height:28px;width:28px;flex-shrink:0;align-items:center;justify-content:center;border-radius:999px;
+  background:#0F1115;color:#fff;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700}
+.avmenu .nm{flex:1;line-height:1.2;overflow:hidden}
+.avmenu .nm b{display:block;font-size:12px;font-weight:500}
+.avmenu .nm span{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-3)}
+
+main{display:flex;flex:1;flex-direction:column;overflow:hidden;min-width:0}
+.topbar{display:flex;height:56px;flex-shrink:0;align-items:center;gap:12px;border-bottom:1px solid var(--line);
+  background:var(--bg-elev);padding:0 16px}
+.crumbs{display:flex;align-items:center;gap:6px;font-size:13px;white-space:nowrap;color:var(--ink-4)}
+.crumbs .cur{color:var(--foreground);font-weight:500}
+.search{display:flex;align-items:center;gap:8px;height:32px;flex:1;max-width:520px;margin:0 auto;
+  border:1px solid var(--line);border-radius:6px;background:var(--bg-sunken);padding:0 10px;color:var(--ink-4);font-size:12.5px}
+.search .kbd{margin-left:auto;border:1px solid var(--line-2);border-radius:4px;background:var(--bg-elev);
+  padding:1px 5px;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-4)}
+.bell{position:relative}
+.bell .dot{position:absolute;top:0;right:-2px;min-width:15px;height:15px;border-radius:999px;background:var(--destructive);
+  color:#fff;font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:700;display:flex;align-items:center;justify-content:center;padding:0 3px}
+.copilot{display:inline-flex;align-items:center;gap:6px;height:32px;border:0;border-radius:6px;background:var(--primary);
+  color:var(--primary-fg);padding:0 11px;font:500 12px/1 'Inter',sans-serif;cursor:pointer}
+.copilot:hover{opacity:.9}
+.scrollarea{flex:1;overflow-y:auto;padding:20px}
+.stack{display:flex;flex-direction:column;gap:20px}
+
+/* page head */
+.pagehead{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.pagehead h1{margin:0;font-size:20px;font-weight:700;letter-spacing:-.02em}
+.pagehead p{margin:2px 0 0;font-size:13px;color:var(--ink-3)}
+.sel{height:36px;border:1px solid var(--line);border-radius:6px;background:var(--bg-elev);padding:0 10px;
+  font-size:12.5px;color:var(--foreground);font-family:inherit}
+.btn{display:inline-flex;align-items:center;gap:6px;height:36px;border:1px solid var(--line);border-radius:6px;
+  background:var(--bg-elev);padding:0 12px;font:500 12px/1 'Inter',sans-serif;color:var(--ink-2);cursor:pointer}
+.btn:hover{background:var(--bg-sunken)}
+.btn.pri{border-color:var(--primary);background:var(--primary);color:var(--primary-fg)}
+.btn.pri:hover{opacity:.9;background:var(--primary)}
+.btn.sm{height:32px;padding:0 10px;font-size:11.5px}
+.btn.dash{border-style:dashed}
+.btn[disabled]{opacity:.45;cursor:not-allowed}
+
+/* tabs */
+.tabsbar{border-bottom:1px solid var(--line);overflow-x:auto}
+.tabsbar nav{display:flex;gap:4px;margin-bottom:-1px}
+.tab{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;border:0;border-bottom:2px solid transparent;
+  background:none;padding:8px 12px;font:500 12.5px/1.4 'Inter',sans-serif;color:var(--ink-3);cursor:pointer;
+  transition:color .15s,border-color .15s}
+.tab:hover{color:var(--foreground);border-bottom-color:var(--line-strong)}
+.tab.on{color:var(--primary);border-bottom-color:var(--primary)}
+.newdot{width:5px;height:5px;border-radius:999px;background:var(--warn)}
+
+/* cards, kpis, secciones */
+.card{border:1px solid var(--line);border-radius:8px;background:var(--bg-elev);overflow:hidden}
+.kpirow{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:10px}
+.kpi{border:1px solid var(--line);border-top:2px solid var(--zinc-400);border-radius:6px;background:var(--bg-elev);padding:10px 12px}
+.kpi .l{font-family:'JetBrains Mono',monospace;font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-4);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kpi .v{margin-top:4px;font-family:'JetBrains Mono',monospace;font-size:17px;font-weight:700;font-variant-numeric:tabular-nums;
+  letter-spacing:-.02em;line-height:1.2}
+.kpi .s{margin-top:2px;font-size:10px;color:var(--ink-4);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.k-blue{border-top-color:var(--primary)} .k-blue .v{color:var(--primary)}
+.k-em{border-top-color:var(--emerald-600)} .k-em .v{color:var(--emerald-600)}
+.k-rose{border-top-color:var(--rose-600)} .k-rose .v{color:var(--rose-600)}
+.k-amber{border-top-color:var(--amber-600)} .k-amber .v{color:var(--amber-700)}
+.k-violet{border-top-color:var(--violet-600)} .k-violet .v{color:var(--violet-600)}
+.sechead{display:flex;align-items:center;gap:10px;padding-top:4px}
+.sechead .sq{width:8px;height:8px;border-radius:2px;flex-shrink:0}
+.sechead .tx{font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em}
+.sechead .rule{flex:1;height:1px;background:var(--line)}
+.s-blue .sq{background:var(--primary)} .s-blue .tx{color:var(--primary)}
+.s-em .sq{background:var(--emerald-600)} .s-em .tx{color:var(--emerald-600)}
+.s-rose .sq{background:var(--rose-600)} .s-rose .tx{color:var(--rose-600)}
+.s-amber .sq{background:var(--amber-600)} .s-amber .tx{color:var(--amber-700)}
+.s-violet .sq{background:var(--violet-600)} .s-violet .tx{color:var(--violet-600)}
+
+/* chips · .chip de index.css */
+.chip{display:inline-flex;align-items:center;gap:4px;border-radius:4px;padding:2px 8px;font-family:'JetBrains Mono',monospace;
+  font-size:10px;font-weight:500;text-transform:uppercase;letter-spacing:.05em;background:var(--bg-sunken);color:var(--ink-3)}
+.chip.blue{background:var(--primary-soft);color:var(--primary-ink)}
+.chip.amber{background:var(--warn-soft);color:var(--warn-ink)}
+.chip.green{background:var(--ok-soft);color:var(--ok-ink)}
+.chip.red{background:var(--destructive-soft);color:var(--destructive)}
+
+/* tablas */
+.tablewrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{text-align:left;padding:8px 12px;border-bottom:1px solid var(--line);white-space:nowrap;
+  font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:500;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-4)}
+td{padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:middle}
+tbody tr:last-child td{border-bottom:0}
+tbody tr:hover{background:var(--bg-sunken)}
+td.r,th.r{text-align:right;font-variant-numeric:tabular-nums}
+.toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid var(--line)}
+.toolbar .ttl{font-size:12.5px;font-weight:600}
+.toolbar .cnt{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-4)}
+.grow{flex:1}
+.inp{height:32px;border:1px solid var(--line);border-radius:6px;background:var(--bg-elev);padding:0 10px;font-size:12px;
+  color:var(--foreground);font-family:inherit;width:100%}
+.inp::placeholder{color:var(--ink-4)}
+.inp.ro{background:var(--bg-sunken);color:var(--ink-3)}
+
+/* nota de propuesta */
+.note{border:1px solid var(--line);border-radius:8px;background:var(--bg-elev);padding:11px 13px;font-size:12px;color:var(--ink-2)}
+.note .hd{display:flex;align-items:center;gap:8px;margin-bottom:5px}
+.note q{color:var(--ink-3);font-style:italic}
+.note b{font-weight:600}
+
+/* modal */
+.ov{position:fixed;inset:0;z-index:50;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.5);padding:16px}
+.ov.on{display:flex}
+.modal{display:flex;width:100%;max-width:672px;max-height:88vh;flex-direction:column;overflow:hidden;
+  border:1px solid var(--line);border-radius:12px;background:var(--bg-elev);box-shadow:0 25px 50px -12px rgba(0,0,0,.25)}
+.modal.wide{max-width:1000px}
+.modal>header{display:flex;flex-shrink:0;align-items:center;justify-content:space-between;gap:10px;
+  border-bottom:1px solid var(--line);padding:14px 20px}
+.modal>header h2{margin:0;font-size:16px;font-weight:700;letter-spacing:-.01em}
+.modal>header .sub{font-size:11px;color:var(--ink-4);margin-top:2px}
+.modal>.bd{flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:14px;background:hsl(60 8% 93% / .4)}
+.modal>footer{display:flex;flex-shrink:0;align-items:center;gap:10px;border-top:1px solid var(--line);padding:12px 20px}
+.hint{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--warn-ink)}
+.secbox{border:1px solid var(--line);border-radius:8px;background:var(--bg-elev);padding:14px}
+.secbox>.t{font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;text-transform:uppercase;
+  letter-spacing:.08em;color:var(--ink-4);margin-bottom:10px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.fields{display:flex;flex-direction:column;gap:12px}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.g3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+label.f{display:block}
+label.f>.lb{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+label.f>.lb>span:first-child{font-family:'JetBrains Mono',monospace;font-size:10.5px;text-transform:uppercase;
+  letter-spacing:.05em;color:var(--ink-4)}
+label.f>.lb>.opt{font-size:9.5px;color:var(--ink-4);font-style:italic}
+label.f>.ct{margin-top:4px}
+.seg{display:flex;gap:8px}
+.seg button{flex:1;border:1px solid var(--line);border-radius:6px;background:var(--bg-elev);padding:6px 0;
+  font:400 11.5px/1.3 'Inter',sans-serif;color:var(--ink-2);cursor:pointer;transition:background-color .15s,border-color .15s}
+.seg button:hover{background:var(--bg-sunken)}
+.seg button.on{border-color:var(--primary);background:hsl(230 68% 55% / .05);font-weight:600}
+.tipo3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.tipo3 button{border:2px solid var(--line);border-radius:8px;background:var(--bg-elev);padding:10px 0;
+  font:700 13px/1 'Inter',sans-serif;color:var(--ink-3);cursor:pointer;transition:background-color .15s,border-color .15s,color .15s}
+.tipo3 button:hover{background:var(--bg-sunken)}
+.tipo3 button.em.on{border-color:var(--emerald-600);background:var(--emerald-50);color:var(--emerald-700)}
+.tipo3 button.ro.on{border-color:var(--rose-600);background:var(--rose-50);color:var(--rose-700)}
+.tipo3 button.bl.on{border-color:var(--primary);background:hsl(230 68% 55% / .1);color:var(--primary)}
+.pick{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.pick button{border:1px solid var(--line);border-radius:6px;background:var(--bg-elev);padding:8px;text-align:left;
+  font:400 11.5px/1.35 'Inter',sans-serif;color:var(--foreground);cursor:pointer;transition:background-color .15s,border-color .15s}
+.pick button:hover{background:var(--bg-sunken)}
+.pick button.on{border-color:var(--rose-600);background:var(--rose-50)}
+.pick b{display:block;font-weight:600}
+.pick span{display:block;font-size:10px;color:var(--ink-4);margin-top:1px}
+.ckline{display:flex;align-items:center;gap:6px;font-size:11.5px;cursor:pointer}
+.tot{display:grid;grid-template-columns:1fr auto;gap:5px 20px;font-size:12.5px}
+.tot .k{color:var(--ink-3)}
+.tot .v{font-family:'JetBrains Mono',monospace;font-variant-numeric:tabular-nums;text-align:right}
+.tot .big{font-weight:700;font-size:15px}
+.dz{border:1.5px dashed var(--line-strong);border-radius:8px;background:var(--bg-sunken);padding:26px;text-align:center;
+  font-size:12px;color:var(--ink-3)}
+.dz b{display:block;font-size:13px;color:var(--foreground);margin-bottom:3px}
+
+/* ── revamp del formulario ───────────────────────────────── */
+/* ancho segun complejidad, no fijo */
+.modal.xwide{max-width:1120px}
+.modal.narrow{max-width:560px}
+
+/* progreso de secciones en el header */
+.steps{display:flex;align-items:center;gap:3px;flex-wrap:wrap;margin-top:5px}
+.step{display:inline-flex;align-items:center;gap:5px;border:0;background:none;border-radius:4px;padding:3px 7px;cursor:pointer;
+  font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:500;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-4)}
+.step:hover{background:var(--bg-sunken)}
+.step .mk{width:13px;height:13px;border-radius:999px;border:1.5px solid var(--line-strong);flex-shrink:0;
+  display:inline-flex;align-items:center;justify-content:center;font-size:8px;line-height:1}
+.step.ok{color:var(--ok-ink)}   .step.ok .mk{border-color:var(--ok);background:var(--ok);color:#fff}
+.step.warn{color:var(--warn-ink)} .step.warn .mk{border-color:var(--warn);background:var(--warn);color:#fff}
+.step .sep{color:var(--line-2)}
+
+/* dos columnas: captura + panel de totales pegado */
+.cols{display:grid;grid-template-columns:minmax(0,1fr) 292px;gap:14px;align-items:start}
+.cols>.mn{display:flex;flex-direction:column;gap:14px;min-width:0}
+.side{position:sticky;top:0;display:flex;flex-direction:column;gap:10px}
+
+/* una sola decision de entrada */
+.entry3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.entry3 button{border:2px solid var(--line);border-radius:8px;background:var(--bg-elev);padding:9px 11px;text-align:left;
+  cursor:pointer;font-family:inherit;transition:background-color .15s,border-color .15s}
+.entry3 button:hover{background:var(--bg-sunken)}
+.entry3 b{display:block;font-size:13px;font-weight:700;color:var(--foreground)}
+.entry3 span{display:block;font-size:10px;color:var(--ink-4);margin-top:2px;line-height:1.35}
+.entry3 button.on.ro{border-color:var(--rose-600);background:var(--rose-50)}
+.entry3 button.on.ro b{color:var(--rose-700)}
+.entry3 button.on.bl{border-color:var(--primary);background:hsl(230 68% 55% / .08)}
+.entry3 button.on.bl b{color:var(--primary)}
+
+/* grilla de lineas tipo hoja de calculo */
+.lines{border:1px solid var(--line);border-radius:6px;overflow-x:auto}
+.lines table{font-size:11.5px}
+.lines th{padding:6px 8px}
+.lines td{padding:4px 8px}
+.lines tbody tr:hover{background:transparent}
+.lines .inp{height:28px;padding:0 7px;font-size:11.5px}
+.lines .inp.mono{font-family:'JetBrains Mono',monospace;font-variant-numeric:tabular-nums}
+.lines td.ck{text-align:center}
+.lines tr.inv td{background:hsl(38 100% 48% / .05)}
+.linefoot{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center}
+.kbdh{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-4)}
+.kbdh kbd{border:1px solid var(--line-2);border-radius:3px;background:var(--bg-sunken);padding:1px 4px;font-size:9.5px}
+
+/* avisos en linea */
+.inote{border:1px solid var(--line-2);border-radius:6px;background:var(--bg-sunken);padding:8px 10px;font-size:11.5px;
+  color:var(--ink-2);display:flex;gap:7px;align-items:flex-start;line-height:1.45}
+.inote svg{flex-shrink:0;margin-top:1px}
+.inote.warn{border-color:var(--warn);background:var(--warn-soft);color:var(--warn-ink)}
+.inote.ok{border-color:var(--ok);background:var(--ok-soft);color:var(--ok-ink)}
+.inote.bad{border-color:var(--destructive);background:var(--destructive-soft);color:var(--destructive)}
+
+/* panel lateral de totales */
+.side .box{border:1px solid var(--line);border-radius:8px;background:var(--bg-elev);padding:12px}
+.side .box>.t{font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;text-transform:uppercase;
+  letter-spacing:.08em;color:var(--ink-4);margin-bottom:9px}
+.side .tot{font-size:12px}
+.side .rule{height:1px;background:var(--line);margin:7px 0;grid-column:1 / -1}
+
+@media(max-width:1280px){.kpirow{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media(max-width:1150px){.cols{grid-template-columns:1fr}.side{position:static}}
+@media(max-width:860px){aside{display:none}.kpirow{grid-template-columns:repeat(2,minmax(0,1fr))}.g2,.g3{grid-template-columns:1fr}.entry3{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <aside>
+    <div class="brand">
+      <div class="tile">MM</div>
+      <div class="nm"><b>MMHIGHMETRIK</b><span>Engineers ERP</span></div>
+      <button class="iconbtn" title="Colapsar"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg></button>
+    </div>
+    <nav>
+      <div class="navgrp"><div class="lbl">Operación</div><div class="navitems">
+        <a class="navitem"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg><span class="txt">Dashboard</span></a>
+        <a class="navitem"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg><span class="txt">Licitaciones</span></a>
+        <a class="navitem"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15 15 0 0 1 4 10a15 15 0 0 1-4 10a15 15 0 0 1-4-10a15 15 0 0 1 4-10"/></svg><span class="txt">SEACE</span></a>
+        <a class="navitem"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"/><path d="M5 21V7l7-4 7 4v14"/><path d="M9 21v-6h6v6"/></svg><span class="txt">Proyectos</span><span class="bdg">4</span></a>
+        <a class="navitem"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 17 6-6 4 4 8-8"/><path d="M17 7h4v4"/></svg><span class="txt">Inversiones</span></a>
+      </div></div>
+      <div class="navgrp"><div class="lbl">Administración</div><div class="navitems">
+        <a class="navitem on"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg><span class="txt">Finanzas</span></a>
+        <a class="navitem"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 22h16"/><path d="M6 2h12v20H6z"/><path d="M9 6h6M9 10h6M9 14h6"/></svg><span class="txt">Contabilidad</span></a>
+        <a class="navitem"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 17h4V5H2v12h3"/><path d="M20 17h2v-3.34a4 4 0 0 0-1.17-2.83L19 9h-5v8h1"/><circle cx="7.5" cy="17.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/></svg><span class="txt">Logística</span></a>
+        <a class="navitem"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg><span class="txt">Inventario</span></a>
+        <a class="navitem"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg><span class="txt">Personal</span></a>
+        <a class="navitem"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2" width="16" height="20" rx="2"/><path d="M9 22v-4h6v4"/><path d="M8 6h.01M16 6h.01M8 10h.01M16 10h.01M8 14h.01M16 14h.01"/></svg><span class="txt">Oficina</span></a>
+      </div></div>
+      <div class="navgrp"><div class="lbl">Archivos</div><div class="navitems">
+        <a class="navitem"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/><path d="M14 2v5h6"/></svg><span class="txt">Documentos</span></a>
+      </div></div>
+    </nav>
+    <div class="asidefoot">
+      <button class="avmenu">
+        <span class="av">AS</span>
+        <span class="nm"><b>Admin Sistema</b><span>MM · ADMIN</span></span>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--ink-4)"><path d="m18 15-6-6-6 6"/></svg>
+      </button>
+    </div>
+  </aside>
+
+  <main>
+    <div class="topbar">
+      <button class="iconbtn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/></svg></button>
+      <div class="crumbs"><span>Principal</span><span>/</span><span class="cur">Finanzas</span></div>
+      <div class="search">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        Buscar proyectos, partidas, OC, facturas...
+        <span class="kbd">⌘K</span>
+      </div>
+      <button class="iconbtn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg></button>
+      <button class="iconbtn bell"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/></svg><span class="dot">14</span></button>
+      <button class="copilot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/></svg>Copiloto IA</button>
+    </div>
+
+    <div class="scrollarea">
+      <div class="stack a-page">
+
+        <div class="pagehead">
+          <div>
+            <h1>Finanzas</h1>
+            <p>Caja real · cuentas por cobrar/pagar · garantías · por obra o consolidado</p>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <span class="chip amber">Propuesta · no es el sistema</span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--ink-3)"><path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z"/><path d="M10 6h4M10 10h4M10 14h4M10 18h4"/></svg>
+            <select class="sel" style="width:240px"><option>Todos los proyectos</option><option>PG0001 · Famesa Chancay</option><option>PG0004 · Colegios San Ignacio</option><option>OF0001 · Oficina</option></select>
+            <button class="btn pri" onclick="openM('m-compra')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14M12 5v14"/></svg>Registrar movimiento</button>
+          </div>
+        </div>
+
+        <div class="tabsbar"><nav id="tabs">
+          <button class="tab on" data-p="resumen">Resumen</button>
+          <button class="tab" data-p="compras"><span class="newdot"></span>Compras</button>
+          <button class="tab" data-p="ventas"><span class="newdot"></span>Ventas</button>
+          <button class="tab" data-p="bancos"><span class="newdot"></span>Bancos</button>
+          <button class="tab" data-p="cajas"><span class="newdot"></span>Cajas</button>
+          <button class="tab" data-p="flujo">Flujo de caja</button>
+          <button class="tab" data-p="movimientos">Movimientos</button>
+          <button class="tab" data-p="ordenes">Órdenes (aprobar/pagar)</button>
+          <button class="tab" data-p="gastos">Gastos</button>
+          <button class="tab" data-p="conciliacion">Conciliación</button>
+          <button class="tab" data-p="reportes">Reportes</button>
+        </nav></div>
+
+        <!-- ══════ RESUMEN ══════ -->
+        <div class="panel a-data" id="p-resumen" style="display:flex;flex-direction:column;gap:20px">
+          <div class="kpirow">
+            <div class="kpi k-em"><div class="l">Ingresos del mes</div><div class="v">S/ 0.00</div><div class="s">Ago '26</div></div>
+            <div class="kpi k-rose"><div class="l">Gastos del mes</div><div class="v">S/ 6,522.92</div><div class="s">planilla + compras</div></div>
+            <div class="kpi k-amber"><div class="l">Margen neto</div><div class="v">0.0%</div><div class="s">−S/ 6,522.92 utilidad</div></div>
+            <div class="kpi"><div class="l">Por cobrar</div><div class="v">S/ 0.00</div><div class="s">0 valos</div></div>
+            <div class="kpi k-rose"><div class="l">Por pagar</div><div class="v">S/ 807,341.89</div><div class="s">45 OC</div></div>
+            <div class="kpi k-blue"><div class="l">Posición de caja</div><div class="v">S/ 1,397,918.14</div><div class="s">3 cuentas</div></div>
+            <div class="kpi k-em"><div class="l">Garantías activas</div><div class="v">S/ 0.00</div><div class="s">0 cartas fianza</div></div>
+          </div>
+
+          <div class="sechead s-blue"><span class="sq"></span><span class="tx">Tesorería · posición de caja en tiempo real</span><span class="rule"></span></div>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+            <div class="card" style="padding:14px">
+              <div style="display:flex;align-items:center;gap:8px"><span class="chip blue">BCP</span><b style="font-size:12.5px">Cuenta Corriente Principal</b></div>
+              <div class="mono" style="font-size:10px;color:var(--ink-4);margin-top:3px">194-9927833-0-39 · PEN</div>
+              <div class="mono" style="font-size:19px;font-weight:700;margin-top:8px">S/ 1,398,718.14</div>
+              <div style="display:flex;justify-content:space-between;margin-top:8px;font-size:10px" class="mono">
+                <span style="color:var(--emerald-600)">ing +S/ 6,453,275.05</span><span style="color:var(--rose-600)">egr −S/ 5,054,556.91</span></div>
+              <div style="display:flex;align-items:center;gap:8px;margin-top:10px">
+                <span class="mono" style="font-size:9px;color:var(--ink-4);text-transform:uppercase;letter-spacing:.08em">Cuenta 104x</span>
+                <input class="inp mono" style="height:26px;width:86px;font-size:11px" value="10411"></div>
+            </div>
+            <div class="card" style="padding:14px">
+              <div style="display:flex;align-items:center;gap:8px"><span class="chip">SCOT</span><b style="font-size:12.5px">Cuenta Corriente DORATTA</b></div>
+              <div class="mono" style="font-size:10px;color:var(--ink-4);margin-top:3px">000-3786629 · PEN</div>
+              <div class="mono" style="font-size:19px;font-weight:700;margin-top:8px">S/ 0.00</div>
+              <div style="display:flex;justify-content:space-between;margin-top:8px;font-size:10px" class="mono">
+                <span style="color:var(--emerald-600)">ing +S/ 0.00</span><span style="color:var(--rose-600)">egr −S/ 0.00</span></div>
+              <div style="display:flex;align-items:center;gap:8px;margin-top:10px">
+                <span class="mono" style="font-size:9px;color:var(--ink-4);text-transform:uppercase;letter-spacing:.08em">Cuenta 104x</span>
+                <input class="inp mono" style="height:26px;width:86px;font-size:11px" value="10441"></div>
+            </div>
+            <div class="card" style="padding:14px;border-color:var(--warn)">
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="chip">BN</span><b style="font-size:12.5px">Detracciones Banco de la Nación</b><span class="chip amber">Nuevo</span></div>
+              <div class="mono" style="font-size:10px;color:var(--ink-4);margin-top:3px">00-000-000000 · PEN</div>
+              <div class="mono" style="font-size:19px;font-weight:700;margin-top:8px">S/ 34,180.00</div>
+              <div style="display:flex;justify-content:space-between;margin-top:8px;font-size:10px" class="mono">
+                <span style="color:var(--emerald-600)">depositado +S/ 41,260.00</span><span style="color:var(--rose-600)">usado −S/ 7,080.00</span></div>
+              <div style="display:flex;align-items:center;gap:8px;margin-top:10px">
+                <span class="mono" style="font-size:9px;color:var(--ink-4);text-transform:uppercase;letter-spacing:.08em">Cuenta 104x</span>
+                <input class="inp mono" style="height:26px;width:86px;font-size:11px" value="10413"></div>
+            </div>
+          </div>
+
+          <div class="note">
+            <div class="hd"><span class="chip amber">Qué cambia</span></div>
+            La cuenta de detracciones del Banco de la Nación entra como una cuenta más, con su saldo, lo que nos depositan y lo que usamos para pagar tributos.
+            Hoy ese dinero no se ve en ningún lado. <b>Pregunta B.1.3 del documento.</b>
+          </div>
+
+          <div class="sechead s-violet"><span class="sq"></span><span class="tx">Cuentas por cobrar y pagar</span><span class="rule"></span></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div class="card">
+              <div class="toolbar"><span class="ttl">Por pagar a proveedores</span><span class="cnt">23 documentos</span><span class="grow"></span><span class="chip red">S/ 807,341.89</span></div>
+              <table><thead><tr><th>Proveedor</th><th class="r">Facturas</th><th class="r">Saldo</th><th class="r">Vencido</th></tr></thead><tbody>
+                <tr><td>EKONO DRYWALL SAC</td><td class="r mono">4</td><td class="r mono">14,160.00</td><td class="r mono" style="color:var(--rose-600)">7,080.00</td></tr>
+                <tr><td>EL PIBE MATERIALES EIRL</td><td class="r mono">2</td><td class="r mono">3,180.00</td><td class="r mono">0.00</td></tr>
+                <tr><td>CONTAFEL SERVICIOS SAC</td><td class="r mono">1</td><td class="r mono">1,000.00</td><td class="r mono">0.00</td></tr>
+              </tbody></table>
+            </div>
+            <div class="card">
+              <div class="toolbar"><span class="ttl">Por cobrar a clientes</span><span class="cnt">0 documentos</span><span class="grow"></span><span class="chip">S/ 0.00</span></div>
+              <div style="padding:34px;text-align:center;font-size:12px;color:var(--ink-4)">Sin valorizaciones por cobrar</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ══════ COMPRAS ══════ -->
+        <div class="panel" id="p-compras" style="display:none;flex-direction:column;gap:20px">
+          <div class="kpirow" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+            <div class="kpi k-rose"><div class="l">Total compras del mes</div><div class="v">S/ 1,740,277.43</div><div class="s">con IGV</div></div>
+            <div class="kpi"><div class="l">Base imponible</div><div class="v">S/ 1,402,287.80</div><div class="s">sin IGV</div></div>
+            <div class="kpi k-amber"><div class="l">Detracciones pendientes</div><div class="v">S/ 2,590.00</div><div class="s">3 sin constancia</div></div>
+            <div class="kpi k-blue"><div class="l">Documentos</div><div class="v">1,576</div><div class="s">registrados</div></div>
+          </div>
+
+          <div class="sechead s-rose"><span class="sq"></span><span class="tx">Registro de compras · un documento por fila</span><span class="rule"></span></div>
+          <div class="card">
+            <div class="toolbar">
+              <span class="ttl">Compras</span><span class="cnt">1576</span>
+              <span class="grow"></span>
+              <input class="inp" style="width:220px" placeholder="Buscar proveedor, serie, número...">
+              <select class="sel" style="height:32px;font-size:11.5px"><option>2026</option></select>
+              <select class="sel" style="height:32px;font-size:11.5px"><option>Enero</option></select>
+              <button class="btn sm" onclick="openM('m-xml')"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m8 11 4 4 4-4"/><path d="M8 21h8"/></svg>Importar XML</button>
+              <button class="btn sm pri" onclick="openM('m-compra')"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14M12 5v14"/></svg>Nueva compra</button>
+            </div>
+            <div class="tablewrap"><table>
+              <thead><tr>
+                <th>Emisión</th><th>Proveedor</th><th>Comprobante</th><th>Obra</th><th>Cuenta</th>
+                <th class="r">Base</th><th class="r">IGV</th><th class="r">Total</th>
+                <th class="r">Detracción</th><th class="r">Pagado</th><th class="r">Saldo</th><th>Estado</th>
+              </tr></thead>
+              <tbody>
+                <tr>
+                  <td class="mono">2026-01-14</td><td>EKONO DRYWALL SAC</td><td class="mono">F013-35799</td>
+                  <td class="mono">PG0001</td><td class="mono">603111</td>
+                  <td class="r mono">12,000.00</td><td class="r mono">2,160.00</td><td class="r mono">14,160.00</td>
+                  <td class="r mono">566.40</td><td class="r mono">7,080.00</td><td class="r mono" style="color:var(--rose-600)">7,080.00</td>
+                  <td><span class="chip amber">Parcial 50%</span></td>
+                </tr>
+                <tr>
+                  <td class="mono">2026-01-09</td><td>EL PIBE MATERIALES EIRL</td><td class="mono">F001-13574</td>
+                  <td class="mono">PG0001</td><td class="mono">603111</td>
+                  <td class="r mono">2,694.92</td><td class="r mono">485.08</td><td class="r mono">3,180.00</td>
+                  <td class="r mono" style="color:var(--ink-4)">0.00</td><td class="r mono">3,180.00</td><td class="r mono">0.00</td>
+                  <td><span class="chip green">Pagada</span></td>
+                </tr>
+                <tr>
+                  <td class="mono">2026-01-22</td><td>CONTAFEL SERVICIOS SAC</td><td class="mono">E001-0070</td>
+                  <td class="mono">OF0001</td><td class="mono">632211</td>
+                  <td class="r mono">847.46</td><td class="r mono">152.54</td><td class="r mono">1,000.00</td>
+                  <td class="r mono">120.00</td><td class="r mono">0.00</td><td class="r mono" style="color:var(--rose-600)">1,000.00</td>
+                  <td><span class="chip red">Sin constancia</span></td>
+                </tr>
+                <tr>
+                  <td class="mono">2026-01-27</td><td>PETROCENTRO ARIAS S.A.C.</td><td class="mono">F001-2017</td>
+                  <td class="mono">PG0004</td><td class="mono" style="color:var(--warn-ink)">sin asignar</td>
+                  <td class="r mono">84.75</td><td class="r mono">15.25</td><td class="r mono">100.00</td>
+                  <td class="r mono" style="color:var(--ink-4)">0.00</td><td class="r mono">100.00</td><td class="r mono">0.00</td>
+                  <td><span class="chip">Kelly asigna cuenta</span></td>
+                </tr>
+              </tbody>
+            </table></div>
+          </div>
+
+          <div class="note">
+            <div class="hd"><span class="chip amber">Qué cambia</span></div>
+            Kelly lo pidió así: <q>primero se registran las compras, las ventas</q> y <q>ahí sí te indica cuándo una factura no se ha pagado por completo</q>.
+            Las columnas nuevas son <b>Cuenta</b>, <b>Detracción</b>, <b>Pagado</b> y <b>Saldo</b>. Hoy el gasto guarda un solo estado, pagado o pendiente, y cuando se
+            guarda como pendiente la detracción y la fecha de vencimiento se pierden sin avisar.
+          </div>
+        </div>
+
+        <!-- ══════ VENTAS ══════ -->
+        <div class="panel" id="p-ventas" style="display:none;flex-direction:column;gap:20px">
+          <div class="sechead s-em"><span class="sq"></span><span class="tx">Registro de ventas · valorizaciones facturadas</span><span class="rule"></span></div>
+          <div class="card">
+            <div class="toolbar"><span class="ttl">Ventas</span><span class="cnt">0</span><span class="grow"></span>
+              <button class="btn sm" onclick="openM('m-xml')">Importar XML emitido</button>
+              <button class="btn sm pri" onclick="openM('m-venta')">Nueva venta</button></div>
+            <div class="tablewrap"><table>
+              <thead><tr><th>Emisión</th><th>Cliente</th><th>Comprobante</th><th>Obra</th><th>Valorización</th>
+                <th class="r">Base</th><th class="r">IGV</th><th class="r">Total</th><th class="r">Detr. retenida</th><th class="r">Garantía</th><th>Estado</th></tr></thead>
+              <tbody>
+                <tr><td class="mono">2026-01-31</td><td>FAMESA EXPLOSIVOS S.A.C.</td><td class="mono">F045-0221</td><td class="mono">PG0001</td><td class="mono">VAL-03</td>
+                  <td class="r mono">180,000.00</td><td class="r mono">32,400.00</td><td class="r mono">212,400.00</td>
+                  <td class="r mono">8,496.00</td><td class="r mono">18,000.00</td><td><span class="chip amber">Por cobrar</span></td></tr>
+              </tbody>
+            </table></div>
+          </div>
+          <div class="note">
+            <div class="hd"><span class="chip red">Riesgo actual</span></div>
+            Hoy la serie y el número de la factura de venta son un valor provisional que el sistema inventa, y ese valor termina saliendo en el PLE 14.1 y en el RVIE.
+            Hace falta definir de dónde sale el número real. <b>Preguntas E.1 y E.2.</b>
+          </div>
+        </div>
+
+        <!-- ══════ BANCOS ══════ -->
+        <div class="panel" id="p-bancos" style="display:none;flex-direction:column;gap:20px">
+          <div class="sechead s-blue"><span class="sq"></span><span class="tx">Libro banco · cada salida apunta a su documento</span><span class="rule"></span></div>
+          <div class="card">
+            <div class="toolbar"><span class="ttl">Movimientos bancarios</span><span class="cnt">3,657</span><span class="grow"></span>
+              <select class="sel" style="height:32px;font-size:11.5px"><option>BCP · 194-9927833-0-39</option><option>SCOT · 000-3786629</option><option>BN · Detracciones</option></select>
+              <button class="btn sm">Importar extracto</button>
+              <button class="btn sm pri" onclick="openM('m-pago')">Registrar pago</button></div>
+            <div class="tablewrap"><table>
+              <thead><tr><th>Fecha</th><th>Descripción</th><th>N° operación</th><th>Aplicado a</th><th class="r">Cargo</th><th class="r">Abono</th><th class="r">Saldo</th><th>Conciliado</th></tr></thead>
+              <tbody>
+                <tr><td class="mono">2026-01-20</td><td>TRANSF EKONO DRYWALL SAC</td><td class="mono">5401882</td>
+                  <td class="mono" style="color:var(--primary)">F013-35799 · 50%</td><td class="r mono">7,080.00</td><td class="r mono" style="color:var(--ink-4)">0.00</td><td class="r mono">1,391,638.14</td>
+                  <td><span class="chip green">Sí</span></td></tr>
+                <tr><td class="mono">2026-01-20</td><td>DETRACCION BN 030</td><td class="mono">5401883</td>
+                  <td class="mono" style="color:var(--primary)">Const. 2026-000418</td><td class="r mono">566.40</td><td class="r mono" style="color:var(--ink-4)">0.00</td><td class="r mono">1,391,071.74</td>
+                  <td><span class="chip green">Sí</span></td></tr>
+                <tr><td class="mono">2026-01-15</td><td>ENTREGA CAJA CHICA NAYELLI</td><td class="mono">5404001</td>
+                  <td class="mono" style="color:var(--primary)">Caja REND-NAYELLI</td><td class="r mono">3,000.00</td><td class="r mono" style="color:var(--ink-4)">0.00</td><td class="r mono">1,394,638.14</td>
+                  <td><span class="chip green">Sí</span></td></tr>
+                <tr><td class="mono">2026-01-12</td><td>PAGO PERSONAL POR FUERA</td><td class="mono">5403114</td>
+                  <td class="mono" style="color:var(--ink-4)">sin documento</td><td class="r mono">1,800.00</td><td class="r mono" style="color:var(--ink-4)">0.00</td><td class="r mono">1,397,638.14</td>
+                  <td><span class="chip amber">Revisar</span></td></tr>
+              </tbody>
+            </table></div>
+          </div>
+          <div class="note">
+            <div class="hd"><span class="chip amber">Qué cambia</span></div>
+            <b>N° de operación en todas las filas</b>, no solo en las transferencias, porque es lo que Kelly necesita para cuadrar el libro caja.
+            Y la columna <b>Aplicado a</b>: cada salida de dinero apunta a su factura, su constancia de detracción o su caja.
+            Lo que no apunta a nada queda marcado <span class="mono" style="color:var(--ink-4)">sin documento</span> a propósito, que es el caso de los pagos por fuera.
+          </div>
+        </div>
+
+        <!-- ══════ CAJAS ══════ -->
+        <div class="panel" id="p-cajas" style="display:none;flex-direction:column;gap:20px">
+          <div class="sechead s-amber"><span class="sq"></span><span class="tx">Cajas y rendiciones · entregado contra rendido</span><span class="rule"></span></div>
+          <div class="card">
+            <div class="toolbar"><span class="ttl">Cajas abiertas</span><span class="cnt">2</span><span class="grow"></span>
+              <button class="btn sm pri" onclick="openM('m-caja')">Nueva entrega</button></div>
+            <div class="tablewrap"><table>
+              <thead><tr><th>Caja</th><th>Encargado</th><th>Origen del fondo</th><th class="r">Entregado</th><th class="r">Rendido</th><th class="r">Saldo</th><th class="r">Items</th><th>Estado</th></tr></thead>
+              <tbody>
+                <tr><td class="mono">REND-NAYELLI</td><td>Nayelli Ramos</td><td class="mono">BCP · op. 5404001</td>
+                  <td class="r mono">3,000.00</td><td class="r mono">2,820.00</td><td class="r mono" style="color:var(--warn-ink)">180.00</td><td class="r mono">12</td>
+                  <td><span class="chip amber">Abierta</span></td></tr>
+                <tr><td class="mono">CAJA-OFICINA</td><td>Admin Sistema</td><td class="mono">Efectivo</td>
+                  <td class="r mono">800.00</td><td class="r mono">800.00</td><td class="r mono" style="color:var(--ink-4)">0.00</td><td class="r mono">6</td>
+                  <td><span class="chip green">Rendida</span></td></tr>
+              </tbody>
+            </table></div>
+          </div>
+          <div class="note">
+            <div class="hd"><span class="chip amber">Qué cambia</span></div>
+            Hoy <span class="mono">REND-NAYELLI</span> aparece en el Excel como si fuera una cuenta bancaria. Una caja no es un banco: se entrega, se rinde y queda un saldo.
+            Falta definir cuántas cajas hay, quién aprueba la rendición y qué pasa con el saldo al cierre. <b>Bloque G del documento.</b>
+          </div>
+        </div>
+
+        <!-- ══════ PESTAÑAS QUE SE MANTIENEN ══════ -->
+        <div class="panel" id="p-flujo" style="display:none">
+          <div class="note"><div class="hd"><span class="chip green">Se mantiene</span></div>
+            <b>Flujo de caja</b> queda tal como está hoy. La reestructuración no elimina nada de lo que ya funciona, solo agrega las pestañas de captura que faltaban.</div>
+        </div>
+        <div class="panel" id="p-movimientos" style="display:none">
+          <div class="note"><div class="hd"><span class="chip green">Se mantiene</span></div>
+            <b>Movimientos</b> sigue siendo el libro plano de entradas y salidas. Con las pestañas nuevas pasa a ser una vista de consulta, porque la captura ocurre en Compras, Ventas, Bancos y Cajas.</div>
+        </div>
+        <div class="panel" id="p-ordenes" style="display:none">
+          <div class="note"><div class="hd"><span class="chip green">Se mantiene</span></div>
+            <b>Órdenes (aprobar/pagar)</b> no cambia. Lo que se agrega es el vínculo hacia la factura: al registrar la compra se elige la OC y el sistema avisa si lo facturado no cuadra con lo ordenado. <b>Preguntas D.3 y D.4.</b></div>
+        </div>
+        <div class="panel" id="p-gastos" style="display:none">
+          <div class="note"><div class="hd"><span class="chip green">Se mantiene</span></div>
+            <b>Gastos</b> sigue igual, con sus 1,576 registros y su exportación a CSV. Compras es la pestaña nueva donde entra el documento con su detalle por línea, sus tributos y su saldo.</div>
+        </div>
+        <div class="panel" id="p-conciliacion" style="display:none">
+          <div class="note"><div class="hd"><span class="chip green">Se mantiene</span></div>
+            <b>Conciliación</b> ya existe y funciona. Gana precisión cuando cada movimiento bancario trae su N° de operación y apunta a un documento, porque el emparejado automático deja de depender del monto.</div>
+        </div>
+
+        <!-- ══════ REPORTES ══════ -->
+        <div class="panel" id="p-reportes" style="display:none;flex-direction:column;gap:20px">
+          <div class="sechead s-violet"><span class="sq"></span><span class="tx">Análisis de cuenta con auxiliar por tercero</span><span class="rule"></span></div>
+          <div class="card">
+            <div class="toolbar">
+              <span class="ttl">Cuenta</span>
+              <select class="sel" style="height:32px;font-size:11.5px;width:320px">
+                <option>4212 · Facturas por pagar a terceros</option>
+                <option>1212 · Facturas por cobrar a terceros</option>
+                <option>4011 · IGV cuenta propia</option>
+                <option>10413 · Cuenta detracciones Banco de la Nación</option>
+                <option>4151 · Vacaciones por pagar</option>
+              </select>
+              <label class="ckline"><input type="checkbox" checked> Con auxiliar por tercero</label>
+              <span class="grow"></span>
+              <button class="btn sm">Exportar</button>
+            </div>
+            <div class="tablewrap"><table>
+              <thead><tr><th>Tercero</th><th>RUC</th><th class="r">Corriente</th><th class="r">1 a 30</th><th class="r">31 a 60</th><th class="r">61 a 90</th><th class="r">Más de 90</th><th class="r">Saldo</th></tr></thead>
+              <tbody>
+                <tr><td>EKONO DRYWALL SAC</td><td class="mono">20601234567</td>
+                  <td class="r mono" style="color:var(--ink-4)">0.00</td><td class="r mono">7,080.00</td><td class="r mono" style="color:var(--ink-4)">0.00</td><td class="r mono" style="color:var(--ink-4)">0.00</td><td class="r mono" style="color:var(--ink-4)">0.00</td><td class="r mono">7,080.00</td></tr>
+                <tr><td>CONTAFEL SERVICIOS SAC</td><td class="mono">20551234321</td>
+                  <td class="r mono">1,000.00</td><td class="r mono" style="color:var(--ink-4)">0.00</td><td class="r mono" style="color:var(--ink-4)">0.00</td><td class="r mono" style="color:var(--ink-4)">0.00</td><td class="r mono" style="color:var(--ink-4)">0.00</td><td class="r mono">1,000.00</td></tr>
+                <tr><td>PETROCENTRO ARIAS S.A.C.</td><td class="mono">20487654321</td>
+                  <td class="r mono" style="color:var(--ink-4)">0.00</td><td class="r mono" style="color:var(--ink-4)">0.00</td><td class="r mono">2,340.00</td><td class="r mono" style="color:var(--ink-4)">0.00</td><td class="r mono" style="color:var(--ink-4)">0.00</td><td class="r mono">2,340.00</td></tr>
+              </tbody>
+            </table></div>
+          </div>
+          <div class="note">
+            <div class="hd"><span class="chip amber">Qué cambia</span></div>
+            El libro mayor de hoy muestra fecha, glosa, cuenta, debe y haber, pero <b>no muestra el tercero</b>. Sin esa columna Kelly no puede cuadrar la 4212 contra lo que
+            realmente debe a cada proveedor. <b>Pregunta L.5.</b>
+          </div>
+        </div>
+
+
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- ══════ MODAL · NUEVA COMPRA ══════ -->
+<div class="ov a-backdrop" id="m-compra">
+  <div class="modal xwide a-pop">
+    <header>
+      <div>
+        <h2>Registrar compra</h2>
+        <div class="steps">
+          <button class="step ok" onclick="irA('s-doc')"><span class="mk">✓</span>Documento</button><span class="sep">/</span>
+          <button class="step ok" onclick="irA('s-prov')"><span class="mk">✓</span>Proveedor</button><span class="sep">/</span>
+          <button class="step ok" onclick="irA('s-det')"><span class="mk">✓</span>Detalle · 3</button><span class="sep">/</span>
+          <button class="step warn" onclick="irA('s-trib')"><span class="mk">!</span>Tributos</button><span class="sep">/</span>
+          <button class="step ok" onclick="irA('s-pago')"><span class="mk">✓</span>Pago</button><span class="sep">/</span>
+          <button class="step ok" onclick="irA('s-dest')"><span class="mk">✓</span>Destino</button>
+        </div>
+      </div>
+      <button class="iconbtn" onclick="closeM(this)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+    </header>
+    <div class="bd">
+     <div class="cols">
+      <div class="mn">
+
+      <div class="entry3">
+        <button class="ro on"><b>Compra</b><span>Con comprobante · va al Registro de Compras</span></button>
+        <button class="ro"><b>Gasto</b><span>Sin comprobante fiscal · movilidad, caja chica</span></button>
+        <button class="bl"><b>Bancario</b><span>Transferencia, préstamo, pago de deuda ya registrada</span></button>
+      </div>
+      <div class="inote info">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+        <span>Reemplaza el doble paso de hoy (toggle Ingreso/Egreso/Bancario y luego <q>¿Qué tipo de egreso?</q>). Una sola decisión, y el ancho del modal cambia con ella: Compra 1120px, Gasto 672px, Bancario 560px.</span>
+      </div>
+
+      <div class="secbox" id="s-doc">
+        <div class="t">Documento <span class="chip amber">Ampliado</span></div>
+        <div class="fields">
+          <div class="g3">
+            <label class="f"><span class="lb"><span>Tipo</span></span><div class="ct"><select class="inp"><option>01 · Factura</option><option>03 · Boleta</option><option>07 · Nota de crédito</option><option>08 · Nota de débito</option><option>R · Recibo por honorarios</option><option>00 · Sin comprobante</option></select></div></label>
+            <label class="f"><span class="lb"><span>Serie</span></span><div class="ct"><input class="inp mono" value="F013"></div></label>
+            <label class="f"><span class="lb"><span>Número</span></span><div class="ct"><input class="inp mono" value="35799"></div></label>
+          </div>
+          <div class="g3">
+            <label class="f"><span class="lb"><span>Fecha de emisión</span></span><div class="ct"><input class="inp mono" value="2026-01-14"></div></label>
+            <label class="f"><span class="lb"><span>Vencimiento</span><span class="opt">nuevo</span></span><div class="ct"><input class="inp mono" value="2026-02-13"></div></label>
+            <label class="f"><span class="lb"><span>Fecha de pago</span><span class="opt">nuevo</span></span><div class="ct"><input class="inp mono" value="2026-01-28"></div></label>
+          </div>
+          <div class="inote info">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+            <span>Tres fechas distintas. Hoy el sistema solo guarda emisión y vencimiento, y por eso el flujo de caja proyecta con la fecha equivocada.</span>
+          </div>
+          <div class="g3">
+            <label class="f"><span class="lb"><span>Moneda</span></span><div class="ct"><select class="inp"><option>PEN</option><option>USD</option></select></div></label>
+            <label class="f"><span class="lb"><span>Tipo de cambio</span><span class="opt">nuevo</span></span><div class="ct"><input class="inp mono ro" value="solo si es USD"></div></label>
+            <label class="f"><span class="lb"><span>Orden de compra</span><span class="opt">nuevo</span></span><div class="ct"><select class="inp"><option>sin OC</option><option>OC-2026-0031 · Famesa</option></select></div></label>
+          </div>
+          <div class="g3">
+            <label class="f"><span class="lb"><span>Documento que modifica</span><span class="opt">si es NC o ND</span></span><div class="ct"><input class="inp mono" placeholder="F013-35412" disabled></div></label>
+            <label class="f"><span class="lb"><span>Guía de remisión</span><span class="opt">nuevo</span></span><div class="ct"><input class="inp mono" value="T004-1288"></div></label>
+            <label class="f"><span class="lb"><span>Adjunto</span><span class="opt">nuevo</span></span><div class="ct"><button class="btn sm dash" style="width:100%;justify-content:center">Subir PDF o XML</button></div></label>
+          </div>
+        </div>
+      </div>
+
+      <div class="secbox" id="s-prov">
+        <div class="t">Proveedor</div>
+        <div class="fields">
+          <div class="g3">
+            <label class="f"><span class="lb"><span>RUC</span></span><div class="ct"><input class="inp mono" value="20601234567"></div></label>
+            <label class="f" style="grid-column:span 2"><span class="lb"><span>Razón social</span></span><div class="ct"><input class="inp" value="EKONO DRYWALL SAC"></div></label>
+          </div>
+          <div class="g3">
+            <label class="f"><span class="lb"><span>Estado SUNAT</span><span class="opt">nuevo</span></span><div class="ct"><div style="display:flex;align-items:center;height:32px"><span class="chip green">Activo · habido</span></div></div></label>
+            <label class="f"><span class="lb"><span>Agente de retención</span><span class="opt">nuevo</span></span><div class="ct"><div style="display:flex;align-items:center;height:32px"><span class="chip">No</span></div></div></label>
+            <label class="f"><span class="lb"><span>Cuenta sugerida</span></span><div class="ct"><input class="inp mono ro" value="603111 · última usada"></div></label>
+          </div>
+          <div class="inote info">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+            <span>Si el proveedor sale <b>no habido</b>, el gasto no es deducible. Kelly tiene que verlo al registrar, no en el cierre. El dato sale del padrón cargado, sin consultar servicios externos.</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="secbox" id="s-det">
+        <div class="t">Detalle por línea <span class="chip amber">Nuevo</span></div>
+        <div class="lines">
+          <table>
+            <thead><tr><th>Descripción</th><th>Und.</th><th class="r">Cant.</th><th class="r">P. unit.</th><th class="r">Dscto.</th><th>Partida</th><th>Cuenta</th><th class="ck">→ INV</th><th class="r">Importe</th><th></th></tr></thead>
+            <tbody>
+              <tr>
+                <td><input class="inp" style="min-width:205px" value="Plancha drywall 1/2 ST 1.22x2.44"></td>
+                <td><input class="inp mono" style="width:52px" value="UND"></td>
+                <td class="r"><input class="inp mono" style="width:56px;text-align:right" value="200"></td>
+                <td class="r"><input class="inp mono" style="width:72px;text-align:right" value="45.00"></td>
+                <td class="r"><input class="inp mono" style="width:60px;text-align:right" value="0.00"></td>
+                <td><select class="inp" style="min-width:148px"><option>02.01 · Muros y tabiques</option><option>03.02 · Cielo raso</option></select></td>
+                <td><input class="inp mono" style="width:72px" value="603111"></td>
+                <td class="ck"><input type="checkbox"></td>
+                <td class="r mono">9,000.00</td>
+                <td><button class="iconbtn" style="height:24px;width:24px" title="Quitar línea"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button></td>
+              </tr>
+              <tr>
+                <td><input class="inp" value="Perfil omega galvanizado 3m"></td>
+                <td><input class="inp mono" style="width:52px" value="UND"></td>
+                <td class="r"><input class="inp mono" style="width:56px;text-align:right" value="150"></td>
+                <td class="r"><input class="inp mono" style="width:72px;text-align:right" value="20.00"></td>
+                <td class="r"><input class="inp mono" style="width:60px;text-align:right" value="0.00"></td>
+                <td><select class="inp"><option>02.01 · Muros y tabiques</option><option>03.02 · Cielo raso</option></select></td>
+                <td><input class="inp mono" style="width:72px" value="603111"></td>
+                <td class="ck"><input type="checkbox"></td>
+                <td class="r mono">3,000.00</td>
+                <td><button class="iconbtn" style="height:24px;width:24px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button></td>
+              </tr>
+              <tr class="inv">
+                <td><input class="inp" value="Amoladora angular Bosch GWS 900"></td>
+                <td><input class="inp mono" style="width:52px" value="UND"></td>
+                <td class="r"><input class="inp mono" style="width:56px;text-align:right" value="5"></td>
+                <td class="r"><input class="inp mono" style="width:72px;text-align:right" value="800.00"></td>
+                <td class="r"><input class="inp mono" style="width:60px;text-align:right" value="0.00"></td>
+                <td><select class="inp"><option>Sin partida · herramienta</option><option>02.01 · Muros y tabiques</option></select></td>
+                <td><input class="inp mono" style="width:72px" value="334111"></td>
+                <td class="ck"><input type="checkbox" checked></td>
+                <td class="r mono">4,000.00</td>
+                <td><button class="iconbtn" style="height:24px;width:24px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="linefoot">
+          <button class="btn sm dash">Agregar línea</button>
+          <button class="btn sm">Aplicar la partida a todas</button>
+          <button class="btn sm">Aplicar la cuenta a todas</button>
+          <span class="grow"></span>
+          <span class="kbdh"><kbd>Tab</kbd> avanza · <kbd>Enter</kbd> agrega fila</span>
+        </div>
+
+        <div class="inote warn" style="margin-top:10px">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>
+          <span><b>La cuenta prende el check.</b> 334111 es activo fijo, entonces <q>→ INV</q> se marca solo. Hoy el auto marcado usa el tipo de gasto de la cabecera, que no sirve cuando una misma factura trae drywall y una amoladora.</span>
+        </div>
+
+        <div style="border:1px solid var(--warn);border-radius:6px;background:hsl(38 100% 48% / .05);padding:12px;margin-top:10px">
+          <div style="font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--warn-ink);margin-bottom:9px">
+            Ítems que entran a inventario · 5
+          </div>
+          <div class="g3" style="margin-bottom:10px">
+            <label class="f"><span class="lb"><span>Serializable</span></span><div class="ct"><div class="seg"><button class="on">Sí · 1 código c/u</button><button>No · 1 ítem x 5</button></div></div></label>
+            <label class="f"><span class="lb"><span>Almacén destino</span></span><div class="ct"><select class="inp"><option>Almacén central</option><option>Obra Famesa Chancay</option></select></div></label>
+            <label class="f"><span class="lb"><span>Responsable</span></span><div class="ct"><select class="inp"><option>Sin asignar</option><option>Nayelli Ramos</option></select></div></label>
+          </div>
+          <div class="tablewrap" style="border:1px solid var(--line);border-radius:6px;background:var(--bg-elev)">
+            <table style="font-size:11.5px">
+              <thead><tr><th style="width:96px">Código</th><th>Descripción</th><th class="r">Valor unit.</th><th>Estado</th></tr></thead>
+              <tbody>
+                <tr><td class="mono">HER-0042</td><td>Amoladora angular Bosch GWS 900</td><td class="r mono">800.00</td><td><span class="chip green">Activo</span></td></tr>
+                <tr><td class="mono">HER-0043</td><td>Amoladora angular Bosch GWS 900</td><td class="r mono">800.00</td><td><span class="chip green">Activo</span></td></tr>
+                <tr><td class="mono">HER-0044</td><td>Amoladora angular Bosch GWS 900</td><td class="r mono">800.00</td><td><span class="chip green">Activo</span></td></tr>
+                <tr><td class="mono">HER-0045</td><td>Amoladora angular Bosch GWS 900</td><td class="r mono">800.00</td><td><span class="chip green">Activo</span></td></tr>
+                <tr><td class="mono">HER-0046</td><td>Amoladora angular Bosch GWS 900</td><td class="r mono">800.00</td><td><span class="chip green">Activo</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="inote" style="margin-top:10px">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 6 9 17l-5-5"/></svg>
+            <span>Códigos autogenerados, editables. Las cinco amoladoras entran como cinco ítems <b>Activo</b>, no como una fila <q>Por completar</q> de S/ 4,000 que alguien tiene que corregir a mano después. Eso último es lo que hace el sistema hoy, y es la razón por la que el botón no se usaba.</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="secbox" id="s-trib">
+        <div class="t">Tributos y retenciones <span class="chip amber">Nuevo</span></div>
+        <div class="fields">
+          <div class="g2">
+            <label class="f"><span class="lb"><span>Código de detracción</span><span class="opt">catálogo de 46</span></span><div class="ct">
+              <select class="inp">
+                <option>030 · Contratos de construcción · 4%</option>
+                <option>037 · Demás servicios gravados con IGV · 12%</option>
+                <option>022 · Otros servicios empresariales · 12%</option>
+                <option>020 · Mantenimiento y reparación de bienes muebles · 12%</option>
+                <option>019 · Arrendamiento de bienes · 10%</option>
+                <option>013 · Madera · 4%</option>
+                <option>No sujeta a detracción</option>
+              </select></div></label>
+            <div class="g2">
+              <label class="f"><span class="lb"><span>Tasa</span></span><div class="ct"><input class="inp mono ro" value="4.00 %"></div></label>
+              <label class="f"><span class="lb"><span>Monto</span></span><div class="ct"><input class="inp mono ro" value="755.20"></div></label>
+            </div>
+          </div>
+          <div class="inote ok">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 6 9 17l-5-5"/></svg>
+            <span>Comprobante de S/ 18,880.00, supera el piso de S/ 700. Corresponde detraer. Hoy la detracción es un porcentaje suelto sin código de bien ni servicio, y eso no alcanza para el PLE.</span>
+          </div>
+          <div class="g3">
+            <label class="f"><span class="lb"><span>N° de constancia</span></span><div class="ct"><input class="inp mono" placeholder="2026-000418" style="border-color:var(--warn)"></div></label>
+            <label class="f"><span class="lb"><span>Fecha de depósito</span></span><div class="ct"><input class="inp mono" placeholder="2026-01-20"></div></label>
+            <label class="f"><span class="lb"><span>Constancia</span></span><div class="ct"><button class="btn sm dash" style="width:100%;justify-content:center">Adjuntar</button></div></label>
+          </div>
+          <div class="g3">
+            <label class="f"><span class="lb"><span>Retención IGV 3%</span><span class="opt">a confirmar</span></span><div class="ct"><select class="inp"><option>No aplica</option><option>Aplica · somos agente de retención</option></select></div></label>
+            <label class="f"><span class="lb"><span>Percepción IGV 2%</span></span><div class="ct"><select class="inp"><option>No aplica</option><option>Aplica</option></select></div></label>
+            <label class="f"><span class="lb"><span>Retención 4ta 8%</span></span><div class="ct"><select class="inp"><option>No aplica</option><option>Retener 8%</option><option>Suspensión vigente · Form. 1609</option></select></div></label>
+          </div>
+        </div>
+      </div>
+
+      <div class="secbox" id="s-pago">
+        <div class="t">Pago <span class="chip amber">Parcial es nuevo</span></div>
+        <div class="fields">
+          <label class="f"><span class="lb"><span>Estado</span></span><div class="ct"><div class="seg">
+            <button>Pagado</button><button class="on">Parcial</button><button>Pendiente</button></div></div></label>
+          <div class="g3">
+            <label class="f"><span class="lb"><span>Importe pagado</span></span><div class="ct"><input class="inp mono" value="10,000.00"></div></label>
+            <label class="f"><span class="lb"><span>Saldo pendiente</span><span class="opt">calculado</span></span><div class="ct"><input class="inp mono ro" value="8,124.80" style="color:var(--rose-600);font-weight:600"></div></label>
+            <label class="f"><span class="lb"><span>Medio de pago</span><span class="opt">nuevo</span></span><div class="ct"><select class="inp"><option>003 · Transferencia</option><option>001 · Depósito en cuenta</option><option>009 · Cheque no negociable</option><option>008 · Efectivo</option></select></div></label>
+          </div>
+          <div class="g2">
+            <label class="f"><span class="lb"><span>Cuenta de origen</span></span><div class="ct"><select class="inp"><option>BCP 194-9927833-0-39</option><option>Scotiabank 000-3786629</option><option>Caja chica REND-NAYELLI</option></select></div></label>
+            <label class="f"><span class="lb"><span>N° de operación</span></span><div class="ct"><input class="inp mono" value="00418822"></div></label>
+          </div>
+          <div class="inote bad">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4M12 17h.01"/></svg>
+            <span><b>Bug que se arregla acá.</b> Hoy el movimiento solo se crea si el estado es Pagado. Con la factura Pendiente o Parcial, detracción, retención y vencimiento se pierden sin avisar, y ese es el caso más frecuente de Kelly.</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="secbox" id="s-dest">
+        <div class="t">Destino</div>
+        <div class="fields">
+          <div class="g2">
+            <label class="f"><span class="lb"><span>Proyecto</span></span><div class="ct"><select class="inp"><option>PG0001 · Famesa Chancay</option><option>Oficina / general</option></select></div></label>
+            <label class="f"><span class="lb"><span>Clase derivada de la cuenta</span><span class="opt">no editable</span></span><div class="ct">
+              <div style="display:flex;align-items:center;height:32px"><span class="chip green">CD · costo directo</span></div></div></label>
+          </div>
+          <label class="ckline"><input type="checkbox"> Repartir entre varias obras (prorrateo)</label>
+          <div class="inote info">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+            <span>El prorrateo ya no apaga el inventario. Hoy el check de inventario desaparece si repartes la compra entre dos obras, sin ninguna razón: una amoladora se inventaría igual aunque el costo se reparta.</span>
+          </div>
+        </div>
+      </div>
+
+      </div><!-- /.mn -->
+
+      <div class="side">
+        <div class="box">
+          <div class="t">Totales</div>
+          <div class="tot">
+            <span class="k">Valor de venta</span><span class="v">16,000.00</span>
+            <span class="k">Descuentos</span><span class="v">0.00</span>
+            <span class="k">IGV 18%</span><span class="v">2,880.00</span>
+            <span class="rule"></span>
+            <span class="k big">Total comprobante</span><span class="v big">18,880.00</span>
+            <span class="rule"></span>
+            <span class="k" style="color:var(--warn-ink)">Detracción 4%</span><span class="v" style="color:var(--warn-ink)">755.20</span>
+            <span class="k" style="color:var(--emerald-700);font-weight:600">Neto a pagar</span><span class="v" style="color:var(--emerald-700);font-weight:700">18,124.80</span>
+            <span class="rule"></span>
+            <span class="k">Pagado</span><span class="v">10,000.00</span>
+            <span class="k" style="color:var(--rose-600)">Saldo</span><span class="v" style="color:var(--rose-600);font-weight:600">8,124.80</span>
+          </div>
+        </div>
+        <div class="box">
+          <div class="t">Se registra</div>
+          <div style="display:flex;flex-direction:column;gap:6px;font-size:11.5px;color:var(--ink-2)">
+            <div>1 compra en el Registro de Compras</div>
+            <div>3 líneas de detalle</div>
+            <div>5 ítems de inventario <span class="chip amber">HER-0042 a 0046</span></div>
+            <div>1 cuenta por pagar de <span class="mono">8,124.80</span></div>
+            <div>1 detracción por depositar</div>
+          </div>
+        </div>
+        <div class="inote info">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+          <span>El panel queda pegado al scroll. Hoy los totales están a mitad del formulario y se pierden de vista.</span>
+        </div>
+      </div>
+
+     </div><!-- /.cols -->
+    </div>
+    <footer>
+      <span class="hint">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4M12 17h.01"/></svg>
+        Falta el N° de constancia de detracción
+      </span>
+      <span class="grow"></span>
+      <span class="kbdh"><kbd>⌘S</kbd> guardar · <kbd>⌘↵</kbd> guardar y nuevo</span>
+      <button class="btn" onclick="closeM(this)">Cancelar</button>
+      <button class="btn">Guardar y nuevo</button>
+      <button class="btn pri">Registrar compra</button>
+    </footer>
+  </div>
+</div>
+
+<!-- ══════ MODAL · GASTO SIN COMPROBANTE ══════ -->
+<div class="ov a-backdrop" id="m-gasto">
+  <div class="modal a-pop">
+    <header>
+      <div><h2>Registrar gasto</h2><div class="sub">Sin comprobante fiscal · no entra al Registro de Compras</div></div>
+      <button class="iconbtn" onclick="closeM(this)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+    </header>
+    <div class="bd">
+      <div class="entry3">
+        <button class="ro"><b>Compra</b><span>Con comprobante</span></button>
+        <button class="ro on"><b>Gasto</b><span>Sin comprobante fiscal</span></button>
+        <button class="bl"><b>Bancario</b><span>Transferencia, préstamo</span></button>
+      </div>
+      <div class="inote info">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+        <span>Mismo registro que una compra, misma tabla. Solo cambia lo que se pide: sin serie, sin número, sin detracción, sin IGV. Seis campos en vez de treinta.</span>
+      </div>
+      <div class="secbox">
+        <div class="t">Gasto</div>
+        <div class="fields">
+          <div class="g2">
+            <label class="f"><span class="lb"><span>Fecha</span></span><div class="ct"><input class="inp mono" value="2026-01-15"></div></label>
+            <label class="f"><span class="lb"><span>Importe</span></span><div class="ct"><input class="inp mono" value="85.00"></div></label>
+          </div>
+          <label class="f"><span class="lb"><span>Concepto</span></span><div class="ct"><input class="inp" value="Movilidad a obra Chancay"></div></label>
+          <div class="g2">
+            <label class="f"><span class="lb"><span>Cuenta contable</span></span><div class="ct"><input class="inp mono" value="631311"></div></label>
+            <label class="f"><span class="lb"><span>Clase</span><span class="opt">derivada</span></span><div class="ct"><div style="display:flex;align-items:center;height:32px"><span class="chip green">CD · costo directo</span></div></div></label>
+          </div>
+          <div class="g2">
+            <label class="f"><span class="lb"><span>Proyecto</span></span><div class="ct"><select class="inp"><option>PG0001 · Famesa Chancay</option><option>Oficina / general</option></select></div></label>
+            <label class="f"><span class="lb"><span>Sale de</span></span><div class="ct"><select class="inp"><option>Caja chica REND-NAYELLI</option><option>BCP 194-9927833-0-39</option></select></div></label>
+          </div>
+        </div>
+      </div>
+      <div class="secbox">
+        <div class="t">Si el gasto viene de otro módulo</div>
+        <div class="pick">
+          <button><b>Planilla</b><span>Jala los trabajadores registrados, no se escribe el importe a mano</span></button>
+          <button><b>Seguro y SCTR</b><span>Jala la póliza vigente del período</span></button>
+        </div>
+        <div class="inote info" style="margin-top:10px">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+          <span>Pedido de Kelly: <q>yo voy a poner planilla, me aparecería para jalar los trabajadores que tengo registrados</q>.</span>
+        </div>
+      </div>
+    </div>
+    <footer>
+      <span class="kbdh"><kbd>⌘S</kbd> guardar · <kbd>⌘↵</kbd> guardar y nuevo</span>
+      <span class="grow"></span>
+      <button class="btn" onclick="closeM(this)">Cancelar</button>
+      <button class="btn pri">Registrar gasto</button>
+    </footer>
+  </div>
+</div>
+
+<!-- ══════ MODAL · IMPORTAR XML ══════ -->
+<div class="ov a-backdrop" id="m-xml">
+  <div class="modal wide a-pop">
+    <header>
+      <div><h2>Importar comprobante XML</h2><div class="sub">Lectura local del archivo UBL 2.1 · no se consulta ningún servicio externo</div></div>
+      <button class="iconbtn" onclick="closeM(this)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+    </header>
+    <div class="bd">
+      <div class="dz"><b>Suelta aquí los XML</b>o haz click para elegirlos · se aceptan varios a la vez</div>
+      <div class="secbox">
+        <div class="t">Leído del archivo · FACTURAE001-7020610639764.XML</div>
+        <div class="tablewrap" style="border:1px solid var(--line);border-radius:6px">
+          <table>
+            <thead><tr><th>Campo</th><th>Valor en el XML</th><th>Va a</th><th>Estado</th></tr></thead>
+            <tbody>
+              <tr><td>Emisor</td><td class="mono">20610639764 · IMPORT DINAMIC SAC</td><td>Proveedor</td><td><span class="chip green">Ya existe</span></td></tr>
+              <tr><td>Comprobante</td><td class="mono">01 · E001-702</td><td>Documento</td><td><span class="chip green">Nuevo</span></td></tr>
+              <tr><td>Fecha de emisión</td><td class="mono">2026-01-09</td><td>Documento</td><td><span class="chip green">Leído</span></td></tr>
+              <tr><td>Moneda</td><td class="mono">PEN</td><td>Documento</td><td><span class="chip green">Leído</span></td></tr>
+              <tr><td>Líneas de detalle</td><td class="mono">7</td><td>Detalle</td><td><span class="chip green">Leído</span></td></tr>
+              <tr><td>Total</td><td class="mono">4,248.00</td><td>Totales</td><td><span class="chip green">Cuadra</span></td></tr>
+              <tr><td>Detracción</td><td class="mono">no viene en el XML</td><td>Tributos</td><td><span class="chip amber">Pide Kelly</span></td></tr>
+              <tr><td>Cuenta contable</td><td class="mono">no viene en el XML</td><td>Detalle</td><td><span class="chip amber">Pide Kelly</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="inote warn" style="margin-top:10px">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4M12 17h.01"/></svg>
+          <span>El XML trae el documento y el detalle, no trae la cuenta contable ni la detracción. El importador nunca inventa esos dos: abre la compra precargada y Kelly los completa. Si el archivo no cuadra, se rechaza entero y no se guarda nada a medias.</span>
+        </div>
+      </div>
+    </div>
+    <footer>
+      <span class="hint">1 archivo leído · 0 rechazados</span>
+      <span class="grow"></span>
+      <button class="btn" onclick="closeM(this)">Cancelar</button>
+      <button class="btn pri">Abrir como compra</button>
+    </footer>
+  </div>
+</div>
+
+<!-- ══════ MODAL · REGISTRAR PAGO ══════ -->
+<div class="ov a-backdrop" id="m-pago">
+  <div class="modal wide a-pop">
+    <header>
+      <div><h2>Registrar pago</h2><div class="sub">Un pago puede cubrir varias facturas · una factura puede recibir varios pagos</div></div>
+      <button class="iconbtn" onclick="closeM(this)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+    </header>
+    <div class="bd">
+      <div class="secbox">
+        <div class="t">Pago</div>
+        <div class="g3">
+          <label class="f"><span class="lb"><span>Fecha</span></span><div class="ct"><input class="inp mono" value="2026-01-28"></div></label>
+          <label class="f"><span class="lb"><span>Sale de</span></span><div class="ct"><select class="inp"><option>BCP 194-9927833-0-39</option><option>Scotiabank 000-3786629</option></select></div></label>
+          <label class="f"><span class="lb"><span>Importe</span></span><div class="ct"><input class="inp mono" value="10,000.00"></div></label>
+        </div>
+      </div>
+      <div class="secbox">
+        <div class="t">Aplicar a documentos pendientes</div>
+        <div class="tablewrap" style="border:1px solid var(--line);border-radius:6px">
+          <table>
+            <thead><tr><th class="ck"></th><th>Documento</th><th>Proveedor</th><th>Vence</th><th class="r">Saldo</th><th class="r">Aplicar</th></tr></thead>
+            <tbody>
+              <tr><td style="text-align:center"><input type="checkbox" checked></td><td class="mono">F013-35799</td><td>EKONO DRYWALL SAC</td><td class="mono">2026-02-13</td><td class="r mono">18,124.80</td><td class="r"><input class="inp mono" style="width:96px;text-align:right" value="10,000.00"></td></tr>
+              <tr><td style="text-align:center"><input type="checkbox"></td><td class="mono">F001-2214</td><td>ACEROS AREQUIPA</td><td class="mono">2026-02-02</td><td class="r mono">6,430.00</td><td class="r"><input class="inp mono" style="width:96px;text-align:right" value="0.00"></td></tr>
+              <tr><td style="text-align:center"><input type="checkbox"></td><td class="mono">F002-0881</td><td>SODIMAC PERU SA</td><td class="mono">2026-01-30</td><td class="r mono">1,290.50</td><td class="r"><input class="inp mono" style="width:96px;text-align:right" value="0.00"></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="inote ok" style="margin-top:10px">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 6 9 17l-5-5"/></svg>
+          <span>Aplicado 10,000.00 de 10,000.00. F013-35799 queda con saldo 8,124.80 y estado <b>Parcial</b>. La tabla que relaciona pagos con facturas ya existe en la base, hoy ninguna pantalla la usa.</span>
+        </div>
+      </div>
+    </div>
+    <footer>
+      <span class="hint">Sin aplicar: 0.00</span>
+      <span class="grow"></span>
+      <button class="btn" onclick="closeM(this)">Cancelar</button>
+      <button class="btn pri">Registrar pago</button>
+    </footer>
+  </div>
+</div>
+
+<!-- ══════ MODAL · RENDICIÓN DE CAJA ══════ -->
+<div class="ov a-backdrop" id="m-caja">
+  <div class="modal a-pop">
+    <header>
+      <div><h2>Rendir caja chica</h2><div class="sub">REND-NAYELLI · entregado 800.00</div></div>
+      <button class="iconbtn" onclick="closeM(this)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+    </header>
+    <div class="bd">
+      <div class="secbox">
+        <div class="t">Gastos rendidos</div>
+        <div class="tablewrap" style="border:1px solid var(--line);border-radius:6px">
+          <table>
+            <thead><tr><th>Fecha</th><th>Concepto</th><th>Cuenta</th><th class="r">Importe</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">2026-01-12</td><td>Movilidad a obra</td><td class="mono">631311</td><td class="r mono">85.00</td></tr>
+              <tr><td class="mono">2026-01-14</td><td>Refrigerio cuadrilla</td><td class="mono">637111</td><td class="r mono">120.00</td></tr>
+              <tr><td class="mono">2026-01-19</td><td>Copias y planos</td><td class="mono">656111</td><td class="r mono">45.00</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="linefoot"><button class="btn sm dash">Agregar gasto</button></div>
+      </div>
+      <div class="secbox">
+        <div class="t">Cierre</div>
+        <div class="tot">
+          <span class="k">Entregado</span><span class="v">800.00</span>
+          <span class="k">Rendido</span><span class="v">250.00</span>
+          <span class="k big">Saldo por rendir</span><span class="v big" style="color:var(--rose-600)">550.00</span>
+        </div>
+      </div>
+    </div>
+    <footer>
+      <span class="grow"></span>
+      <button class="btn" onclick="closeM(this)">Cancelar</button>
+      <button class="btn pri">Guardar rendición</button>
+    </footer>
+  </div>
+</div>
+
+<!-- ══════ MODAL · REGISTRAR VENTA ══════ -->
+<div class="ov a-backdrop" id="m-venta">
+  <div class="modal wide a-pop">
+    <header>
+      <div><h2>Registrar venta</h2><div class="sub">Factura emitida al cliente · alimenta el registro de ventas</div></div>
+      <button class="iconbtn" onclick="closeM(this)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+    </header>
+    <div class="bd">
+      <div class="secbox">
+        <div class="t">Documento</div>
+        <div class="fields">
+          <div class="g3">
+            <label class="f"><span class="lb"><span>Tipo</span></span><div class="ct"><select class="inp"><option>01 · Factura</option><option>07 · Nota de crédito</option></select></div></label>
+            <label class="f"><span class="lb"><span>Serie</span></span><div class="ct"><input class="inp mono" value="F001"></div></label>
+            <label class="f"><span class="lb"><span>Número</span></span><div class="ct"><input class="inp mono" value="00412"></div></label>
+          </div>
+          <div class="g3">
+            <label class="f"><span class="lb"><span>Emisión</span></span><div class="ct"><input class="inp mono" value="2026-01-31"></div></label>
+            <label class="f"><span class="lb"><span>Vencimiento</span></span><div class="ct"><input class="inp mono" value="2026-03-01"></div></label>
+            <label class="f"><span class="lb"><span>Cliente</span></span><div class="ct"><input class="inp" value="FAMESA EXPLOSIVOS SAC"></div></label>
+          </div>
+        </div>
+      </div>
+      <div class="secbox">
+        <div class="t">Origen <span class="chip amber">Nuevo</span></div>
+        <div class="g2">
+          <label class="f"><span class="lb"><span>Valorización</span></span><div class="ct"><select class="inp"><option>VAL-003 · Enero 2026 · PG0001</option><option>Sin valorización</option></select></div></label>
+          <label class="f"><span class="lb"><span>Proyecto</span></span><div class="ct"><input class="inp ro" value="PG0001 · Famesa Chancay"></div></label>
+        </div>
+        <div class="inote info" style="margin-top:10px">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+          <span>Al ligar la factura a la valorización, el 14.1 deja de usar serie y número inventados. Es el hueco que hay hoy en el PLE de ventas.</span>
+        </div>
+      </div>
+      <div class="secbox">
+        <div class="t">Totales y retenciones</div>
+        <div class="g2">
+          <div class="g2">
+            <label class="f"><span class="lb"><span>Valor de venta</span></span><div class="ct"><input class="inp mono" value="180,000.00"></div></label>
+            <label class="f"><span class="lb"><span>IGV 18%</span></span><div class="ct"><input class="inp mono ro" value="32,400.00"></div></label>
+          </div>
+          <div class="g2">
+            <label class="f"><span class="lb"><span>Detracción 4%</span></span><div class="ct"><input class="inp mono ro" value="8,496.00"></div></label>
+            <label class="f"><span class="lb"><span>Retención garantía</span></span><div class="ct"><input class="inp mono" value="18,000.00"></div></label>
+          </div>
+        </div>
+        <div class="tot" style="margin-top:12px">
+          <span class="k big">Total factura</span><span class="v big">212,400.00</span>
+          <span class="k" style="color:var(--emerald-700)">Neto a cobrar</span><span class="v" style="color:var(--emerald-700)">185,904.00</span>
+        </div>
+      </div>
+    </div>
+    <footer>
+      <span class="kbdh"><kbd>⌘S</kbd> guardar</span>
+      <span class="grow"></span>
+      <button class="btn" onclick="closeM(this)">Cancelar</button>
+      <button class="btn pri">Registrar venta</button>
+    </footer>
+  </div>
+</div>
+
+<script>
+function go(btn){
+  document.querySelectorAll('#tabs .tab').forEach(function(b){ b.classList.toggle('on', b===btn); });
+  document.querySelectorAll('.panel').forEach(function(p){
+    var on = p.id === 'p-' + btn.dataset.p;
+    p.style.display = on ? '' : 'none';
+    if(on){ p.classList.remove('a-data'); void p.offsetWidth; p.classList.add('a-data'); }
+  });
+}
+document.querySelectorAll('#tabs .tab').forEach(function(b){ b.addEventListener('click', function(){ go(b); }); });
+function openM(id){ document.getElementById(id).classList.add('on'); }
+function closeM(el){ el.closest('.ov').classList.remove('on'); }
+
+// progreso del header: click en un paso lleva a su seccion
+function irA(id){
+  var el = document.getElementById(id);
+  if(el) el.scrollIntoView({behavior:'smooth', block:'start'});
+}
+
+// cambiar de puerta de entrada cambia de modal (y de ancho)
+document.querySelectorAll('.entry3 button').forEach(function(b){
+  b.addEventListener('click', function(){
+    var t = b.querySelector('b').textContent.trim();
+    document.querySelectorAll('.ov.on').forEach(function(o){ o.classList.remove('on'); });
+    openM(t === 'Gasto' ? 'm-gasto' : 'm-compra');
+  });
+});
+
+// segmentados
+document.querySelectorAll('.seg').forEach(function(s){
+  s.querySelectorAll('button').forEach(function(b){
+    b.addEventListener('click', function(){
+      s.querySelectorAll('button').forEach(function(x){ x.classList.toggle('on', x===b); });
+    });
+  });
+});
+
+// el check de linea resalta la fila
+document.querySelectorAll('.lines td.ck input').forEach(function(c){
+  c.addEventListener('change', function(){ c.closest('tr').classList.toggle('inv', c.checked); });
+});
+document.querySelectorAll('.ov').forEach(function(ov){
+  ov.addEventListener('click', function(e){ if(e.target===ov) ov.classList.remove('on'); });
+});
+document.addEventListener('keydown', function(e){
+  if(e.key==='Escape') document.querySelectorAll('.ov.on').forEach(function(o){ o.classList.remove('on'); });
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,237 @@
+﻿=== commits ===
+4fc9cfe feat(oficina): motor renta 5ta proyeccion anual sunat + test
+
+=== diff ===
+diff --git a/apps/backend/scripts/oficina/test-rta5ta.ts b/apps/backend/scripts/oficina/test-rta5ta.ts
+new file mode 100644
+index 0000000..7bb6dc6
+--- /dev/null
++++ b/apps/backend/scripts/oficina/test-rta5ta.ts
+@@ -0,0 +1,103 @@
++/**
++ * Test para el motor de Renta 5ta Categoría (SUNAT).
++ * Ejecutar: node apps/backend/node_modules/tsx/dist/cli.mjs apps/backend/scripts/oficina/test-rta5ta.ts
++ */
++
++import assert from "node:assert/strict";
++import { calcularRta5ta } from "../../src/lib/rta5taCalc.js";
++
++// ── Case A ────────────────────────────────────────────────────────────────────
++// Sueldo 10 000, mes 7, acumulado 60 000, sin retenciones previas, UIT 5 350
++// nGrati = 2 (meses 7 y 12 >= 7)
++// proyeccion = 60000 + 10000*6 + 2*10000 + 2*900 = 141 800
++// rentaNeta  = 141800 - 7*5350 = 104 350
++// impuesto   = 5UIT(26750)*8% + 77600*14% = 2140 + 10864 = 13 004
++// retencion  = 13004 / 8 = 1 625.50  (divisor mes 5-7)
++{
++  const r = calcularRta5ta({
++    sueldoMensual: 10_000,
++    mesNumero: 7,
++    acumuladoPercibidoAntes: 60_000,
++    retencionesPrevias: 0,
++    uit: 5_350,
++  });
++
++  console.log("Case A:", r);
++  assert(
++    Math.abs(r.proyeccionAnual - 141_800) < 1,
++    `A:proyeccionAnual esperado 141800, obtenido ${r.proyeccionAnual}`
++  );
++  assert(
++    Math.abs(r.impuestoAnual - 13_004) < 1,
++    `A:impuestoAnual esperado 13004, obtenido ${r.impuestoAnual}`
++  );
++  assert(
++    Math.abs(r.retencionMes - 1_625.5) < 0.05,
++    `A:retencionMes esperado 1625.50, obtenido ${r.retencionMes}`
++  );
++}
++
++// ── Case B ────────────────────────────────────────────────────────────────────
++// Sueldo bajo → rentaNeta negativa → impuesto 0, retención 0
++// proyeccion = 12000 + 2000*6 + 2*2000 + 2*180 = 28 360
++// rentaNeta  = 28360 - 37450 = -9090
++{
++  const r = calcularRta5ta({
++    sueldoMensual: 2_000,
++    mesNumero: 7,
++    acumuladoPercibidoAntes: 12_000,
++    retencionesPrevias: 0,
++    uit: 5_350,
++  });
++
++  console.log("Case B:", r);
++  assert(
++    r.impuestoAnual === 0,
++    `B:impuestoAnual esperado 0, obtenido ${r.impuestoAnual}`
++  );
++  assert(
++    r.retencionMes === 0,
++    `B:retencionMes esperado 0, obtenido ${r.retencionMes}`
++  );
++  assert(
++    Math.abs(r.proyeccionAnual - 28_360) < 1,
++    `B:proyeccionAnual esperado 28360, obtenido ${r.proyeccionAnual}`
++  );
++  assert(
++    Math.abs(r.rentaNeta - (-9_090)) < 1,
++    `B:rentaNeta esperado -9090, obtenido ${r.rentaNeta}`
++  );
++}
++
++// ── Case C ────────────────────────────────────────────────────────────────────
++// Diciembre, nGrati = 1 (solo mes 12 >= 12)
++// proyeccion = 110000 + 10000*1 + 1*10000 + 1*900 = 130 900
++// rentaNeta  = 130900 - 37450 = 93 450
++// impuesto   = 26750*8% + 66700*14% = 2140 + 9338 = 11 478
++// retencion  = 11478 - 9000 = 2 478  (divisor dic: total − previas)
++{
++  const r = calcularRta5ta({
++    sueldoMensual: 10_000,
++    mesNumero: 12,
++    acumuladoPercibidoAntes: 110_000,
++    retencionesPrevias: 9_000,
++    uit: 5_350,
++  });
++
++  console.log("Case C:", r);
++  assert(
++    Math.abs(r.proyeccionAnual - 130_900) < 1,
++    `C:proyeccionAnual esperado 130900, obtenido ${r.proyeccionAnual}`
++  );
++  assert(
++    Math.abs(r.impuestoAnual - 11_478) < 1,
++    `C:impuestoAnual esperado 11478, obtenido ${r.impuestoAnual}`
++  );
++  assert(
++    Math.abs(r.retencionMes - 2_478) < 1,
++    `C:retencionMes esperado 2478, obtenido ${r.retencionMes}`
++  );
++}
++
++console.log("rta5ta VERDE");
++process.exit(0);
+diff --git a/apps/backend/src/lib/rta5taCalc.ts b/apps/backend/src/lib/rta5taCalc.ts
+new file mode 100644
+index 0000000..8f317e8
+--- /dev/null
++++ b/apps/backend/src/lib/rta5taCalc.ts
+@@ -0,0 +1,118 @@
++/**
++ * Motor de cálculo de Renta de 5ta Categoría (SUNAT — Perú)
++ * Método de proyección anual.
++ * SIN dependencias de DB — función pura.
++ */
++
++export type Rta5taInput = {
++  sueldoMensual: number;
++  mesNumero: number; // 1..12 (el mes que se está calculando)
++  acumuladoPercibidoAntes: number; // remuneraciones percibidas en meses anteriores del año
++  retencionesPrevias: number; // Rta5ta ya retenida en meses anteriores del año
++  uit: number; // e.g. 5350
++  /** Cantidad de gratificaciones AÚN por percibir en el año (jul+dic).
++   * Default: count of {7, 12} where month >= mesNumero. */
++  gratificacionesPorPercibir?: number;
++};
++
++export type Rta5taResult = {
++  retencionMes: number;
++  impuestoAnual: number;
++  proyeccionAnual: number;
++  rentaNeta: number;
++};
++
++function round2(n: number): number {
++  return Math.round(n * 100) / 100;
++}
++
++/** Calcula el impuesto progresivo sobre rentaNeta (en soles) usando la escala de 5ta categoría. */
++function calcImpuestoAnual(rentaNeta: number, uit: number): number {
++  if (rentaNeta <= 0) return 0;
++
++  const brackets: Array<{ up: number; rate: number }> = [
++    { up: 5 * uit, rate: 0.08 },
++    { up: 20 * uit, rate: 0.14 },
++    { up: 35 * uit, rate: 0.17 },
++    { up: 45 * uit, rate: 0.20 },
++    { up: Infinity, rate: 0.30 },
++  ];
++
++  let tax = 0;
++  let remaining = rentaNeta;
++  let prevTop = 0;
++
++  for (const bracket of brackets) {
++    if (remaining <= 0) break;
++    const sliceTop = bracket.up - prevTop;
++    const taxable = Math.min(remaining, sliceTop);
++    tax += taxable * bracket.rate;
++    remaining -= taxable;
++    prevTop = bracket.up;
++  }
++
++  return round2(tax);
++}
++
++export function calcularRta5ta(i: Rta5taInput): Rta5taResult {
++  const { sueldoMensual, mesNumero, acumuladoPercibidoAntes, retencionesPrevias, uit } = i;
++
++  // 1. Gratificaciones aún por percibir en el año
++  const gratiMeses = [7, 12];
++  const nGrati =
++    i.gratificacionesPorPercibir ??
++    gratiMeses.filter((m) => m >= mesNumero).length;
++
++  const bonifExtraordinariaUnitaria = 0.09 * sueldoMensual; // Ley 30334 por cada grati
++
++  // 2. Proyección anual
++  const mesesRestantes = 12 - mesNumero + 1; // incluye el mes actual
++  const proyeccionAnual = round2(
++    acumuladoPercibidoAntes +
++      sueldoMensual * mesesRestantes +
++      nGrati * sueldoMensual +
++      nGrati * bonifExtraordinariaUnitaria
++  );
++
++  // 3. Renta neta (deducción 7 UIT)
++  const rentaNeta = round2(proyeccionAnual - 7 * uit);
++
++  if (rentaNeta <= 0) {
++    return {
++      retencionMes: 0,
++      impuestoAnual: 0,
++      proyeccionAnual,
++      rentaNeta,
++    };
++  }
++
++  // 4. Impuesto anual progresivo
++  const impuestoAnual = calcImpuestoAnual(rentaNeta, uit);
++
++  // 5. Retención del mes según divisor SUNAT
++  let retencionRaw: number;
++
++  if (mesNumero >= 1 && mesNumero <= 3) {
++    retencionRaw = impuestoAnual / 12;
++  } else if (mesNumero === 4) {
++    retencionRaw = (impuestoAnual - retencionesPrevias) / 9;
++  } else if (mesNumero >= 5 && mesNumero <= 7) {
++    retencionRaw = (impuestoAnual - retencionesPrevias) / 8;
++  } else if (mesNumero === 8) {
++    retencionRaw = (impuestoAnual - retencionesPrevias) / 5;
++  } else if (mesNumero >= 9 && mesNumero <= 11) {
++    retencionRaw = (impuestoAnual - retencionesPrevias) / 4;
++  } else {
++    // mes 12
++    retencionRaw = impuestoAnual - retencionesPrevias;
++  }
++
++  const retencionMes = Math.max(0, round2(retencionRaw));
++
++  return {
++    retencionMes,
++    impuestoAnual,
++    proyeccionAnual,
++    rentaNeta,
++  };
++}

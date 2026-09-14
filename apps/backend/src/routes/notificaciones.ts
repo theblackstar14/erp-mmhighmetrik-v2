@@ -16,7 +16,7 @@ const TIPOS_AUTO = [
   'valo_vencida', 'oc_pendiente', 'sobrecosto',
   'valo_presentar', 'valo_no_presentada', 'valo_cobranza',
   'garantia_vencer', 'sctr_vencer', 'oc_sin_pagar', 'rendicion_pendiente', 'cierre_periodo',
-  'hito_vencido', 'hito_proximo',
+  'hito_vencido', 'hito_proximo', 'valorizado_incompleto',
 ];
 const HITO_LABEL: Record<string, string> = {
   entrega_terreno: 'Entrega de terreno', inicio_plazo: 'Inicio de plazo', ampliacion_plazo: 'Ampliación de plazo',
@@ -37,16 +37,19 @@ type NotifGen = {
 
 async function generar(): Promise<void> {
   const proys = await db
-    .select({ id: schema.proyectos.id, codigo: schema.proyectos.codigo, status: schema.proyectos.status, fechaInicio: schema.proyectos.fechaInicio, fechaFin: schema.proyectos.fechaFin, diasPlazo: schema.proyectos.diasPlazo })
+    .select({ id: schema.proyectos.id, codigo: schema.proyectos.codigo, status: schema.proyectos.status, fechaInicio: schema.proyectos.fechaInicio, fechaFin: schema.proyectos.fechaFin, diasPlazo: schema.proyectos.diasPlazo, montoVigente: schema.proyectos.montoVigente, montoContractual: schema.proyectos.montoContractual })
     .from(schema.proyectos)
     .where(isNull(schema.proyectos.deletedAt));
   const cod = new Map(proys.map((p) => [p.id, p.codigo]));
+  const estadoProy = new Map(proys.map((p) => [p.id, p.status]));
+  const CERRANDO = new Set(['liquidacion', 'cerrado', 'cancelado']); // obras en cierre: no molestar con "sin facturar"
   const gen: NotifGen[] = [];
 
   // 1 · Valorizaciones sin facturar (emitida/aprobada/conformidad) con antigüedad
   const vals = await db.select().from(schema.valorizaciones);
   for (const v of vals) {
     if (['facturada', 'cobrada', 'borrador', 'rechazada'].includes(v.status)) continue;
+    if (CERRANDO.has(estadoProy.get(v.proyectoId) ?? '')) continue; // obra en liquidación/cerrada → histórico, no alertar
     const dias = diasDesde(v.fechaEmision);
     if (dias < 7) continue;
     gen.push({
@@ -248,6 +251,28 @@ async function generar(): Promise<void> {
         });
       }
     }
+  }
+
+  // 12 · Obra culminada pero valorizado incompleto · falta cargar valos antes del cierre
+  const valConIgvPorProy = new Map<string, number>();
+  for (const v of vals) {
+    const conIgv = Number(v.montoTotalConIgv ?? 0) || Number(v.totalContratista ?? 0) || Number(v.montoValorizacionBruta ?? 0) * 1.18;
+    valConIgvPorProy.set(v.proyectoId, (valConIgvPorProy.get(v.proyectoId) ?? 0) + conIgv);
+  }
+  for (const p of proys) {
+    if (p.status === 'cerrado' || p.status === 'cancelado') continue;
+    if (!regPorProy.get(p.id)?.has('culminacion')) continue; // solo obras ya culminadas
+    const vigente = Number(p.montoVigente ?? 0) || Number(p.montoContractual ?? 0);
+    if (vigente <= 0) continue;
+    const valorizado = valConIgvPorProy.get(p.id) ?? 0;
+    const faltaPct = (1 - valorizado / vigente) * 100;
+    if (faltaPct <= 1) continue; // ya está ~100% (tolerancia 1%)
+    gen.push({
+      clave: `valo-incompleto-${p.id}`, tipo: 'valorizado_incompleto', severidad: faltaPct > 10 ? 'alta' : 'media',
+      titulo: `Valorizado incompleto · ${p.codigo}`,
+      detalle: `Obra culminada pero valorizado ${(100 - faltaPct).toFixed(1)}% (${pen(valorizado)} de ${pen(vigente)}). Carga las valorizaciones faltantes antes del cierre.`,
+      proyectoId: p.id, proyectoCodigo: p.codigo, accionUrl: `/proyectos/${p.id}/valorizaciones`,
+    });
   }
 
   // upsert (no pisa leidoEn) + limpieza de auto-alertas que ya no aplican

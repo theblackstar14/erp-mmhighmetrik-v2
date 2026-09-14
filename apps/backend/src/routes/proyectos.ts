@@ -301,9 +301,17 @@ router.get('/:id/costos-obra', async (req, res) => {
     .groupBy(schema.gastos.clasificacion, schema.gastos.prorrateable);
 
   const sumBy = (clase: string) => rows.filter((r) => r.clasificacion === clase).reduce((s, r) => s + Number(r.total), 0);
-  const cdEjec = sumBy('CD');
+  const cdGastos = sumBy('CD');
   const ggEjec = sumBy('GG_OBRA');
   const compartidos = rows.filter((r) => r.prorrateable).reduce((s, r) => s + Number(r.total), 0);
+
+  // Mano de obra directa de planilla → CD (read-through · el costo vive en el asiento de planilla, NO en gastos → sin doble conteo)
+  const [mo] = await db.select({ v: sql<number>`coalesce(sum(${schema.planillaDetalle.montoCostoTotal}),0)::float8` })
+    .from(schema.planillaDetalle)
+    .innerJoin(schema.planillaSemanas, eq(schema.planillaDetalle.semanaId, schema.planillaSemanas.id))
+    .where(eq(schema.planillaSemanas.proyectoId, id));
+  const manoObra = Number(mo?.v ?? 0);
+  const cdEjec = cdGastos + manoObra;
 
   const cdPres = Number(proy.costoDirectoSinIgv ?? proy.costoDirecto ?? 0);
   const separable = proy.ggUtModo === 'separado';
@@ -316,7 +324,7 @@ router.get('/:id/costos-obra', async (req, res) => {
 
   const costoTotal = cdEjec + ggEjec;
   res.json({
-    cd: { presupuesto: cdPres, ejecutado: cdEjec },
+    cd: { presupuesto: cdPres, ejecutado: cdEjec, gastos: cdGastos, manoObra },
     ggObra: { presupuesto: ggPres, ejecutado: ggEjec, separable },
     costoTotal, valorizacion, resultadoObra: valorizacion - costoTotal,
     compartidosSinDistribuir: compartidos,
@@ -1446,10 +1454,19 @@ router.post('/:id/valorizaciones', upload.single('file'), async (req, res) => {
 // PATCH /api/proyectos/:id/valorizaciones/:valId/estado · avanzar workflow de valo
 const VALO_ESTADOS = ['borrador', 'emitida', 'conformidad_supervision', 'aprobada', 'facturada', 'cobrada', 'rechazada'] as const;
 router.patch('/:id/valorizaciones/:valId/estado', async (req, res) => {
-  const body = req.body as { estado?: unknown; cuentaId?: unknown; fechaCobro?: unknown };
+  const body = req.body as { estado?: unknown; cuentaId?: unknown; fechaCobro?: unknown; cuentaContable?: unknown };
   const estado = String(body.estado ?? '');
   if (!VALO_ESTADOS.includes(estado as (typeof VALO_ESTADOS)[number])) {
     return res.status(400).json({ error: `estado inválido · usar: ${VALO_ESTADOS.join(', ')}` });
+  }
+  // WS1 · cuenta de ingreso confirmada por Kelly (default fuerte 7041 en el motor). Valida existe+activa.
+  let cuentaIngresoSet: { cuentaContable: string; cuentaContableOrigen: string } | undefined;
+  if (body.cuentaContable != null && String(body.cuentaContable).trim()) {
+    const cta = String(body.cuentaContable).trim();
+    const [pc] = await db.select({ activa: schema.planContable.activa }).from(schema.planContable).where(eq(schema.planContable.codigo, cta)).limit(1);
+    if (!pc) return res.status(400).json({ error: `cuenta contable ${cta} no existe` });
+    if (pc.activa === false) return res.status(400).json({ error: `cuenta contable ${cta} está inactiva` });
+    cuentaIngresoSet = { cuentaContable: cta, cuentaContableOrigen: 'USUARIO' };
   }
   // F2 · al marcar COBRADA nace el movimiento Ingreso de caja (mismo patrón que pago OC)
   const esCobro = estado === 'cobrada';
@@ -1487,7 +1504,7 @@ router.patch('/:id/valorizaciones/:valId/estado', async (req, res) => {
   const val = await db.transaction(async (tx) => {
     const [v] = await tx
       .update(schema.valorizaciones)
-      .set({ status: estado as (typeof VALO_ESTADOS)[number], updatedAt: new Date(), ...comprobante })
+      .set({ status: estado as (typeof VALO_ESTADOS)[number], updatedAt: new Date(), ...comprobante, ...cuentaIngresoSet })
       .where(eq(schema.valorizaciones.id, req.params.valId!))
       .returning();
     if (!v) return null;
@@ -2072,7 +2089,17 @@ async function buildCierreChecklist(proyectoId: string) {
 
   const garVigentes = garantias.filter((g) => g.estado === 'vigente');
   const retencionVigente = garVigentes.filter((g) => g.tipo === 'retencion' || g.tipo === 'fiel_cumplimiento');
-  const adelPendiente = adelantos.filter((a) => Number(a.monto) - Number(a.montoAmortizado ?? 0) > CIERRE_TOL);
+  // Retención real = Σ retención de las valos. Solo se LIBERA legalmente al consentir la liquidación;
+  // el flag manual de la garantía (estado=devuelta) no basta ni debe pintar verde antes del consentimiento.
+  const consentido = !!hito('consentimiento_liquidacion');
+  const retencionValos = vals.reduce((s, v) => s + Number(v.montoRetencion ?? 0), 0);
+  const retencionPendiente = retencionValos > CIERRE_TOL && !consentido;
+  // Amortización real = desde las valos (Σ montoAmortizaciones), no el montoAmortizado manual (puede estar desactualizado).
+  // MAX(manual, valos) evita regresión si se amortizó fuera de valo, y evita doble conteo.
+  const totalAdelantos = adelantos.reduce((s, a) => s + Number(a.monto ?? 0), 0);
+  const amortizadoManual = adelantos.reduce((s, a) => s + Number(a.montoAmortizado ?? 0), 0);
+  const amortizadoValos = vals.reduce((s, v) => s + Number(v.montoAmortizaciones ?? 0), 0);
+  const adelSaldo = totalAdelantos - Math.max(amortizadoManual, amortizadoValos);
   const sumMonto = (gs: Array<{ monto: string | null }>) => gs.reduce((s, g) => s + Number(g.monto ?? 0), 0);
 
   const vigente = Number(proyecto.montoVigente ?? 0) || Number(proyecto.montoContractual ?? 0);
@@ -2083,9 +2110,9 @@ async function buildCierreChecklist(proyectoId: string) {
     { key: 'recepcion', label: 'Recepción de obra', ok: !!hito('recepcion'), detail: fechaDe('recepcion') ?? 'sin registrar' },
     { key: 'liquidacion', label: 'Liquidación practicada', ok: !!hito('liquidacion'), detail: fechaDe('liquidacion') ?? 'sin registrar' },
     { key: 'consentimiento', label: 'Consentimiento de liquidación', ok: !!hito('consentimiento_liquidacion'), detail: fechaDe('consentimiento_liquidacion') ?? 'sin registrar' },
-    { key: 'adelantos', label: 'Adelantos amortizados', ok: adelPendiente.length === 0, detail: adelPendiente.length ? `${adelPendiente.length} con saldo pendiente` : 'sin saldo' },
+    { key: 'adelantos', label: 'Adelantos amortizados', ok: adelSaldo <= CIERRE_TOL, detail: adelSaldo > CIERRE_TOL ? `saldo S/ ${adelSaldo.toLocaleString('es-PE', { minimumFractionDigits: 2 })}` : 'sin saldo' },
     { key: 'garantias', label: 'Garantías devueltas', ok: garVigentes.length === 0, detail: garVigentes.length ? `${garVigentes.length} vigente(s)` : 'ninguna vigente' },
-    { key: 'retencion', label: 'Retención liberada', ok: retencionVigente.length === 0, detail: retencionVigente.length ? `S/ ${sumMonto(retencionVigente).toLocaleString('es-PE', { minimumFractionDigits: 2 })} sin liberar` : 'liberada' },
+    { key: 'retencion', label: 'Retención liberada', ok: !retencionPendiente && retencionVigente.length === 0, detail: retencionPendiente ? `S/ ${retencionValos.toLocaleString('es-PE', { minimumFractionDigits: 2 })} pendiente · falta consentimiento` : retencionVigente.length ? `S/ ${sumMonto(retencionVigente).toLocaleString('es-PE', { minimumFractionDigits: 2 })} sin liberar` : 'liberada' },
     { key: 'valorizado', label: 'Valorizado al 100%', ok: vigente > 0 && valorizadoConIgv >= vigente - Math.max(CIERRE_TOL, vigente * 0.005), detail: vigente > 0 ? `${((valorizadoConIgv / vigente) * 100).toFixed(1)}%` : '—' },
   ];
   // Gate duro: hitos de cierre + sin pendientes financieros. 'valorizado' es informativo (un deductivo puede dejarlo <100% legítimamente).

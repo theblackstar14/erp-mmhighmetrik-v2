@@ -1,0 +1,1001 @@
+﻿=== commits ===
+02e2c15 feat(oficina): cerrar mes genera asiento WS1 + aplica cuotas; reabrir reversible
+
+=== stat ===
+ apps/backend/scripts/oficina/test-cierre.ts | 223 ++++++++++++++++++
+ apps/backend/src/routes/contabilidad.ts     | 158 +++++++++++--
+ apps/backend/src/routes/planillaOficina.ts  | 345 +++++++++++++++++++++++++++-
+ 3 files changed, 706 insertions(+), 20 deletions(-)
+
+=== diff ===
+diff --git a/apps/backend/scripts/oficina/test-cierre.ts b/apps/backend/scripts/oficina/test-cierre.ts
+new file mode 100644
+index 0000000..87b5e88
+--- /dev/null
++++ b/apps/backend/scripts/oficina/test-cierre.ts
+@@ -0,0 +1,223 @@
++/**
++ * Task 6 · Test cerrar + reabrir planilla oficina.
++ * Verifies: WS1 asiento creation, cuota application, reversal.
++ *   node apps/backend/node_modules/tsx/dist/cli.mjs apps/backend/scripts/oficina/test-cierre.ts
++ * Requiere DATABASE_URL=erp_mmh_test. Imprime 'cierre VERDE' en éxito.
++ * Note: exit code 9 on Windows is a cosmetic libuv issue — success = VERDE printed.
++ */
++import assert from 'node:assert/strict';
++import express from 'express';
++import { authMiddleware } from '../../src/middleware/auth.js';
++import planillaOficinaRoutes from '../../src/routes/planillaOficina.js';
++import { lucia } from '../../src/auth.js';
++import { db, schema } from '@erp/db';
++import { and, eq, inArray, sql } from 'drizzle-orm';
++
++const USER = 'af36a9b1-3b8e-4471-99d0-d08cf271187d'; // admin
++const MES = '2026-07'; // Must be an open period
++
++let testEmpleadoId: string | null = null;
++let testAdelantoId: string | null = null;
++let testMesId: string | null = null;
++
++(async () => {
++  let failed = false;
++
++  const app = express();
++  app.use(express.json());
++  app.use(authMiddleware);
++  app.use('/api/oficina', planillaOficinaRoutes);
++
++  const server = app.listen(0);
++  const port = (server.address() as any).port;
++  const base = `http://localhost:${port}`;
++
++  const session = await lucia.createSession(USER, {});
++  const cookie = lucia.createSessionCookie(session.id).serialize();
++
++  const get = (path: string) =>
++    fetch(base + path, { headers: { cookie } });
++  const post = (path: string, body: unknown) =>
++    fetch(base + path, {
++      method: 'POST',
++      headers: { 'content-type': 'application/json', cookie },
++      body: JSON.stringify(body),
++    });
++
++  try {
++    console.log('════ cierre · Task 6 ════');
++
++    // ── Setup: create temp admin empleado with AFP Profuturo(F) ──
++    const [testEmp] = await db
++      .insert(schema.empleados)
++      .values({
++        nombre: 'TEST CIERRE EMP',
++        numDoc: '88888888CIERRE',
++        sistemaPension: 'AFP Profuturo(F)',
++        sueldoBaseMensual: '6000',
++        asignacionFamiliar: false,
++        tipoPlanilla: 'admin',
++        activo: true,
++      })
++      .returning();
++    testEmpleadoId = testEmp.id;
++    console.log(`  setup: empleado TEST CIERRE EMP id=${testEmp.id}`);
++
++    // Create adelanto (montoTotal=900, numCuotas=3 → cuota=300)
++    const [testAdel] = await db
++      .insert(schema.adelantoOficina)
++      .values({
++        empleadoId: testEmp.id,
++        fecha: '2026-07-01',
++        montoTotal: '900',
++        numCuotas: 3,
++        motivo: 'test cierre',
++        estado: 'vigente',
++        createdBy: USER,
++      })
++      .returning();
++    testAdelantoId = testAdel.id;
++    console.log(`  setup: adelanto id=${testAdel.id} montoTotal=900 numCuotas=3`);
++
++    // ── 1. POST /planilla {mes} → create/get mes ──
++    const r1 = await post('/api/oficina/planilla', { mes: MES });
++    assert.equal(r1.status, 200, `POST /planilla status ${r1.status}`);
++    const j1 = await r1.json() as { mes: any };
++    assert.ok(j1.mes, 'POST /planilla → mes');
++    testMesId = j1.mes.id;
++    console.log(`  ✓ 1. POST /planilla → mesId=${testMesId} estado=${j1.mes.estado}`);
++
++    // ── 2. POST calcular ──
++    const r2 = await post(`/api/oficina/planilla/${testMesId}/calcular`, {});
++    assert.equal(r2.status, 200, `POST calcular status ${r2.status}`);
++    const j2 = await r2.json() as { mes: any; detalle: any[] };
++    assert.equal(j2.mes.estado, 'calculada', `estado=calculada, got ${j2.mes.estado}`);
++    const det = j2.detalle.find((d: any) => d.empleado_id === testEmp.id || d.empleadoId === testEmp.id);
++    assert.ok(det, `detalle found for empleado ${testEmp.id}`);
++    const adelantoCuota = Number(det.adelanto_cuota ?? det.adelantoCuota);
++    assert.equal(adelantoCuota, 300, `adelantoCuota=300 for this empleado, got ${adelantoCuota}`);
++    console.log(`  ✓ 2. calcular → estado=calculada, adelantoCuota=${adelantoCuota}`);
++
++    // ── 3. POST cerrar ──
++    const r3 = await post(`/api/oficina/planilla/${testMesId}/cerrar`, {});
++    if (r3.status !== 200) {
++      const body = await r3.text();
++      assert.fail(`POST cerrar failed ${r3.status}: ${body}`);
++    }
++    const j3 = await r3.json() as { mes: any; asientoId: string };
++    assert.ok(j3.asientoId, `cerrar → asientoId present, got ${j3.asientoId}`);
++    assert.equal(j3.mes.estado, 'cerrada', `mes estado=cerrada, got ${j3.mes.estado}`);
++    const asientoId = j3.asientoId;
++    console.log(`  ✓ 3. cerrar → estado=cerrada asientoId=${asientoId}`);
++
++    // ── 4. Assert: asiento Σdebe === Σhaber ──
++    const [sumas] = await db
++      .select({
++        sumDebe: sql<string>`COALESCE(SUM(debe::numeric), 0)`,
++        sumHaber: sql<string>`COALESCE(SUM(haber::numeric), 0)`,
++      })
++      .from(schema.asientosLineas)
++      .where(eq(schema.asientosLineas.asientoId, asientoId));
++
++    const sumDebe = Math.round(Number(sumas.sumDebe) * 100) / 100;
++    const sumHaber = Math.round(Number(sumas.sumHaber) * 100) / 100;
++    console.log(`  ✓ 4. asiento Σdebe=${sumDebe} Σhaber=${sumHaber} delta=${Math.round((sumDebe - sumHaber) * 100) / 100}`);
++    assert.ok(Math.abs(sumDebe - sumHaber) <= 0.50, `Σdebe (${sumDebe}) ≈ Σhaber (${sumHaber}), delta=${sumDebe - sumHaber}`);
++
++    // ── 5. Assert: adelanto_cuota_aplicada row exists (300) ──
++    const cuotasRows = await db
++      .select()
++      .from(schema.adelantoCuotaAplicada)
++      .where(eq(schema.adelantoCuotaAplicada.adelantoId, testAdelantoId));
++    assert.equal(cuotasRows.length, 1, `Expected 1 cuota_aplicada, got ${cuotasRows.length}`);
++    assert.equal(Number(cuotasRows[0].monto), 300, `cuota monto=300, got ${cuotasRows[0].monto}`);
++    console.log(`  ✓ 5. adelanto_cuota_aplicada: 1 row, monto=${cuotasRows[0].monto}`);
++
++    // ── 6. Assert: GET /adelantos shows saldoPendiente=600 ──
++    const r6 = await get(`/api/oficina/adelantos?empleadoId=${testEmp.id}`);
++    assert.equal(r6.status, 200, `GET /adelantos status ${r6.status}`);
++    const j6 = await r6.json() as { adelantos: any[] };
++    const ade6 = j6.adelantos.find((a: any) => a.id === testAdelantoId);
++    assert.ok(ade6, `adelanto ${testAdelantoId} found`);
++    assert.equal(ade6.saldoPendiente, 600, `saldoPendiente=600 after cuota, got ${ade6.saldoPendiente}`);
++    console.log(`  ✓ 6. adelanto saldoPendiente=${ade6.saldoPendiente} (was 900, cuota 300 applied)`);
++
++    // ── 7. POST reabrir → 200, estado=calculada ──
++    const r7 = await post(`/api/oficina/planilla/${testMesId}/reabrir`, {});
++    if (r7.status !== 200) {
++      const body = await r7.text();
++      assert.fail(`POST reabrir failed ${r7.status}: ${body}`);
++    }
++    const j7 = await r7.json() as { mes: any };
++    assert.equal(j7.mes.estado, 'calculada', `mes estado=calculada after reabrir, got ${j7.mes.estado}`);
++    assert.equal(j7.mes.asientoId, null, `asientoId=null after reabrir, got ${j7.mes.asientoId}`);
++    console.log(`  ✓ 7. reabrir → estado=calculada asientoId=null`);
++
++    // ── 8. Assert: asiento deleted ──
++    const asientoRows = await db
++      .select()
++      .from(schema.asientos)
++      .where(eq(schema.asientos.id, asientoId));
++    assert.equal(asientoRows.length, 0, `asiento deleted, but found ${asientoRows.length} rows`);
++    console.log(`  ✓ 8. asiento id=${asientoId} deleted`);
++
++    // ── 9. Assert: adelanto_cuota_aplicada removed → saldoPendiente back to 900 ──
++    const cuotasAfter = await db
++      .select()
++      .from(schema.adelantoCuotaAplicada)
++      .where(eq(schema.adelantoCuotaAplicada.adelantoId, testAdelantoId));
++    assert.equal(cuotasAfter.length, 0, `cuota_aplicada removed, but found ${cuotasAfter.length}`);
++
++    const r9 = await get(`/api/oficina/adelantos?empleadoId=${testEmp.id}`);
++    const j9 = await r9.json() as { adelantos: any[] };
++    const ade9 = j9.adelantos.find((a: any) => a.id === testAdelantoId);
++    assert.ok(ade9, `adelanto ${testAdelantoId} found after reabrir`);
++    assert.equal(ade9.saldoPendiente, 900, `saldoPendiente=900 after reabrir, got ${ade9.saldoPendiente}`);
++    console.log(`  ✓ 9. after reabrir: cuota_aplicada=0, saldoPendiente=${ade9.saldoPendiente}`);
++
++    console.log('\n  cierre VERDE\n');
++  } catch (e: any) {
++    failed = true;
++    console.error('\n  ✗ FALLÓ:', e?.message ?? e, '\n');
++    if (e?.stack) console.error(e.stack);
++  } finally {
++    // ── Cleanup ──
++    // Delete cuota_aplicada for this adelanto (if any remain)
++    if (testAdelantoId) {
++      await db
++        .delete(schema.adelantoCuotaAplicada)
++        .where(eq(schema.adelantoCuotaAplicada.adelantoId, testAdelantoId))
++        .catch(() => {});
++    }
++
++    // Delete planilla mes (cascade deletes detalle; asiento may already be deleted or remain)
++    if (testMesId) {
++      // Delete asiento linked to this mes (if cerrar succeeded but reabrir didn't)
++      const [mesNow] = await db
++        .select()
++        .from(schema.planillaOficinaMes)
++        .where(eq(schema.planillaOficinaMes.id, testMesId))
++        .limit(1)
++        .catch(() => []);
++      if (mesNow?.asientoId) {
++        await db.delete(schema.asientos).where(eq(schema.asientos.id, mesNow.asientoId)).catch(() => {});
++      }
++      await db.delete(schema.planillaOficinaMes).where(eq(schema.planillaOficinaMes.id, testMesId)).catch(() => {});
++    }
++
++    // Delete adelanto
++    if (testAdelantoId) {
++      await db.delete(schema.adelantoOficina).where(eq(schema.adelantoOficina.id, testAdelantoId)).catch(() => {});
++    }
++
++    // Delete empleado
++    if (testEmpleadoId) {
++      await db.delete(schema.empleados).where(eq(schema.empleados.id, testEmpleadoId)).catch(() => {});
++    }
++
++    await lucia.invalidateSession(session.id).catch(() => {});
++    server.close();
++    await (db as any).$client?.end?.().catch(() => {});
++    process.exit(failed ? 1 : 0);
++  }
++})();
+diff --git a/apps/backend/src/routes/contabilidad.ts b/apps/backend/src/routes/contabilidad.ts
+index 7f7405a..7a0587a 100644
+--- a/apps/backend/src/routes/contabilidad.ts
++++ b/apps/backend/src/routes/contabilidad.ts
+@@ -8,20 +8,21 @@
+  */
+ import { db, schema } from '@erp/db';
+ import { and, asc, desc, eq, gte, inArray, isNull, lte, ne, or, sql as dsql } from 'drizzle-orm';
+ import { Router } from 'express';
+ import { z } from 'zod';
+ import { NATURALEZAS_CONTABLES, cuentaDeNaturaleza, type NaturalezaContable } from '@erp/shared';
+ import { createHash } from 'node:crypto';
+ import { requireAuth, requireRole } from '../middleware/auth.js';
+ import { audit } from '../lib/audit.js';
+ import { freezePeriodo, unfreezePeriodo } from '../lib/periodos.js';
++import { derivarClaseCore, cargarDerivarCtx, type DerivarCtx } from '../lib/clasificacion.js';
+ import { construirTaxonomia } from '../lib/conciliacionTaxonomia.js';
+ import * as ple from '../lib/ple.js';
+ 
+ // F3 · config del cutover 104x (editable en tabla configuracion_contable · reversible sin deploy)
+ async function getContabilidadConfig(): Promise<{ cutover: string | null; parallel: boolean }> {
+   const rows = await db.select().from(schema.configuracionContable).where(inArray(schema.configuracionContable.clave, ['MOVIMIENTOS_104X_CUTOVER', 'MOVIMIENTOS_104X_PARALLEL']));
+   const map = new Map(rows.map((r) => [r.clave, r.valor]));
+   const raw = map.get('MOVIMIENTOS_104X_CUTOVER') ?? null;
+   const cutover = raw && /^\d{4}-\d{2}-\d{2}/.test(raw) ? raw.slice(0, 10) : null; // 'YYYY-MM-DD' o null = inerte (legacy manda)
+   return { cutover, parallel: (map.get('MOVIMIENTOS_104X_PARALLEL') ?? 'false') === 'true' };
+@@ -74,27 +75,35 @@ async function nextCorrelativoAsiento(periodo: string): Promise<string> {
+   const pref = `AS-${periodo.replace('-', '')}-`;
+   const rows = await db
+     .select({ c: schema.asientos.correlativo })
+     .from(schema.asientos)
+     .where(dsql`${schema.asientos.correlativo} LIKE ${pref + '%'}`);
+   const max = rows.reduce((m, r) => Math.max(m, Number(r.c.slice(pref.length)) || 0), 0);
+   return `${pref}${String(max + 1).padStart(4, '0')}`;
+ }
+ 
+ // Inserta asiento + líneas (valida cuadre) · status registrado
+-type LineaIn = { cuenta: string; descripcion?: string | null; debe: number; haber: number };
+-async function crearAsiento(opts: {
++// WS1 · cada línea persiste cuenta_contable + obra_id + clase_derivada + cuenta_origen.
++//   cuentaContable: cuenta MANUAL (Kelly) si viene; si no, = cuenta inferida (compat).
++//   cuentaOrigen: MANUAL|SUGERIDO (viene del origen) o INFERIDO (default del motor).
++export type LineaIn = {
++  cuenta: string; descripcion?: string | null; debe: number; haber: number;
++  cuentaContable?: string | null; obraId?: string | null; cuentaOrigen?: 'USUARIO' | 'SUGERIDO' | 'AUTOMATICO' | null;
++};
++export async function crearAsiento(opts: {
+   fecha: string; glosa: string; lineas: LineaIn[];
+   origen?: string; origenId?: string | null; proyectoId?: string | null;
+   moneda?: string; tipoCambio?: number | null; docOrigen?: string | null; tipoDoc?: string | null;
+   contraparteRuc?: string | null; contraparteRazon?: string | null; status?: 'borrador' | 'registrado';
+   userId?: string | null; // H1.2 · trazabilidad de quién generó el asiento
++  empresaId?: number; // WS1 · un asiento = una empresa (header). Default MM=1 (operativo actual).
++  derivarCtx?: DerivarCtx; // WS1 · contexto precargado (clasificable + mapa) para derivar clase sin N queries
+   // overrides para /generar · evitan re-query por asiento (correlativo/periodo/plan) → quita O(n²)
+   nextCorrelativo?: () => string; skipPeriodoCheck?: boolean; validCuentas?: Set<string>;
+ }) {
+   const lineas = opts.lineas.filter((l) => l.debe > 0.004 || l.haber > 0.004);
+   const debe = lineas.reduce((s, l) => s + l.debe, 0);
+   const haber = lineas.reduce((s, l) => s + l.haber, 0);
+   if (lineas.length < 2) throw new Error('Asiento necesita al menos 2 líneas');
+   const delta = debe - haber; // >0 falta haber · <0 falta debe
+   // Umbral de redondeo. Un asiento de planilla acumula redondeo de decenas de líneas (sueldo/EsSalud/ONP/SCTR…)
+   // y llegaba a ~S/0.09 > 0.05 → reventaba. Real descuadre (línea faltante) siempre es ≥ S/1. 0.50 separa ambos.
+@@ -128,36 +137,105 @@ async function crearAsiento(opts: {
+     origenId: opts.origenId ?? null,
+     proyectoId: opts.proyectoId ?? null,
+     moneda: opts.moneda ?? 'PEN',
+     tipoCambio: opts.tipoCambio != null ? String(opts.tipoCambio) : null,
+     docOrigen: opts.docOrigen ?? null,
+     tipoDoc: opts.tipoDoc ?? null,
+     contraparteRuc: opts.contraparteRuc ?? null,
+     contraparteRazon: opts.contraparteRazon ?? null,
+     status: opts.status ?? 'registrado',
+     userId: opts.userId ?? null,
++    empresaId: opts.empresaId ?? 1, // WS1 · header empresa (default MM=1 · operativo actual es mono-empresa)
+   }).returning();
++  // WS1 · ctx para derivar clase (preload si viene de /generar; si no, carga una vez para este asiento)
++  const ctx = opts.derivarCtx ?? (await cargarDerivarCtx());
+   // 1 INSERT batch de líneas (antes: 1 round-trip por línea)
+   await db.insert(schema.asientosLineas).values(
+-    lineas.map((l, idx) => ({
+-      asientoId: asiento!.id,
+-      correlativo: idx + 1,
+-      cuenta: l.cuenta,
+-      descripcion: l.descripcion ?? null,
+-      debe: D2(l.debe),
+-      haber: D2(l.haber),
+-    })),
++    lineas.map((l, idx) => {
++      const cuentaContable = l.cuentaContable ?? l.cuenta; // manual si vino, si no = cuenta inferida (compat)
++      // obra por LÍNEA: null explícito (IGV/CxP/control) se respeta; undefined → hereda la del header
++      const obraId = l.obraId !== undefined ? l.obraId : (opts.proyectoId ?? null);
++      return {
++        asientoId: asiento!.id,
++        correlativo: idx + 1,
++        cuenta: l.cuenta,
++        descripcion: l.descripcion ?? null,
++        debe: D2(l.debe),
++        haber: D2(l.haber),
++        cuentaContable,
++        obraId,
++        claseDerivada: derivarClaseCore(ctx.clasificablePorCuenta.get(cuentaContable) ?? false, obraId, ctx.claseObraPorCuenta.get(cuentaContable)),
++        cuentaOrigen: l.cuentaOrigen ?? 'AUTOMATICO', // procedencia: explícita si vino del origen, si no AUTOMATICO
++      };
++    }),
+   );
+   return asiento!;
+ }
+ 
+ // ── Plan contable ────────────────────────────────────────────
++// GET /plan?q= · WS1 autocomplete de cuentas (código/descripción, activas, por empresa).
++//   Devuelve lo necesario para <CuentaContableSelect>. NO expone CD/GG (se deriva, nunca input).
++//   empresaId opcional: filtra compartidas (empresa_id IS NULL) + propias de esa empresa.
++router.get('/plan', async (req, res, next) => {
++  const { q, empresaId, soloHoja } = req.query as { q?: string; empresaId?: string; soloHoja?: string };
++  if (q === undefined) return next(); // sin ?q= → cae al handler de saldos (?periodo=) de abajo
++  const term = q.trim().toLowerCase();
++  const empId = empresaId ? Number(empresaId) : null;
++  const conds = [eq(schema.planContable.activa, true)];
++  if (empId) conds.push(or(isNull(schema.planContable.empresaId), eq(schema.planContable.empresaId, empId))!);
++  if (soloHoja === '1') conds.push(eq(schema.planContable.esDivisionaria, true));
++  if (term) conds.push(or(dsql`lower(${schema.planContable.codigo}) like ${term + '%'}`, dsql`lower(${schema.planContable.descripcion}) like ${'%' + term + '%'}`)!);
++  const rows = await db
++    .select({
++      codigo: schema.planContable.codigo,
++      descripcion: schema.planContable.descripcion,
++      tipo: schema.planContable.tipo,
++      nivel: schema.planContable.nivel,
++      esDivisionaria: schema.planContable.esDivisionaria,
++      empresaId: schema.planContable.empresaId,
++      activa: schema.planContable.activa,
++      clasificable: schema.planContable.clasificable,
++      claseObra: schema.mapaCuentaClase.claseObra, // WS1 · para que el FE pinte el chip CD/GG derivado (NO editable)
++    })
++    .from(schema.planContable)
++    .leftJoin(schema.mapaCuentaClase, eq(schema.mapaCuentaClase.cuenta, schema.planContable.codigo))
++    .where(and(...conds))
++    .orderBy(asc(schema.planContable.codigo))
++    .limit(30);
++  res.json({ cuentas: rows });
++});
++
++// WS1 · GET /sugerir-cuenta?proveedorRuc=&tipoGasto= · prefill (pista, no verdad).
++//   1) cuenta válida más reciente usada con ESE proveedor (SUGERIDO)
++//   2) fallback mapa tipoGasto→cuenta (AUTOMATICO)
++//   Solo cuentas existentes y activas en el plan. Devuelve {cuenta, origen} o {cuenta:null}.
++router.get('/sugerir-cuenta', async (req, res) => {
++  const { proveedorRuc, tipoGasto } = req.query as { proveedorRuc?: string; tipoGasto?: string };
++  const activas = new Set((await db.select({ codigo: schema.planContable.codigo }).from(schema.planContable).where(eq(schema.planContable.activa, true))).map((r) => r.codigo));
++  // nivel 1 · reciente por proveedor
++  if (proveedorRuc?.trim()) {
++    const recientes = await db.select({ cuenta: schema.gastos.cuentaContable })
++      .from(schema.gastos)
++      .where(and(eq(schema.gastos.proveedorRuc, proveedorRuc.trim()), dsql`${schema.gastos.cuentaContable} is not null`))
++      .orderBy(desc(schema.gastos.fecha))
++      .limit(10);
++    const hit = recientes.find((r) => r.cuenta && activas.has(r.cuenta)); // primera activa
++    if (hit?.cuenta) return res.json({ cuenta: hit.cuenta, origen: 'SUGERIDO' });
++  }
++  // nivel 2 · fallback mapa tipoGasto
++  if (tipoGasto?.trim()) {
++    const [m] = await db.select({ cuenta: schema.gastoCuentaMap.cuenta }).from(schema.gastoCuentaMap).where(eq(schema.gastoCuentaMap.tipoGasto, tipoGasto.trim())).limit(1);
++    if (m?.cuenta && activas.has(m.cuenta)) return res.json({ cuenta: m.cuenta, origen: 'AUTOMATICO' });
++  }
++  res.json({ cuenta: null });
++});
++
+ // GET /plan?periodo= · cuentas + saldos (movimientos registrados, rollup a padres)
+ router.get('/plan', async (req, res) => {
+   const { periodo } = req.query as { periodo?: string };
+   const cuentas = await db.select().from(schema.planContable).orderBy(asc(schema.planContable.codigo));
+ 
+   const conds = [eq(schema.asientos.status, 'registrado')];
+   if (periodo) conds.push(lte(schema.asientos.periodo, periodo)); // saldo acumulado HASTA el periodo
+   const movs = await db
+     .select({ cuenta: schema.asientosLineas.cuenta, debe: schema.asientosLineas.debe, haber: schema.asientosLineas.haber })
+     .from(schema.asientosLineas)
+@@ -710,21 +788,22 @@ router.post('/generar', async (req, res) => {
+   // F4.4 · ownership vía regla única (cierra el closure sobre el cutover vigente · sin lógica duplicada)
+   const legacyOwns = (ymd: string) => legacyOwnsCaja(ymd, cfg.cutover);
+   const movOwns = (ymd: string) => movOwnsCaja(ymd, cfg.cutover);
+ 
+   // Precompute 1 vez · correlativo base (en memoria) + plan válido + periodo ya verificado arriba.
+   // Antes cada crearAsiento re-corría LIKE-scan correlativo (O(asientos²)) + query periodo + query plan.
+   const corrPref = `AS-${periodo.replace('-', '')}-`;
+   const corrRows = await db.select({ c: schema.asientos.correlativo }).from(schema.asientos).where(dsql`${schema.asientos.correlativo} LIKE ${corrPref + '%'}`);
+   let corrN = corrRows.reduce((m, r) => Math.max(m, Number(r.c.slice(corrPref.length)) || 0), 0);
+   const planCodes = new Set((await db.select({ codigo: schema.planContable.codigo }).from(schema.planContable)).map((r) => r.codigo));
+-  const asientoBase = { nextCorrelativo: () => `${corrPref}${String(++corrN).padStart(4, '0')}`, skipPeriodoCheck: true as const, validCuentas: planCodes, userId: req.user!.id };
++  const derivarCtx = await cargarDerivarCtx(); // WS1 · preload clasificable+mapa 1 vez (deriva clase sin N queries)
++  const asientoBase = { nextCorrelativo: () => `${corrPref}${String(++corrN).padStart(4, '0')}`, skipPeriodoCheck: true as const, validCuentas: planCodes, userId: req.user!.id, derivarCtx };
+   const gen = (o: Parameters<typeof crearAsiento>[0]) => crearAsiento({ ...o, ...asientoBase });
+ 
+   // 1· GASTOS → provisión compra (60x/63x + 40111 / 4212). Determinación de cuenta = mapa editable de la DB.
+   const gastosList = await db.select().from(schema.gastos).where(and(gte(schema.gastos.fecha, desde), lte(schema.gastos.fecha, hasta)));
+   const cuentaMap = new Map((await db.select().from(schema.gastoCuentaMap)).map((m) => [m.tipoGasto, m]));
+   for (const g of gastosList) {
+     if (yaSet.has(`gasto:${g.id}`)) continue;
+     const cm = cuentaMap.get(g.tipoGasto ?? '');
+     if (cm && !cm.esGasto) continue; // no es gasto (financiamiento/CxC) → no se provisiona como compra
+     try {
+@@ -736,23 +815,29 @@ router.post('/generar', async (req, res) => {
+         fecha: g.fecha,
+         glosa: `Compra · ${g.proveedorRazon ?? 's/proveedor'} · ${g.descripcionItem ?? g.codigo ?? ''}`.slice(0, 250),
+         origen: 'gasto',
+         origenId: g.id,
+         proyectoId: g.proyectoId,
+         docOrigen: [g.serie, g.numero].filter(Boolean).join('-') || null,
+         tipoDoc: g.tipoComprobante,
+         contraparteRuc: g.proveedorRuc,
+         contraparteRazon: g.proveedorRazon,
+         lineas: [
+-          { cuenta: cm?.cuenta ?? cuentaGasto(g.tipoGasto), descripcion: g.tipoGasto ?? 'Gasto', debe: subtotal, haber: 0 },
+-          { cuenta: '40111', descripcion: 'IGV crédito fiscal', debe: igv, haber: 0 },
+-          { cuenta: '4212', descripcion: 'Por pagar', debe: 0, haber: total },
++          // WS1 · cuenta del gasto: la manual (Kelly) si la eligió, si no la inferida (mapa/fallback). obra en la línea.
++          {
++            cuenta: g.cuentaContable ?? cm?.cuenta ?? cuentaGasto(g.tipoGasto),
++            descripcion: g.tipoGasto ?? 'Gasto', debe: subtotal, haber: 0,
++            obraId: g.proyectoId,
++            cuentaOrigen: g.cuentaContable ? ((g.cuentaContableOrigen as 'USUARIO' | 'SUGERIDO' | 'AUTOMATICO' | null) ?? 'AUTOMATICO') : 'AUTOMATICO',
++          },
++          { cuenta: '40111', descripcion: 'IGV crédito fiscal', debe: igv, haber: 0, obraId: null },
++          { cuenta: '4212', descripcion: 'Por pagar', debe: 0, haber: total, obraId: null },
+         ],
+       });
+       resultado.gastos++;
+     } catch (e) {
+       resultado.errores.push(`gasto ${g.codigo ?? g.id}: ${(e as Error).message}`);
+     }
+   }
+ 
+   // 2· PAGOS OC (estadoPago=pagada en el periodo) → 4212 / 1041
+   const ocsPagadas = await db.select().from(schema.ordenesCompra).where(eq(schema.ordenesCompra.estadoPago, 'pagada'));
+@@ -792,23 +877,28 @@ router.post('/generar', async (req, res) => {
+         const sinIgv = Number(v.montoCd);
+         const igv = Number(v.montoIgv);
+         const total = Number(v.montoTotalConIgv ?? v.montoTotal);
+         await gen({
+           fecha: String(v.fechaEmision),
+           glosa: `Valorización N°${v.numero} devengada`,
+           origen: 'valorizacion',
+           origenId: v.id,
+           proyectoId: v.proyectoId,
+           lineas: [
+-            { cuenta: '1212', descripcion: `Val N°${v.numero}`, debe: total, haber: 0 },
+-            { cuenta: '7041', descripcion: 'Servicios de construcción', debe: 0, haber: sinIgv },
+-            { cuenta: '40111', descripcion: 'IGV débito fiscal', debe: 0, haber: Math.max(0, total - sinIgv) || igv },
++            { cuenta: '1212', descripcion: `Val N°${v.numero}`, debe: total, haber: 0, obraId: null },
++            // WS1 · cuenta de ingreso: la que Kelly confirmó (default fuerte 7041). Deriva clase (70x → null).
++            {
++              cuenta: v.cuentaContable ?? '7041', descripcion: 'Servicios de construcción', debe: 0, haber: sinIgv,
++              obraId: v.proyectoId,
++              cuentaOrigen: v.cuentaContable ? ((v.cuentaContableOrigen as 'USUARIO' | 'SUGERIDO' | 'AUTOMATICO' | null) ?? 'AUTOMATICO') : 'AUTOMATICO',
++            },
++            { cuenta: '40111', descripcion: 'IGV débito fiscal', debe: 0, haber: Math.max(0, total - sinIgv) || igv, obraId: null },
+           ],
+         });
+         resultado.valorizaciones++;
+       } catch (e) {
+         resultado.errores.push(`valo ${v.numero}: ${(e as Error).message}`);
+       }
+     }
+     // F3 · cobro · legacy manda si la emisión es < cutover (proxy de fecha de cobro · el movimiento
+     // usa la fecha real de cobro · la sutileza emisión-vs-cobro se valida en el parallel-run/reporte sombra).
+     if (v.status === 'cobrada' && !yaSet.has(`cobro_valo:${v.id}`) && legacyOwns(String(v.fechaEmision).slice(0, 10))) {
+@@ -834,38 +924,57 @@ router.post('/generar', async (req, res) => {
+ 
+   // 4· PLANILLA (semanas del periodo) → 621/6271 vs 4031/4032/407/4039/40173/469/411
+   const semanas = await db.select().from(schema.planillaSemanas).where(and(gte(schema.planillaSemanas.fechaFin, desde), lte(schema.planillaSemanas.fechaFin, hasta)));
+   for (const s of semanas) {
+     if (yaSet.has(`planilla:${s.id}`)) continue;
+     const det = await db.select().from(schema.planillaDetalle).where(eq(schema.planillaDetalle.semanaId, s.id));
+     if (det.length === 0) continue;
+     const sum = (f: (d: typeof det[number]) => number) => det.reduce((acc, d) => acc + f(d), 0);
+     const ingresos = sum((d) => Number(d.totalIngreso));
+     const essalud = sum((d) => Number(d.montoEsSalud));
++    const sctr = sum((d) => Number(d.montoSctrSalud) + Number(d.montoSctrPension)); // cargas patronales de riesgo
++    const sencico = sum((d) => Number(d.montoSencico)); // contribución patronal SENCICO 0.2%
+     const onp = sum((d) => Number(d.montoOnp));
+     const afp = sum((d) => Number(d.montoAfpAporte) + Number(d.montoAfpComision) + Number(d.montoAfpSeguro));
+     const conafov = sum((d) => Number(d.montoConafovicer));
+     const renta5 = sum((d) => Number(d.montoRenta5ta));
+     const otrosDsctos = sum((d) => Number(d.montoAdelanto) + Number(d.montoSindical));
+     const neto = sum((d) => Number(d.netoPago));
+     if (ingresos <= 0) continue;
++    // WS1 · costo de remuneraciones: agrupar por cuenta contable del detalle (default fuerte 621).
++    // Kelly puede imputar el costo de un obrero a otra cuenta; el motor emite 1 línea por cuenta distinta.
++    const costoPorCuenta = new Map<string, { monto: number; usuario: boolean }>();
++    for (const d of det) {
++      const cta = d.cuentaContable ?? '621';
++      const e = costoPorCuenta.get(cta) ?? { monto: 0, usuario: false };
++      e.monto += Number(d.totalIngreso);
++      if (d.cuentaContable && d.cuentaContableOrigen === 'USUARIO') e.usuario = true;
++      costoPorCuenta.set(cta, e);
++    }
++    const costoLineas: LineaIn[] = [...costoPorCuenta.entries()]
++      .filter(([, v]) => v.monto > 0.004)
++      .map(([cta, v]) => ({ cuenta: cta, descripcion: 'Remuneraciones obreros', debe: v.monto, haber: 0, obraId: s.proyectoId, cuentaOrigen: (v.usuario ? 'USUARIO' : 'AUTOMATICO') as 'USUARIO' | 'AUTOMATICO' }));
+     try {
+       await gen({
+         fecha: s.fechaFin,
+         glosa: `Planilla CC semana ${s.fechaInicio} al ${s.fechaFin}`,
+         origen: 'planilla',
+         origenId: s.id,
+         proyectoId: s.proyectoId,
+         lineas: [
+-          { cuenta: '621', descripcion: 'Remuneraciones obreros', debe: ingresos, haber: 0 },
++          ...costoLineas,
+           { cuenta: '6271', descripcion: 'EsSalud empleador', debe: essalud, haber: 0 },
++          { cuenta: '6273', descripcion: 'SCTR empleador (salud + pensión)', debe: sctr, haber: 0 },
++          { cuenta: '6279', descripcion: 'SENCICO empleador', debe: sencico, haber: 0 },
+           { cuenta: '4031', descripcion: 'EsSalud por pagar', debe: 0, haber: essalud },
++          { cuenta: '4034', descripcion: 'SCTR por pagar', debe: 0, haber: sctr },
++          { cuenta: '4033', descripcion: 'SENCICO por pagar', debe: 0, haber: sencico },
+           { cuenta: '4032', descripcion: 'ONP por pagar', debe: 0, haber: onp },
+           { cuenta: '407', descripcion: 'AFP por pagar', debe: 0, haber: afp },
+           { cuenta: '4039', descripcion: 'CONAFOVICER por pagar', debe: 0, haber: conafov },
+           { cuenta: '40173', descripcion: 'Renta 5ta retenida', debe: 0, haber: renta5 },
+           { cuenta: '469', descripcion: 'Otros descuentos (adelantos/sindical)', debe: 0, haber: otrosDsctos },
+           { cuenta: '411', descripcion: 'Neto por pagar obreros', debe: 0, haber: neto },
+         ],
+       });
+       resultado.planillas++;
+     } catch (e) {
+@@ -882,47 +991,58 @@ router.post('/generar', async (req, res) => {
+   );
+   for (const m of movs) {
+     if (yaSet.has(`movimiento:${m.id}`)) continue;
+     const fmov = String(m.fecha).slice(0, 10);
+     if (!movOwns(fmov)) { resultado.movSkip.preCutover++; continue; } // < cutover o sin cutover → manda legacy
+     const esTransfer = !!m.transferenciaId;
+     if (esTransfer && m.tipoMovimiento !== 'Egreso') { resultado.movSkip.transferEspejo++; continue; } // 1 asiento por transferencia (fila Egreso)
+     const banco = m.cuentaId ? cuentas104.get(m.cuentaId) ?? null : null;
+     if (!banco) { resultado.movSkip.sinCuenta104x++; console.warn(`WARN movimiento ${m.codigo ?? m.id} skipped: cuenta bancaria sin 104x configurada`); continue; }
+     const total = Number(m.montoBase ?? m.monto); // H3.1 · asiento PCGE en PEN (moneda base)
+-    let lineas: { cuenta: string; descripcion?: string | null; debe: number; haber: number }[];
++    let lineas: LineaIn[];
++    let contraTag: string | null = null; // WS1 · cuenta contra (para etiquetar procedencia/obra tras armar líneas)
++    let contraOrigenTag: 'USUARIO' | 'SUGERIDO' | 'AUTOMATICO' = 'AUTOMATICO';
+     if (esTransfer) {
+       const bancoDest = m.cuentaDestinoId ? cuentas104.get(m.cuentaDestinoId) ?? null : null;
+       if (!bancoDest) { resultado.movSkip.sinCuenta104x++; console.warn(`WARN transferencia ${m.id} skipped: cuenta destino sin 104x`); continue; }
+       lineas = [
+         { cuenta: bancoDest, descripcion: 'Transferencia · destino', debe: total, haber: 0 },
+         { cuenta: banco, descripcion: 'Transferencia · origen', debe: 0, haber: total },
+       ];
+     } else {
+       const nat = (m.naturalezaContable ?? '') as NaturalezaContable;
+       // contrapartida: doc-link la infiere (pago→4212 · cobro→1212); suelta usa el catálogo; fallback 759/659
+       let contra = m.ordenCompraId ? '4212' : m.valorizacionId ? '1212' : (nat in NATURALEZAS_CONTABLES ? cuentaDeNaturaleza(nat) : null);
+       if (!contra) contra = m.tipoMovimiento === 'Ingreso' ? '759' : '659';
++      // WS1 · Kelly puede fijar la cuenta contra manual → manda sobre la inferida.
++      if (m.cuentaContable) contra = m.cuentaContable;
++      contraTag = contra;
++      contraOrigenTag = m.cuentaContable ? ((m.cuentaContableOrigen as 'USUARIO' | 'SUGERIDO' | 'AUTOMATICO' | null) ?? 'AUTOMATICO') : 'AUTOMATICO';
+       const docLink = !!(m.ordenCompraId || m.valorizacionId);
+       const igv = Number(m.igv ?? 0);
+       const sub = Number(m.subtotal ?? 0) || total - igv;
+       const simple = docLink || igv <= 0; // pago/cobro: el IGV nació en el devengo → no se re-asienta
+       if (m.tipoMovimiento === 'Ingreso') {
+         lineas = simple
+           ? [{ cuenta: banco, descripcion: m.descripcion, debe: total, haber: 0 }, { cuenta: contra, debe: 0, haber: total }]
+           : [{ cuenta: banco, debe: total, haber: 0 }, { cuenta: contra, debe: 0, haber: sub }, { cuenta: '40111', descripcion: 'IGV débito', debe: 0, haber: igv }];
+       } else {
+         lineas = simple
+           ? [{ cuenta: contra, descripcion: m.descripcion, debe: total, haber: 0 }, { cuenta: banco, debe: 0, haber: total }]
+           : [{ cuenta: contra, debe: sub, haber: 0 }, { cuenta: '40111', descripcion: 'IGV crédito', debe: igv, haber: 0 }, { cuenta: banco, debe: 0, haber: total }];
+       }
+     }
++    // WS1 · procedencia por línea: la contra lleva MANUAL/SUGERIDO/INFERIDO + obra; banco/IGV/transfer no son de obra.
++    for (const l of lineas) {
++      if (!esTransfer && contraTag && l.cuenta === contraTag) { l.cuentaOrigen = contraOrigenTag; l.obraId = m.proyectoId; }
++      else l.obraId = null; // banco (104x) / IGV / transferencia no llevan dimensión obra
++    }
+     if (dryRunMov) { resultado.movimientos++; continue; } // dry-run: cuenta pero no escribe
+     try {
+       await gen({ fecha: fmov, glosa: m.descripcion ?? `Movimiento ${m.tipoMovimiento}`, origen: 'movimiento', origenId: m.id, proyectoId: m.proyectoId, lineas });
+       resultado.movimientos++;
+     } catch (e) {
+       resultado.errores.push(`movimiento ${m.codigo ?? m.id}: ${(e as Error).message}`);
+     }
+   }
+ 
+   const totalGenerados = resultado.gastos + resultado.pagosOc + resultado.valorizaciones + resultado.cobros + resultado.planillas + resultado.movimientos;
+diff --git a/apps/backend/src/routes/planillaOficina.ts b/apps/backend/src/routes/planillaOficina.ts
+index 5a9f026..ebfe630 100644
+--- a/apps/backend/src/routes/planillaOficina.ts
++++ b/apps/backend/src/routes/planillaOficina.ts
+@@ -1,15 +1,18 @@
+ import { db, schema } from '@erp/db';
+-import { and, asc, desc, eq, gt, sql } from 'drizzle-orm';
++import { and, asc, desc, eq, gt, inArray, sql } from 'drizzle-orm';
+ import { Router } from 'express';
+ import { calcularDetalleOficina } from '../lib/planillaOficinaCalc.js';
+ import { requireAuth } from '../middleware/auth.js';
++import { cargarDerivarCtx } from '../lib/clasificacion.js';
++import { crearAsiento, type LineaIn } from './contabilidad.js';
++import { periodoCerrado } from '../lib/periodos.js';
+ 
+ const router = Router();
+ router.use(requireAuth);
+ 
+ // ─── Helper singleton ─────────────────────────────────────────
+ async function getConfig() {
+   let [cfg] = await db.select().from(schema.configPlanilla).limit(1);
+   if (!cfg) [cfg] = await db.insert(schema.configPlanilla).values({ id: 'singleton' }).returning();
+   return cfg;
+ }
+@@ -573,11 +576,351 @@ router.get('/adelantos', async (req, res) => {
+       const montoTotalNum = Number(a.montoTotal);
+       const montoCuota = Math.round((montoTotalNum / a.numCuotas) * 100) / 100;
+       const saldoPendiente = await saldoAdelanto(a.id, montoTotalNum);
+       return { ...a, montoCuota, saldoPendiente };
+     }),
+   );
+ 
+   res.json({ adelantos });
+ });
+ 
++// ─── POST /api/oficina/planilla/:mesId/cerrar ────────────────
++router.post('/planilla/:mesId/cerrar', async (req, res) => {
++  const { mesId } = req.params;
++
++  const [mesRow] = await db
++    .select()
++    .from(schema.planillaOficinaMes)
++    .where(eq(schema.planillaOficinaMes.id, mesId!))
++    .limit(1);
++
++  if (!mesRow) return res.status(404).json({ error: 'Planilla mes no encontrada' });
++  if (mesRow.estado !== 'calculada') {
++    return res.status(400).json({ error: `Solo se puede cerrar en estado 'calculada'; estado actual: '${mesRow.estado}'` });
++  }
++
++  // Load detalle rows
++  const detalleRows = await db
++    .select()
++    .from(schema.planillaOficinaDetalle)
++    .where(eq(schema.planillaOficinaDetalle.planillaMesId, mesId!));
++
++  // Compute last day of mes
++  const [y, m] = mesRow.mes.split('-').map(Number) as [number, number];
++  const lastDay = new Date(y, m, 0).getDate();
++  const fecha = mesRow.mes + '-' + String(lastDay).padStart(2, '0');
++
++  // Pre-load derivar context (single load for the whole transaction)
++  const derivarCtx = await cargarDerivarCtx();
++
++  // ── Step 2: Apply advance installments (in a transaction) ──
++  await db.transaction(async (tx) => {
++    for (const det of detalleRows) {
++      const cuotaTotal = Math.round(Number(det.adelantoCuota ?? 0) * 100) / 100;
++      if (cuotaTotal <= 0) continue;
++
++      // Load vigente adelantos for this employee, ordered oldest first
++      const adelantos = await tx
++        .select()
++        .from(schema.adelantoOficina)
++        .where(and(
++          eq(schema.adelantoOficina.empleadoId, det.empleadoId),
++          eq(schema.adelantoOficina.estado, 'vigente'),
++        ))
++        .orderBy(asc(schema.adelantoOficina.fecha));
++
++      let remaining = cuotaTotal;
++      for (const adel of adelantos) {
++        if (remaining <= 0) break;
++
++        // Compute saldo for this adelanto
++        const [saldoRow] = await tx
++          .select({ total: sql<string>`COALESCE(SUM(monto), 0)` })
++          .from(schema.adelantoCuotaAplicada)
++          .where(eq(schema.adelantoCuotaAplicada.adelantoId, adel.id));
++        const aplicado = Number(saldoRow?.total ?? 0);
++        const montoTotal = Number(adel.montoTotal);
++        const saldo = Math.round((montoTotal - aplicado) * 100) / 100;
++
++        if (saldo <= 0) continue;
++
++        const montoCuota = Math.round((montoTotal / adel.numCuotas) * 100) / 100;
++        const applied = Math.round(Math.min(montoCuota, saldo, remaining) * 100) / 100;
++
++        // Insert cuota aplicada (idempotent: on conflict do nothing)
++        await tx
++          .insert(schema.adelantoCuotaAplicada)
++          .values({
++            adelantoId: adel.id,
++            planillaDetalleId: det.id,
++            monto: String(applied),
++            fecha,
++          })
++          .onConflictDoNothing();
++
++        remaining = Math.round((remaining - applied) * 100) / 100;
++
++        // If adelanto is now fully paid, mark cancelled
++        const newSaldo = Math.round((saldo - applied) * 100) / 100;
++        if (newSaldo <= 0) {
++          await tx
++            .update(schema.adelantoOficina)
++            .set({ estado: 'cancelado' })
++            .where(eq(schema.adelantoOficina.id, adel.id));
++        }
++      }
++    }
++  });
++
++  // ── Step 3: Build accounting lines ──
++  // Debit sueldos grouped by cuentaContable (default '621')
++  const suelDoGroupMap = new Map<string, { total: number; hasManual: boolean }>();
++  let totalEssalud = 0;
++  let totalAfp = 0;
++  let totalOnp = 0;
++  let totalRenta5ta = 0;
++  let totalOtros = 0;
++  let totalNeto = 0;
++
++  for (const det of detalleRows) {
++    const cuenta = det.cuentaContable ?? '621';
++    const hasManual = !!det.cuentaContable;
++    const bruto = Math.round(Number(det.totalBruto ?? 0) * 100) / 100;
++    const prev = suelDoGroupMap.get(cuenta);
++    if (prev) {
++      prev.total = Math.round((prev.total + bruto) * 100) / 100;
++      if (hasManual) prev.hasManual = true;
++    } else {
++      suelDoGroupMap.set(cuenta, { total: bruto, hasManual });
++    }
++
++    totalEssalud = Math.round((totalEssalud + Number(det.essalud ?? 0)) * 100) / 100;
++    totalAfp = Math.round((totalAfp + Number(det.afpAporte ?? 0) + Number(det.afpSeguro ?? 0) + Number(det.afpComision ?? 0)) * 100) / 100;
++    totalOnp = Math.round((totalOnp + Number(det.onp ?? 0)) * 100) / 100;
++    totalRenta5ta = Math.round((totalRenta5ta + Number(det.imptoRenta5ta ?? 0)) * 100) / 100;
++    totalOtros = Math.round((totalOtros + Number(det.retencionJudicial ?? 0) + Number(det.otrosDescuentos ?? 0) + Number(det.adelantoCuota ?? 0)) * 100) / 100;
++    totalNeto = Math.round((totalNeto + Number(det.netoPago ?? 0)) * 100) / 100;
++  }
++
++  const lineas: LineaIn[] = [];
++
++  // Debits: sueldos per account group
++  for (const [cuenta, grp] of suelDoGroupMap) {
++    if (grp.total < 0.005) continue;
++    lineas.push({
++      cuenta,
++      descripcion: 'Sueldos y salarios',
++      debe: grp.total,
++      haber: 0,
++      cuentaContable: cuenta,
++      obraId: null,
++      cuentaOrigen: grp.hasManual ? 'USUARIO' : 'AUTOMATICO',
++    });
++  }
++
++  // Debit EsSalud empleador
++  if (totalEssalud >= 0.005) {
++    lineas.push({
++      cuenta: '6271',
++      descripcion: 'EsSalud empleador',
++      debe: totalEssalud,
++      haber: 0,
++      cuentaContable: '6271',
++      obraId: null,
++      cuentaOrigen: 'AUTOMATICO',
++    });
++  }
++
++  // Credits
++  if (totalEssalud >= 0.005) {
++    lineas.push({
++      cuenta: '4031',
++      descripcion: 'EsSalud por pagar',
++      debe: 0,
++      haber: totalEssalud,
++      cuentaContable: '4031',
++      obraId: null,
++      cuentaOrigen: 'AUTOMATICO',
++    });
++  }
++  if (totalAfp >= 0.005) {
++    lineas.push({
++      cuenta: '407',
++      descripcion: 'AFP por pagar',
++      debe: 0,
++      haber: totalAfp,
++      cuentaContable: '407',
++      obraId: null,
++      cuentaOrigen: 'AUTOMATICO',
++    });
++  }
++  if (totalOnp >= 0.005) {
++    lineas.push({
++      cuenta: '4032',
++      descripcion: 'ONP por pagar',
++      debe: 0,
++      haber: totalOnp,
++      cuentaContable: '4032',
++      obraId: null,
++      cuentaOrigen: 'AUTOMATICO',
++    });
++  }
++  if (totalRenta5ta >= 0.005) {
++    lineas.push({
++      cuenta: '40173',
++      descripcion: 'Renta 5ta por pagar',
++      debe: 0,
++      haber: totalRenta5ta,
++      cuentaContable: '40173',
++      obraId: null,
++      cuentaOrigen: 'AUTOMATICO',
++    });
++  }
++  if (totalOtros >= 0.005) {
++    lineas.push({
++      cuenta: '469',
++      descripcion: 'Otros por pagar (judicial + descuentos + adelanto)',
++      debe: 0,
++      haber: totalOtros,
++      cuentaContable: '469',
++      obraId: null,
++      cuentaOrigen: 'AUTOMATICO',
++    });
++  }
++  if (totalNeto >= 0.005) {
++    lineas.push({
++      cuenta: '411',
++      descripcion: 'Neto por pagar',
++      debe: 0,
++      haber: totalNeto,
++      cuentaContable: '411',
++      obraId: null,
++      cuentaOrigen: 'AUTOMATICO',
++    });
++  }
++
++  // ── Step 4: Create accounting entry via WS1 engine ──
++  const asiento = await crearAsiento({
++    fecha,
++    glosa: 'Planilla oficina ' + mesRow.mes,
++    lineas,
++    origen: 'planilla_oficina',
++    origenId: mesId!,
++    empresaId: mesRow.empresaId,
++    derivarCtx,
++    userId: req.user!.id,
++  });
++
++  // ── Step 5: Update mes row ──
++  const [updatedMes] = await db
++    .update(schema.planillaOficinaMes)
++    .set({
++      estado: 'cerrada',
++      asientoId: asiento.id,
++      cerradoPor: req.user!.id,
++      cerradoEn: new Date(),
++    })
++    .where(eq(schema.planillaOficinaMes.id, mesId!))
++    .returning();
++
++  res.json({ mes: updatedMes, asientoId: asiento.id });
++});
++
++// ─── POST /api/oficina/planilla/:mesId/reabrir ───────────────
++router.post('/planilla/:mesId/reabrir', async (req, res) => {
++  const { mesId } = req.params;
++
++  const [mesRow] = await db
++    .select()
++    .from(schema.planillaOficinaMes)
++    .where(eq(schema.planillaOficinaMes.id, mesId!))
++    .limit(1);
++
++  if (!mesRow) return res.status(404).json({ error: 'Planilla mes no encontrada' });
++  if (mesRow.estado !== 'cerrada') {
++    return res.status(400).json({ error: `Solo se puede reabrir en estado 'cerrada'; estado actual: '${mesRow.estado}'` });
++  }
++
++  // Compute the periodo of the cierre fecha (last day of mes)
++  const [y, m] = mesRow.mes.split('-').map(Number) as [number, number];
++  const lastDay = new Date(y, m, 0).getDate();
++  const cierreFecha = mesRow.mes + '-' + String(lastDay).padStart(2, '0');
++  const periodo = cierreFecha.slice(0, 7);
++
++  if (await periodoCerrado(periodo)) {
++    return res.status(423).json({ error: `Periodo contable ${periodo} cerrado; reabrelo primero` });
++  }
++
++  const result = await db.transaction(async (tx) => {
++    // Load detalle ids for this mes
++    const detalles = await tx
++      .select({ id: schema.planillaOficinaDetalle.id })
++      .from(schema.planillaOficinaDetalle)
++      .where(eq(schema.planillaOficinaDetalle.planillaMesId, mesId!));
++
++    if (detalles.length > 0) {
++      const detalleIds = detalles.map((d) => d.id);
++
++      // Find adelantos that were cancelled due to this planilla's cuotas
++      // (adelantos where cuota_aplicada rows exist for these detalle_ids)
++      const cuotasRows = await tx
++        .select({ adelantoId: schema.adelantoCuotaAplicada.adelantoId })
++        .from(schema.adelantoCuotaAplicada)
++        .where(inArray(schema.adelantoCuotaAplicada.planillaDetalleId, detalleIds));
++
++      // Delete cuota_aplicada rows for this mes's detalle
++      await tx
++        .delete(schema.adelantoCuotaAplicada)
++        .where(inArray(schema.adelantoCuotaAplicada.planillaDetalleId, detalleIds));
++
++      // Restore cancelled adelantos that now have saldo > 0
++      const uniqueAdelantoIds = [...new Set(cuotasRows.map((r) => r.adelantoId))];
++      for (const adelantoId of uniqueAdelantoIds) {
++        const [adelRow] = await tx
++          .select()
++          .from(schema.adelantoOficina)
++          .where(eq(schema.adelantoOficina.id, adelantoId))
++          .limit(1);
++        if (!adelRow || adelRow.estado !== 'cancelado') continue;
++
++        const [saldoRow] = await tx
++          .select({ total: sql<string>`COALESCE(SUM(monto), 0)` })
++          .from(schema.adelantoCuotaAplicada)
++          .where(eq(schema.adelantoCuotaAplicada.adelantoId, adelantoId));
++        const aplicado = Number(saldoRow?.total ?? 0);
++        const saldo = Math.round((Number(adelRow.montoTotal) - aplicado) * 100) / 100;
++
++        if (saldo > 0) {
++          await tx
++            .update(schema.adelantoOficina)
++            .set({ estado: 'vigente' })
++            .where(eq(schema.adelantoOficina.id, adelantoId));
++        }
++      }
++    }
++
++    // Delete asiento (cascade deletes asientos_lineas)
++    if (mesRow.asientoId) {
++      await tx
++        .delete(schema.asientos)
++        .where(eq(schema.asientos.id, mesRow.asientoId));
++    }
++
++    // Reset mes to calculada
++    const [updatedMes] = await tx
++      .update(schema.planillaOficinaMes)
++      .set({
++        estado: 'calculada',
++        asientoId: null,
++        cerradoPor: null,
++        cerradoEn: null,
++      })
++      .where(eq(schema.planillaOficinaMes.id, mesId!))
++      .returning();
++
++    return { mes: updatedMes };
++  });
++
++  res.json(result);
++});
++
+ export default router;

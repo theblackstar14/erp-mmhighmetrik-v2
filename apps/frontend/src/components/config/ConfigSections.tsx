@@ -145,6 +145,7 @@ function UsuarioModal({ modal, roles, empresas, onClose, onTempPw, onSaved }: {
     mutationFn: async () => {
       const emp = membresias.filter((m) => m.empresaId && m.roleId);
       if (!emp.length) throw new Error('Asigna al menos una empresa con rol');
+      if (!editar && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('Email inválido');
       if (editar) {
         await api.admin.usuarios.update(u!.id, { nombres, apellidos, telefono: telefono || undefined, empresas: emp });
         return { tempPassword: undefined as string | undefined };
@@ -159,7 +160,7 @@ function UsuarioModal({ modal, roles, empresas, onClose, onTempPw, onSaved }: {
   return (
     <Modal title={editar ? 'Editar usuario' : 'Nuevo usuario'} onClose={onClose} wide>
       <div className="space-y-3">
-        <Field label="Email"><input className={cn(input, editar && 'opacity-60')} value={email} disabled={editar} onChange={(e) => setEmail(e.target.value)} placeholder="usuario@empresa.com" /></Field>
+        <Field label="Email"><input type="email" className={cn(input, editar && 'opacity-60')} value={email} disabled={editar} onChange={(e) => setEmail(e.target.value)} placeholder="usuario@empresa.com" /></Field>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Nombres"><input className={input} value={nombres} onChange={(e) => setNombres(e.target.value)} /></Field>
           <Field label="Apellidos"><input className={input} value={apellidos} onChange={(e) => setApellidos(e.target.value)} /></Field>
@@ -347,7 +348,7 @@ function EmpresaModal({ modal, onClose, onSaved }: { modal: { mode: 'crear' } | 
     <Modal title={editar ? 'Editar empresa' : 'Nueva empresa'} onClose={onClose}>
       <div className="space-y-3">
         <div className="grid grid-cols-2 gap-3">
-          <Field label="RUC"><input className={input} value={f.ruc} maxLength={11} onChange={(x) => set('ruc', x.target.value)} /></Field>
+          <Field label="RUC"><input inputMode="numeric" className={cn(input, f.ruc && f.ruc.length !== 11 && 'border-rose-500')} value={f.ruc} maxLength={11} onChange={(x) => set('ruc', x.target.value.replace(/\D/g, '').slice(0, 11))} /></Field>
           <Field label="Nombre corto"><input className={input} value={f.nombreCorto} onChange={(x) => set('nombreCorto', x.target.value)} placeholder="MM" /></Field>
         </div>
         <Field label="Razón social"><input className={input} value={f.razonSocial} onChange={(x) => set('razonSocial', x.target.value)} /></Field>

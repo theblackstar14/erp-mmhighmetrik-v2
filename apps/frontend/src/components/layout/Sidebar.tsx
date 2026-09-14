@@ -22,8 +22,8 @@ const NAV_GROUPS = [
     label: 'Operación',
     items: [
       { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-      { to: '/licitaciones', icon: Briefcase, label: 'Licitaciones', badge: '9' },
-      { to: '/seace', icon: Globe, label: 'SEACE', badge: '3' },
+      { to: '/licitaciones', icon: Briefcase, label: 'Licitaciones' },
+      { to: '/seace', icon: Globe, label: 'SEACE' },
       { to: '/proyectos', icon: Building2, label: 'Proyectos', badge: '4' },
       { to: '/inversiones', icon: Layers, label: 'Inversiones' },
     ],

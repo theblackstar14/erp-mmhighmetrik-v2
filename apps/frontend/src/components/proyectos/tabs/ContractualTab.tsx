@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CalendarClock, Flag, Plus, Shield, Trash2, Wallet } from 'lucide-react';
+import { CalendarClock, CheckCircle2, Circle, Flag, Lock, Plus, Shield, Trash2, Wallet } from 'lucide-react';
 import { useState } from 'react';
 import {
   type Adelanto,
@@ -70,6 +70,8 @@ export function ContractualTab({ proyectoId }: { proyectoId: string }) {
 
   return (
     <div className="space-y-5">
+      <CierreObraSection proyectoId={proyectoId} />
+
       {/* Resumen */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
         <Stat icon={<Flag className="h-4 w-4" />} label="Hitos registrados" value={hitos.length.toString()} />
@@ -81,7 +83,173 @@ export function ContractualTab({ proyectoId }: { proyectoId: string }) {
       <HitosSection proyectoId={proyectoId} hitos={hitos} loading={hitosQ.isLoading} sugeridos={sugeridos} />
       <GarantiasSection proyectoId={proyectoId} garantias={garantias} hitosSet={hitosSet} loading={garQ.isLoading} contratoMonto={contratoMonto} />
       <AdelantosSection proyectoId={proyectoId} adelantos={adelantos} loading={adelQ.isLoading} contratoMonto={contratoMonto} />
+      <LiquidacionSection proyectoId={proyectoId} />
     </div>
+  );
+}
+
+// ════════════════════ LIQUIDACIÓN DE OBRA (Fase 1 · saldo + snapshot) ════════════════════
+function LiquidacionSection({ proyectoId }: { proyectoId: string }) {
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ['liquidacion', proyectoId], queryFn: () => api.contractual.getLiquidacion(proyectoId) });
+  const inval = () => { qc.invalidateQueries({ queryKey: ['liquidacion', proyectoId] }); qc.invalidateQueries({ queryKey: ['cierre', proyectoId] }); };
+  const practicar = useMutation({ mutationFn: () => api.contractual.practicarLiquidacion(proyectoId), onSuccess: inval });
+  const reabrir = useMutation({ mutationFn: (motivo: string) => api.contractual.reabrirLiquidacion(q.data!.liquidacion!.id, motivo), onSuccess: inval });
+
+  const liq = q.data?.liquidacion ?? null;
+  const prev = q.data?.preview;
+  const vigente = liq?.estado === 'practicada';
+  const c = prev?.componentes;
+  const con = prev?.conciliacion;
+
+  const row = (label: string, val: number, opts?: { neg?: boolean; bold?: boolean }) => (
+    <div className={cn('flex justify-between py-1 text-[12px]', opts?.bold && 'font-semibold border-t border-line mt-1 pt-1.5')}>
+      <span className="text-ink-3">{label}</span>
+      <span className={cn('font-mono', opts?.neg && val > 0 && 'text-rose-600')}>{opts?.neg && val > 0 ? '−' : ''}{fmtPEN(Math.abs(val))}</span>
+    </div>
+  );
+
+  return (
+    <Section title="Liquidación de obra" icon={<Wallet className="h-4 w-4 text-ink-3" />}>
+      {q.isLoading || !c || !con ? (
+        <div className="text-[12px] text-ink-4 py-2">Calculando…</div>
+      ) : (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="text-[11.5px] text-ink-4">
+              {vigente ? (
+                <span className="inline-flex items-center gap-1.5"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> Practicada el {liq!.fechaPractica} · saldo congelado</span>
+              ) : liq?.estado === 'reabierta' ? (
+                <span className="inline-flex items-center gap-1.5"><span className="h-1.5 w-1.5 rounded-full bg-amber-500" /> Reabierta · preview en vivo</span>
+              ) : (
+                <span>Sin practicar · preview en vivo ({prev!.valos} valorizaciones)</span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-ink-4 hidden sm:inline">Fase 1 · solo cálculo, sin asientos</span>
+              {vigente ? (
+                <button onClick={() => { const m = window.prompt('Motivo de reapertura:'); if (m) reabrir.mutate(m); }} disabled={reabrir.isPending}
+                  className="text-[11.5px] rounded-md border border-line px-2.5 py-1 hover:bg-bg-sunken">Reabrir</button>
+              ) : (
+                <button onClick={() => practicar.mutate()} disabled={practicar.isPending}
+                  className="text-[11.5px] rounded-md bg-primary text-primary-foreground px-2.5 py-1 font-medium hover:opacity-90">
+                  {practicar.isPending ? 'Practicando…' : 'Practicar liquidación'}</button>
+              )}
+            </div>
+          </div>
+
+          {prev!.valosCobradas < prev!.valos && (
+            <div className="rounded-md bg-sky-50 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-900/40 p-2 text-[10.5px] text-sky-800 dark:text-sky-300">
+              El saldo trata como pagadas solo las valorizaciones marcadas <b>cobrada</b> ({prev!.valosCobradas} de {prev!.valos}). Verifica ese estado: si falta marcar cobros, el saldo saldrá mayor de lo real.
+            </div>
+          )}
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            {/* Desglose saldo final · base caja con-IGV */}
+            <div className="rounded-lg border border-line p-3">
+              <div className="text-[11px] font-semibold text-ink-3 mb-1">Saldo final (rollup de valorizaciones)</div>
+              {row('Facturado c/IGV', c.facturadoConIgv)}
+              {row('− Ya cobrado', c.cobrado, { neg: true })}
+              <div className="flex justify-between pt-1.5 mt-1 border-t border-line text-[13px] font-bold">
+                <span>Saldo final {prev!.saldoFinal >= 0 ? 'por cobrar' : 'por pagar'}</span>
+                <span className={cn('font-mono', prev!.saldoFinal >= 0 ? 'text-emerald-600' : 'text-rose-600')}>{fmtPEN(prev!.saldoFinal)}</span>
+              </div>
+              <div className="mt-2 pt-2 border-t border-line/60 text-[10.5px] text-ink-4 space-y-0.5">
+                <div className="flex justify-between"><span>Retención pendiente de liberar</span><span className="font-mono">{fmtPEN(c.retencionAcum)}</span></div>
+                <div className="flex justify-between"><span>Amortización adelantos</span><span className="font-mono">{fmtPEN(c.amortizAdelantos)}</span></div>
+                <div className="flex justify-between"><span>Valorizado sin IGV (= ventas)</span><span className="font-mono">{fmtPEN(c.valorizadoSinIgv)}</span></div>
+              </div>
+            </div>
+
+            {/* Conciliación contable */}
+            <div className="rounded-lg border border-line p-3">
+              <div className="text-[11px] font-semibold text-ink-3 mb-1">Conciliación con el libro</div>
+              {row('Valorizado bruto c/IGV', con.valorizadoBrutoIgv)}
+              {row('Saldo cuenta 1212 (asientos)', con.saldo1212)}
+              {row('Por cobrar neto (calculado)', con.porCobrarNeto)}
+              {Math.abs(con.saldo1212 - con.porCobrarNeto) > 0.5 && (
+                <div className="flex justify-between py-1 text-[11px] text-amber-600">
+                  <span>Δ 1212 vs calculado (caja no asentada)</span>
+                  <span className="font-mono">{fmtPEN(Math.abs(con.saldo1212 - con.porCobrarNeto))}</span>
+                </div>
+              )}
+              <div className="mt-2 rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/40 p-2 text-[10.5px] text-amber-800 dark:text-amber-300 space-y-1">
+                <div><b>No es un error de la liquidación.</b> El 1212 hoy incluye la retención sin segregar ({fmtPEN(con.retencionMezclada)}) y puede no reflejar cobros ya recibidos si el motor no asentó el cobro. La liquidación calcula desde las valorizaciones.</div>
+                <div className="text-amber-700/80 dark:text-amber-400/70">{con.nota}</div>
+              </div>
+            </div>
+          </div>
+          {liq?.estado === 'reabierta' && liq.motivoReapertura && (
+            <div className="text-[10.5px] text-ink-4">Motivo reapertura: {liq.motivoReapertura}</div>
+          )}
+        </div>
+      )}
+    </Section>
+  );
+}
+
+// ════════════════════ CIERRE DE OBRA ════════════════════
+// Prueba de cierre: checklist derivado (hitos/garantías/adelantos/valos) + gate server-side.
+const VEREDICTO_TONE: Record<string, string> = {
+  CERRADA: 'green',
+  'LISTA PARA CERRAR': 'green',
+  'EN LIQUIDACIÓN': 'amber',
+  'EN EJECUCIÓN': 'ink',
+};
+function CierreObraSection({ proyectoId }: { proyectoId: string }) {
+  const qc = useQueryClient();
+  const cierreQ = useQuery({ queryKey: ['cierre', proyectoId], queryFn: () => api.proyectos.getCierre(proyectoId) });
+  const cerrar = useMutation({
+    mutationFn: () => api.proyectos.cerrarObra(proyectoId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['cierre', proyectoId] });
+      qc.invalidateQueries({ queryKey: ['proyecto', proyectoId] });
+    },
+  });
+  const c = cierreQ.data;
+  if (cierreQ.isLoading || !c) return null;
+  const cerrada = c.status === 'cerrado';
+
+  return (
+    <section className={cn('rounded-md border bg-bg-elev', cerrada ? 'border-ok/40' : 'border-line')}>
+      <div className="flex items-center justify-between gap-2 border-b border-line px-4 py-2.5">
+        <h3 className="text-[13px] font-semibold flex items-center gap-1.5">
+          <Lock className="h-4 w-4 text-ink-3" /> Cierre de obra
+          <span className={`chip ${VEREDICTO_TONE[c.veredicto] ?? 'ink'} ml-1`}>{c.veredicto}</span>
+        </h3>
+        {!cerrada && (
+          <button
+            disabled={!c.canClose || cerrar.isPending}
+            onClick={() => {
+              if (window.confirm('¿Cerrar la obra? Marca el proyecto como cerrado. Requiere permiso de reapertura para revertir.')) cerrar.mutate();
+            }}
+            title={c.canClose ? 'Cerrar obra' : `Falta: ${c.faltantes.join(' · ')}`}
+            className="inline-flex items-center gap-1 h-7 px-3 rounded-md bg-primary text-primary-foreground text-[11.5px] font-medium disabled:opacity-40 hover:opacity-90"
+          >
+            <Lock className="h-3.5 w-3.5" /> {cerrar.isPending ? 'Cerrando...' : 'Cerrar obra'}
+          </button>
+        )}
+      </div>
+      <div className="p-3">
+        <div className="grid sm:grid-cols-2 gap-x-4 gap-y-1.5">
+          {c.items.map((it) => (
+            <div key={it.key} className="flex items-center gap-2 text-[12px]">
+              {it.ok
+                ? <CheckCircle2 className="h-4 w-4 text-ok shrink-0" />
+                : <Circle className="h-4 w-4 text-ink-4 shrink-0" />}
+              <span className={cn(it.ok ? 'text-foreground' : 'text-ink-3')}>{it.label}</span>
+              <span className="ml-auto text-[11px] text-ink-4 tabular-nums">{it.detail}</span>
+            </div>
+          ))}
+        </div>
+        {!cerrada && !c.canClose && (
+          <p className="mt-2.5 text-[11px] text-ink-4">
+            Falta para cerrar: <span className="text-warn-ink">{c.faltantes.join(' · ')}</span>
+          </p>
+        )}
+        {cerrar.isError && <p className="mt-2 text-[11px] text-destructive">{(cerrar.error as Error).message}</p>}
+      </div>
+    </section>
   );
 }
 
@@ -177,9 +345,23 @@ function GarantiasSection({ proyectoId, garantias, hitosSet, loading, contratoMo
   const create = useMutation({ mutationFn: () => api.contractual.createGarantia(proyectoId, form), onSuccess: () => { inval(); setOpen(false); setForm(empty); } });
   const del = useMutation({ mutationFn: (id: string) => api.contractual.deleteGarantia(id), onSuccess: inval });
   const setEstado = useMutation({ mutationFn: (v: { id: string; estado: 'vigente' | 'ejecutada' | 'devuelta' }) => api.contractual.updateGarantia(v.id, { estado: v.estado }), onSuccess: inval });
+  const genRet = useMutation({ mutationFn: () => api.contractual.generarRetencion(proyectoId), onSuccess: inval });
+  const tieneRetencion = garantias.some((g) => g.tipo === 'retencion');
 
   return (
     <Section title="Garantías (cartas fianza / retención)" icon={<Shield className="h-4 w-4 text-ink-3" />} onAdd={() => setOpen((v) => !v)}>
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => genRet.mutate()}
+          disabled={genRet.isPending}
+          className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md border border-line text-[11px] font-medium text-ink-2 hover:bg-bg-sunken disabled:opacity-50"
+          title="Suma la retención de todas las valorizaciones y crea/actualiza la garantía de retención"
+        >
+          <Shield className="h-3.5 w-3.5" /> {genRet.isPending ? 'Calculando...' : tieneRetencion ? 'Recalcular retención (Σ valos)' : 'Generar retención (Σ valos)'}
+        </button>
+        {genRet.isError && <span className="text-[11px] text-destructive">{(genRet.error as Error).message}</span>}
+        {genRet.isSuccess && <span className="text-[11px] text-ok">Retención = {fmtPEN(genRet.data.total)}</span>}
+      </div>
       {open && (
         <FormRow onSubmit={() => create.mutate()} pending={create.isPending} canSubmit={form.monto > 0}>
           <Select value={form.tipo} onChange={(v) => setForm({ ...form, tipo: v as GarantiaTipo })} options={GARANTIA_TIPOS.map((t) => [t, GARANTIA_LABEL[t]])} />
@@ -305,12 +487,12 @@ function PctDelContrato({ contratoMonto, onPick }: { contratoMonto: number; onPi
   );
 }
 
-function Section({ title, icon, onAdd, children }: { title: string; icon: React.ReactNode; onAdd: () => void; children: React.ReactNode }) {
+function Section({ title, icon, onAdd, children }: { title: string; icon: React.ReactNode; onAdd?: () => void; children: React.ReactNode }) {
   return (
     <section className="rounded-md border border-line bg-bg-elev">
       <div className="flex items-center justify-between border-b border-line px-4 py-2.5">
         <h3 className="text-[13px] font-semibold flex items-center gap-1.5">{icon}{title}</h3>
-        <button onClick={onAdd} className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md bg-primary text-primary-foreground text-[11.5px] font-medium hover:opacity-90"><Plus className="h-3.5 w-3.5" /> Agregar</button>
+        {onAdd && <button onClick={onAdd} className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md bg-primary text-primary-foreground text-[11.5px] font-medium hover:opacity-90"><Plus className="h-3.5 w-3.5" /> Agregar</button>}
       </div>
       <div className="p-3 space-y-3">{children}</div>
     </section>

@@ -1,0 +1,73 @@
+﻿=== commits ===
+4ad7611 feat(oficina): motor de calculo hibrido de planilla oficina + test
+
+=== diff ===
+diff --git a/apps/backend/scripts/oficina/test-calc.ts b/apps/backend/scripts/oficina/test-calc.ts
+new file mode 100644
+index 0000000..5dd200f
+--- /dev/null
++++ b/apps/backend/scripts/oficina/test-calc.ts
+@@ -0,0 +1,30 @@
++import assert from 'node:assert/strict';
++import { calcularDetalleOficina } from '../../src/lib/planillaOficinaCalc.js';
++
++const tasas = { pctEssalud: 0.09, pctOnp: 0.13, pctAfpAporte: 0.10, rmv: 1025, horasMesBase: 240, topeSeguroAfp: 12599.27, afp: { pctSeguro: 0.0137, pctComision: 0 } };
++
++// Levano: sueldo 6000, AFP, Renta5ta input 95 -> neto 5222.80 (boleta real)
++const levano = calcularDetalleOficina({ sueldoMensual: 6000, sistemaPension: 'AFP', imptoRenta5ta: 95 }, tasas);
++assert.equal(levano.totalBruto, 6000);
++assert.equal(levano.essalud, 540);            // 9%
++assert.equal(levano.afpAporte, 600);          // 10%
++assert.ok(Math.abs(levano.afpSeguro - 82.20) < 0.02, `levano seguro ${levano.afpSeguro}`);
++assert.ok(Math.abs(levano.netoPago - 5222.80) < 0.02, `levano neto ${levano.netoPago}`);
++
++// Garcia: sueldo 12850, AFP (seguro capped at tope), Renta5ta 1120 -> neto 10272.39 (boleta real)
++const garcia = calcularDetalleOficina({ sueldoMensual: 12850, sistemaPension: 'AFP', imptoRenta5ta: 1120 }, tasas);
++assert.equal(garcia.afpAporte, 1285);
++assert.ok(Math.abs(garcia.afpSeguro - 172.61) < 0.02, `garcia seguro ${garcia.afpSeguro}`);
++assert.ok(Math.abs(garcia.netoPago - 10272.39) < 0.02, `garcia neto ${garcia.netoPago}`);
++
++// ONP path 13%
++const onp = calcularDetalleOficina({ sueldoMensual: 5000, sistemaPension: 'ONP' }, tasas);
++assert.equal(onp.onp, 650);
++assert.equal(onp.afpAporte, 0);
++
++// asignacion familiar = 10% RMV
++const af = calcularDetalleOficina({ sueldoMensual: 3000, sistemaPension: 'ONP', asignacionFamiliar: true }, tasas);
++assert.equal(af.asigFamiliar, 102.50);
++assert.equal(af.totalBruto, 3102.50);
++
++console.log('calc VERDE'); process.exit(0);
+diff --git a/apps/backend/src/lib/planillaOficinaCalc.ts b/apps/backend/src/lib/planillaOficinaCalc.ts
+new file mode 100644
+index 0000000..beac496
+--- /dev/null
++++ b/apps/backend/src/lib/planillaOficinaCalc.ts
+@@ -0,0 +1,27 @@
++// Motor puro de planilla de oficina (regimen general). Sin DB. Snapshot de tasas afuera.
++export type TasasOficina = { pctEssalud: number; pctOnp: number; pctAfpAporte: number; rmv: number; horasMesBase: number; topeSeguroAfp: number; afp?: { pctSeguro: number; pctComision: number } };
++export type DetalleInput = {
++  sueldoMensual: number; sistemaPension: 'AFP' | 'ONP'; asignacionFamiliar?: boolean;
++  cantHe25?: number; cantHe35?: number; dominical?: number; feriado?: number;
++  gratificacion?: number; vacaciones?: number; comisiones?: number; bonificacion?: number;
++  imptoRenta5ta?: number; retencionJudicial?: number; adelantoCuota?: number; otrosDescuentos?: number;
++  diasTrab?: number; horasTrab?: number;
++};
++const r2 = (x: number) => Math.round(x * 100) / 100;
++export function calcularDetalleOficina(i: DetalleInput, t: TasasOficina) {
++  const n = (x?: number) => Number(x ?? 0);
++  const valorHora = r2(i.sueldoMensual / t.horasMesBase);
++  const montoHe25 = r2(n(i.cantHe25) * valorHora * 1.25);
++  const montoHe35 = r2(n(i.cantHe35) * valorHora * 1.35);
++  const totalHe = r2(montoHe25 + montoHe35);
++  const asigFamiliar = i.asignacionFamiliar ? r2(t.rmv * 0.10) : 0;
++  const totalBruto = r2(i.sueldoMensual + totalHe + n(i.dominical) + n(i.feriado) + asigFamiliar + n(i.gratificacion) + n(i.vacaciones) + n(i.comisiones) + n(i.bonificacion));
++  let onp = 0, afpAporte = 0, afpSeguro = 0, afpComision = 0;
++  if (i.sistemaPension === 'ONP') onp = r2(totalBruto * t.pctOnp);
++  else { afpAporte = r2(totalBruto * t.pctAfpAporte); const base = Math.min(totalBruto, t.topeSeguroAfp); afpSeguro = r2(base * (t.afp?.pctSeguro ?? 0)); afpComision = r2(totalBruto * (t.afp?.pctComision ?? 0)); }
++  const adelantoCuota = n(i.adelantoCuota), otros = n(i.otrosDescuentos), renta = n(i.imptoRenta5ta), judicial = n(i.retencionJudicial);
++  const totalDescuento = r2(onp + afpAporte + afpSeguro + afpComision + renta + judicial + adelantoCuota + otros);
++  const essalud = r2(totalBruto * t.pctEssalud);
++  const totalAporte = essalud;
++  return { valorHora, montoHe25, montoHe35, totalHe, asigFamiliar, totalBruto, onp, afpAporte, afpSeguro, afpComision, imptoRenta5ta: renta, retencionJudicial: judicial, adelantoCuota, otrosDescuentos: otros, totalDescuento, essalud, essaludVida: 0, totalAporte, netoPago: r2(totalBruto - totalDescuento), costoTotal: r2(totalBruto + totalAporte) };
++}

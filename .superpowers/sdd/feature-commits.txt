@@ -1,0 +1,20 @@
+11f3b1f feat(obra): bloque Resultado de obra (valorizacion - CD - GG_OBRA)
+a167839 feat(contab): columna clase CD/GG editable en Cuentas por tipo
+d6d9301 feat(gastos): selector CD/GG_OBRA en form de gasto de obra
+3992142 feat(api): tipos clase gasto + CostosObra + getCostosObra
+40723c2 feat(proyectos): endpoint costos-obra (CD/GG ejecutado vs presupuesto + resultado)
+fee1493 feat(gastos): auto-clasificacion CD/GG en los 4 flujos + clamp proyecto
+24284d7 feat(contab): clase CD/GG en config cuentas-tipo (GET/PUT)
+a969200 feat(gastos): schema clasificacion CD/GG_OBRA/GG_CORP + clase en config + backfill
+ apps/backend/src/lib/clasificacion.ts              |  38 +++
+ apps/backend/src/routes/contabilidad.ts            | 156 +++++++++-
+ apps/backend/src/routes/finanzas.ts                |  38 ++-
+ apps/backend/src/routes/logistica.ts               |   6 +-
+ apps/backend/src/routes/oficina.ts                 |  28 +-
+ apps/backend/src/routes/proyectos.ts               | 191 ++++++++++--
+ .../src/components/proyectos/tabs/EconomicoTab.tsx | 333 +++++++++------------
+ .../src/components/proyectos/tabs/FinanzasTab.tsx  |  33 +-
+ apps/frontend/src/lib/api.ts                       |  56 +++-
+ apps/frontend/src/pages/ContabilidadPage.tsx       | 243 +++++++++++++--
+ packages/db/src/schema.ts                          |  24 ++
+ 11 files changed, 870 insertions(+), 276 deletions(-)

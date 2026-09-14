@@ -69,8 +69,8 @@ export function ReconciliacionTab({ proyectoId }: { proyectoId: string }) {
           <FuenteCard
             titulo="Σ Valorizado"
             sub={`${data.fuentes.valorizaciones} valorizaciones · ${
-              data.fuentes.pctAvanceUltima != null
-                ? `${(data.fuentes.pctAvanceUltima <= 1 ? data.fuentes.pctAvanceUltima * 100 : data.fuentes.pctAvanceUltima).toFixed(1)}% avance`
+              data.fuentes.pctAvanceAcum != null
+                ? `${data.fuentes.pctAvanceAcum.toFixed(1)}% avance acum.`
                 : 'sin avance'
             }`}
             valor={data.fuentes.valorizadoCd}

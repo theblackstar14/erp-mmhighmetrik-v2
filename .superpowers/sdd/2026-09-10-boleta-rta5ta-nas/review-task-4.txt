@@ -1,0 +1,227 @@
+﻿=== commits ===
+06193d7 feat(oficina): boletas PDF batch al NAS al cerrar (best-effort, idempotente)
+
+=== diff ===
+diff --git a/apps/backend/scripts/oficina/test-cierre.ts b/apps/backend/scripts/oficina/test-cierre.ts
+index b084748..d85f9a6 100644
+--- a/apps/backend/scripts/oficina/test-cierre.ts
++++ b/apps/backend/scripts/oficina/test-cierre.ts
+@@ -4,21 +4,21 @@
+  *   node apps/backend/node_modules/tsx/dist/cli.mjs apps/backend/scripts/oficina/test-cierre.ts
+  * Requiere DATABASE_URL=erp_mmh_test. Imprime 'cierre VERDE' en éxito.
+  * Note: exit code 9 on Windows is a cosmetic libuv issue — success = VERDE printed.
+  */
+ import assert from 'node:assert/strict';
+ import express from 'express';
+ import { authMiddleware } from '../../src/middleware/auth.js';
+ import planillaOficinaRoutes from '../../src/routes/planillaOficina.js';
+ import { lucia } from '../../src/auth.js';
+ import { db, schema } from '@erp/db';
+-import { and, eq, inArray, sql } from 'drizzle-orm';
++import { and, eq, inArray, sql, gt } from 'drizzle-orm';
+ 
+ const USER = 'af36a9b1-3b8e-4471-99d0-d08cf271187d'; // admin
+ const MES = '2026-07'; // Must be an open period
+ 
+ let testEmpleadoId: string | null = null;
+ let testAdelantoId: string | null = null;
+ let testMesId: string | null = null;
+ 
+ (async () => {
+   let failed = false;
+@@ -97,25 +97,54 @@ let testMesId: string | null = null;
+     const adelantoCuota = Number(det.adelanto_cuota ?? det.adelantoCuota);
+     assert.equal(adelantoCuota, 300, `adelantoCuota=300 for this empleado, got ${adelantoCuota}`);
+     console.log(`  ✓ 2. calcular → estado=calculada, adelantoCuota=${adelantoCuota}`);
+ 
+     // ── 3. POST cerrar ──
+     const r3 = await post(`/api/oficina/planilla/${testMesId}/cerrar`, {});
+     if (r3.status !== 200) {
+       const body = await r3.text();
+       assert.fail(`POST cerrar failed ${r3.status}: ${body}`);
+     }
+-    const j3 = await r3.json() as { mes: any; asientoId: string };
++    const j3 = await r3.json() as { mes: any; asientoId: string; boletasSubidas: number };
+     assert.ok(j3.asientoId, `cerrar → asientoId present, got ${j3.asientoId}`);
+     assert.equal(j3.mes.estado, 'cerrada', `mes estado=cerrada, got ${j3.mes.estado}`);
++    // Task 4: boleta batch — cerrar MUST return 200 and include boletasSubidas even if NAS is unreachable
++    assert.equal(typeof j3.boletasSubidas, 'number', `boletasSubidas must be a number, got ${typeof j3.boletasSubidas}`);
+     const asientoId = j3.asientoId;
+-    console.log(`  ✓ 3. cerrar → estado=cerrada asientoId=${asientoId}`);
++    const nasReachable = j3.boletasSubidas > 0;
++    console.log(`  ✓ 3. cerrar → estado=cerrada asientoId=${asientoId} boletasSubidas=${j3.boletasSubidas} (nasReachable=${nasReachable})`);
++
++    // ── 3b. If NAS was reachable, assert documento_adjunto(boleta_pago) row for a detalle ──
++    if (nasReachable) {
++      // Find any detalle for this mes
++      const detallesAll = await db
++        .select({ id: schema.planillaOficinaDetalle.id })
++        .from(schema.planillaOficinaDetalle)
++        .where(eq(schema.planillaOficinaDetalle.planillaMesId, testMesId!))
++        .limit(1);
++      if (detallesAll.length > 0) {
++        const docRows = await db
++          .select()
++          .from(schema.documentoAdjunto)
++          .where(
++            and(
++              eq(schema.documentoAdjunto.entidadTipo, 'planilla_oficina_detalle'),
++              eq(schema.documentoAdjunto.entidadId, detallesAll[0].id),
++              eq(schema.documentoAdjunto.docTipo, 'boleta_pago'),
++            ),
++          );
++        assert.ok(docRows.length > 0, `Expected boleta_pago documento_adjunto for detalle ${detallesAll[0].id}`);
++        console.log(`  ✓ 3b. NAS reachable: documento_adjunto(boleta_pago) row found for detalle ${detallesAll[0].id}`);
++      }
++    } else {
++      console.log(`  ✓ 3b. NAS unreachable (boletasSubidas=0) — cerrar still succeeded (best-effort confirmed)`);
++    }
+ 
+     // ── 4. Assert: asiento Σdebe === Σhaber ──
+     const [sumas] = await db
+       .select({
+         sumDebe: sql<string>`COALESCE(SUM(debe::numeric), 0)`,
+         sumHaber: sql<string>`COALESCE(SUM(haber::numeric), 0)`,
+       })
+       .from(schema.asientosLineas)
+       .where(eq(schema.asientosLineas.asientoId, asientoId));
+ 
+@@ -214,20 +243,39 @@ let testMesId: string | null = null;
+     // Delete cuota_aplicada for this adelanto (if any remain)
+     if (testAdelantoId) {
+       await db
+         .delete(schema.adelantoCuotaAplicada)
+         .where(eq(schema.adelantoCuotaAplicada.adelantoId, testAdelantoId))
+         .catch(() => {});
+     }
+ 
+     // Delete planilla mes (cascade deletes detalle; asiento may already be deleted or remain)
+     if (testMesId) {
++      // Delete documento_adjunto rows for detalle rows of this mes (boletas uploaded to NAS)
++      const detallesForCleanup = await db
++        .select({ id: schema.planillaOficinaDetalle.id })
++        .from(schema.planillaOficinaDetalle)
++        .where(eq(schema.planillaOficinaDetalle.planillaMesId, testMesId))
++        .catch(() => [] as { id: string }[]);
++      if (detallesForCleanup.length > 0) {
++        const detalleIds = detallesForCleanup.map((d) => d.id);
++        await db
++          .delete(schema.documentoAdjunto)
++          .where(
++            and(
++              eq(schema.documentoAdjunto.entidadTipo, 'planilla_oficina_detalle'),
++              inArray(schema.documentoAdjunto.entidadId, detalleIds),
++            ),
++          )
++          .catch(() => {});
++      }
++
+       // Delete asiento linked to this mes (if cerrar succeeded but reabrir didn't)
+       const [mesNow] = await db
+         .select()
+         .from(schema.planillaOficinaMes)
+         .where(eq(schema.planillaOficinaMes.id, testMesId))
+         .limit(1)
+         .catch(() => []);
+       if (mesNow?.asientoId) {
+         await db.delete(schema.asientos).where(eq(schema.asientos.id, mesNow.asientoId)).catch(() => {});
+       }
+diff --git a/apps/backend/src/routes/planillaOficina.ts b/apps/backend/src/routes/planillaOficina.ts
+index 4a8c59b..7c93606 100644
+--- a/apps/backend/src/routes/planillaOficina.ts
++++ b/apps/backend/src/routes/planillaOficina.ts
+@@ -3,20 +3,21 @@ import { and, asc, desc, eq, gt, inArray, ne, sql } from 'drizzle-orm';
+ import type { NextFunction, Request, Response } from 'express';
+ import { Router } from 'express';
+ import multer from 'multer';
+ import { calcularDetalleOficina } from '../lib/planillaOficinaCalc.js';
+ import { calcularRta5ta } from '../lib/rta5taCalc.js';
+ import { requireAuth } from '../middleware/auth.js';
+ import { cargarDerivarCtx } from '../lib/clasificacion.js';
+ import { crearAsiento, type LineaIn } from './contabilidad.js';
+ import { periodoCerrado } from '../lib/periodos.js';
+ import { registrarDocumento, docsDetalle } from '../lib/documentoAdjunto.js';
++import { generarBoletaPdf } from '../lib/boletaOficinaPdf.js';
+ 
+ const router = Router();
+ router.use(requireAuth);
+ 
+ // ─── requireOficinaEdit ───────────────────────────────────────
+ // Allows only users whose RBAC role (via usuario_empresa) is 'admin' or
+ // 'contabilidad' in ANY empresa. This gates all mutating planilla endpoints.
+ async function requireOficinaEdit(req: Request, res: Response, next: NextFunction) {
+   const userId = req.user?.id;
+   if (!userId) return res.status(401).json({ error: 'No autenticado' });
+@@ -898,21 +899,71 @@ router.post('/planilla/:mesId/cerrar', requireOficinaEdit, async (req, res) => {
+     .update(schema.planillaOficinaMes)
+     .set({
+       estado: 'cerrada',
+       asientoId,
+       cerradoPor: req.user!.id,
+       cerradoEn: new Date(),
+     })
+     .where(eq(schema.planillaOficinaMes.id, mesId!))
+     .returning();
+ 
+-  res.json({ mes: updatedMes, asientoId });
++  // ── Step 6: Boleta PDF batch (best-effort, outside accounting tx) ──
++  // Load empresa row for razonSocial/ruc/direccion. Fail-safe: use empty strings if missing.
++  let empresaData = { razonSocial: '', ruc: '', direccion: '' };
++  try {
++    const [empRow] = await db
++      .select({
++        razonSocial: schema.empresas.razonSocial,
++        ruc: schema.empresas.ruc,
++        direccion: schema.empresas.direccion,
++      })
++      .from(schema.empresas)
++      .where(eq(schema.empresas.id, mesRow.empresaId))
++      .limit(1);
++    if (empRow) {
++      empresaData = {
++        razonSocial: empRow.razonSocial ?? '',
++        ruc: empRow.ruc ?? '',
++        direccion: empRow.direccion ?? '',
++      };
++    }
++  } catch (_e) {
++    // empresa lookup failure must not abort cierre
++  }
++
++  let boletasSubidas = 0;
++  const boletaErrores: string[] = [];
++
++  for (const detalle of detalleRows) {
++    try {
++      // Idempotent: skip if boleta_pago already exists for this detalle
++      const docs = await docsDetalle(detalle.id);
++      if (docs.boleta) continue;
++
++      const pdf = await generarBoletaPdf(detalle, empresaData, mesRow.mes);
++      await registrarDocumento({
++        entidadTipo: 'planilla_oficina_detalle',
++        entidadId: detalle.id,
++        docTipo: 'boleta_pago',
++        fileBuffer: pdf,
++        nombreArchivo: 'boleta.pdf',
++        subidoPor: req.user?.id ?? null,
++        subPath: `${mesRow.mes}/${detalle.dni ?? detalle.id}`,
++      });
++      boletasSubidas++;
++    } catch (e) {
++      boletaErrores.push(`${detalle.dni ?? detalle.id}: ${(e as Error).message}`);
++      console.warn('boleta NAS fallo', detalle.id, (e as Error).message);
++    }
++  }
++
++  res.json({ mes: updatedMes, asientoId, boletasSubidas });
+ });
+ 
+ // ─── POST /api/oficina/planilla/:mesId/reabrir ───────────────
+ router.post('/planilla/:mesId/reabrir', requireOficinaEdit, async (req, res) => {
+   const { mesId } = req.params;
+ 
+   const [mesRow] = await db
+     .select()
+     .from(schema.planillaOficinaMes)
+     .where(eq(schema.planillaOficinaMes.id, mesId!))

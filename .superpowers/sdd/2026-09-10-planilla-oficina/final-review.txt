@@ -1,0 +1,2441 @@
+﻿=== SDD commits (planilla oficina) ===
+1842d7a feat(oficina): gate planilla/asistencia a admin+contabilidad (front rol fix + backend)
+1e0da6b fix(oficina): persistir cargo/sueldo/asig.familiar en empleado + revertir scope rendiciones
+0fb68e5 feat(oficina): tab Planilla de oficina + Personal extendido + gate asistencia/planilla
+50b5349 feat(oficina): componentes DocumentoAdjunto, BoletaOficina, AdelantosPanel
+0b89ba4 feat(oficina): api client de planilla de oficina
+aacf1e3 feat(oficina): documento_adjunto generico + upload NAS + estado boleta/comprobante
+00892bf fix(oficina): cerrar idempotente reusa asiento del mes (evita duplicado/huerfano)
+02e2c15 feat(oficina): cerrar mes genera asiento WS1 + aplica cuotas; reabrir reversible
+a509ae7 feat(oficina): adelantos como prestamo con saldo derivado
+3ccc548 fix(oficina): normaliza AFP (quita sufijo F/M) para tasa + test contra data real
+7be2551 feat(oficina): crear, calcular y editar detalle de planilla de oficina
+79c9bbc feat(oficina): router de planilla oficina + endpoints de config de tasas
+4ad7611 feat(oficina): motor de calculo hibrido de planilla oficina + test
+b5efeab feat(oficina): schema planilla de oficina + adelantos + documento_adjunto
+
+=== stat (feature-scoped) ===
+ .../oficina/2026-09-10-planilla-oficina-schema.sql |  106 ++
+ apps/backend/scripts/oficina/test-adelantos.ts     |  160 +++
+ apps/backend/scripts/oficina/test-calc.ts          |   30 +
+ apps/backend/scripts/oficina/test-cierre.ts        |  260 +++++
+ apps/backend/scripts/oficina/test-documentos.ts    |  173 ++++
+ apps/backend/scripts/oficina/test-planilla-flow.ts |  220 +++++
+ apps/backend/src/lib/documentoAdjunto.ts           |   85 ++
+ apps/backend/src/lib/planillaOficinaCalc.ts        |   27 +
+ apps/backend/src/routes/planilla.ts                |   21 +-
+ apps/backend/src/routes/planillaOficina.ts         | 1042 ++++++++++++++++++++
+ .../src/components/oficina/AdelantosPanel.tsx      |  210 ++++
+ .../src/components/oficina/BoletaOficina.tsx       |  209 ++++
+ .../src/components/oficina/DocumentoAdjunto.tsx    |   99 ++
+ .../src/components/oficina/PlanillaOficinaTab.tsx  |  384 ++++++++
+ apps/frontend/src/pages/OficinaPage.tsx            |   94 +-
+ 15 files changed, 3096 insertions(+), 24 deletions(-)
+
+=== diff (feature files) ===
+diff --git a/apps/backend/src/lib/documentoAdjunto.ts b/apps/backend/src/lib/documentoAdjunto.ts
+new file mode 100644
+index 0000000..0104e4a
+--- /dev/null
++++ b/apps/backend/src/lib/documentoAdjunto.ts
+@@ -0,0 +1,85 @@
++/**
++ * documentoAdjunto.ts — helper genérico para adjuntar archivos a cualquier entidad.
++ * Sube el buffer al NAS y registra la fila en documento_adjunto.
++ * NAS_ROOT_ADMIN = /ERP/02_Administracion (no cambiar aquí, viene del env).
++ */
++import { db, schema } from '@erp/db';
++import { and, eq } from 'drizzle-orm';
++import { env } from '../env.js';
++import { nasUpload } from './nas.js';
++
++// ─── Path builder (exported for unit tests) ──────────────────
++export function buildNasPath(opts: {
++  subPath: string;   // e.g. '2026-07/99999999'
++  nombreArchivo: string;
++}): string {
++  const base = env.NAS_ROOT_ADMIN.replace(/\/$/, '');
++  return `${base}/Planilla/${opts.subPath}/${opts.nombreArchivo}`;
++}
++
++// ─── Upload + insert ──────────────────────────────────────────
++export async function registrarDocumento(opts: {
++  entidadTipo: string;
++  entidadId: string;
++  docTipo: string;
++  fileBuffer: Buffer;
++  nombreArchivo: string;
++  subidoPor: string | null;
++  subPath?: string;
++}): Promise<{ nasPath: string }> {
++  const { entidadTipo, entidadId, docTipo, fileBuffer, nombreArchivo, subidoPor, subPath } = opts;
++
++  const nasPath = buildNasPath({ subPath: subPath ?? entidadId, nombreArchivo });
++
++  // dest folder = everything before the last '/'
++  const lastSlash = nasPath.lastIndexOf('/');
++  const destFolder = nasPath.substring(0, lastSlash);
++  const filename = nasPath.substring(lastSlash + 1);
++
++  await nasUpload(destFolder, filename, fileBuffer);
++
++  await db.insert(schema.documentoAdjunto).values({
++    entidadTipo,
++    entidadId,
++    docTipo,
++    nasPath,
++    nombreArchivo,
++    subidoPor: subidoPor ?? null,
++    fecha: new Date().toISOString().slice(0, 10),
++  });
++
++  return { nasPath };
++}
++
++// ─── Query helpers ────────────────────────────────────────────
++
++/** Returns a map of docTipo → true for every doc that exists for the entity. */
++export async function docsDeEntidad(
++  entidadTipo: string,
++  entidadId: string,
++): Promise<Record<string, boolean>> {
++  const rows = await db
++    .select({ docTipo: schema.documentoAdjunto.docTipo })
++    .from(schema.documentoAdjunto)
++    .where(
++      and(
++        eq(schema.documentoAdjunto.entidadTipo, entidadTipo),
++        eq(schema.documentoAdjunto.entidadId, entidadId),
++      ),
++    );
++
++  const map: Record<string, boolean> = {};
++  for (const r of rows) map[r.docTipo] = true;
++  return map;
++}
++
++/** Convenience for planilla_oficina_detalle rows. */
++export async function docsDetalle(
++  detalleId: string,
++): Promise<{ boleta: boolean; comprobante: boolean }> {
++  const map = await docsDeEntidad('planilla_oficina_detalle', detalleId);
++  return {
++    boleta: map['boleta_pago'] === true,
++    comprobante: map['comprobante_pago'] === true,
++  };
++}
+diff --git a/apps/backend/src/lib/planillaOficinaCalc.ts b/apps/backend/src/lib/planillaOficinaCalc.ts
+new file mode 100644
+index 0000000..beac496
+--- /dev/null
++++ b/apps/backend/src/lib/planillaOficinaCalc.ts
+@@ -0,0 +1,27 @@
++// Motor puro de planilla de oficina (regimen general). Sin DB. Snapshot de tasas afuera.
++export type TasasOficina = { pctEssalud: number; pctOnp: number; pctAfpAporte: number; rmv: number; horasMesBase: number; topeSeguroAfp: number; afp?: { pctSeguro: number; pctComision: number } };
++export type DetalleInput = {
++  sueldoMensual: number; sistemaPension: 'AFP' | 'ONP'; asignacionFamiliar?: boolean;
++  cantHe25?: number; cantHe35?: number; dominical?: number; feriado?: number;
++  gratificacion?: number; vacaciones?: number; comisiones?: number; bonificacion?: number;
++  imptoRenta5ta?: number; retencionJudicial?: number; adelantoCuota?: number; otrosDescuentos?: number;
++  diasTrab?: number; horasTrab?: number;
++};
++const r2 = (x: number) => Math.round(x * 100) / 100;
++export function calcularDetalleOficina(i: DetalleInput, t: TasasOficina) {
++  const n = (x?: number) => Number(x ?? 0);
++  const valorHora = r2(i.sueldoMensual / t.horasMesBase);
++  const montoHe25 = r2(n(i.cantHe25) * valorHora * 1.25);
++  const montoHe35 = r2(n(i.cantHe35) * valorHora * 1.35);
++  const totalHe = r2(montoHe25 + montoHe35);
++  const asigFamiliar = i.asignacionFamiliar ? r2(t.rmv * 0.10) : 0;
++  const totalBruto = r2(i.sueldoMensual + totalHe + n(i.dominical) + n(i.feriado) + asigFamiliar + n(i.gratificacion) + n(i.vacaciones) + n(i.comisiones) + n(i.bonificacion));
++  let onp = 0, afpAporte = 0, afpSeguro = 0, afpComision = 0;
++  if (i.sistemaPension === 'ONP') onp = r2(totalBruto * t.pctOnp);
++  else { afpAporte = r2(totalBruto * t.pctAfpAporte); const base = Math.min(totalBruto, t.topeSeguroAfp); afpSeguro = r2(base * (t.afp?.pctSeguro ?? 0)); afpComision = r2(totalBruto * (t.afp?.pctComision ?? 0)); }
++  const adelantoCuota = n(i.adelantoCuota), otros = n(i.otrosDescuentos), renta = n(i.imptoRenta5ta), judicial = n(i.retencionJudicial);
++  const totalDescuento = r2(onp + afpAporte + afpSeguro + afpComision + renta + judicial + adelantoCuota + otros);
++  const essalud = r2(totalBruto * t.pctEssalud);
++  const totalAporte = essalud;
++  return { valorHora, montoHe25, montoHe35, totalHe, asigFamiliar, totalBruto, onp, afpAporte, afpSeguro, afpComision, imptoRenta5ta: renta, retencionJudicial: judicial, adelantoCuota, otrosDescuentos: otros, totalDescuento, essalud, essaludVida: 0, totalAporte, netoPago: r2(totalBruto - totalDescuento), costoTotal: r2(totalBruto + totalAporte) };
++}
+diff --git a/apps/backend/src/routes/planilla.ts b/apps/backend/src/routes/planilla.ts
+index 0586eb7..d3aca7a 100644
+--- a/apps/backend/src/routes/planilla.ts
++++ b/apps/backend/src/routes/planilla.ts
+@@ -23,35 +23,50 @@ const empSchema = z.object({
+   tipoDoc: z.string().optional(),
+   numDoc: z.string().optional().nullable(),
+   sistemaPension: z.string().optional().nullable(),
+   cuspp: z.string().optional().nullable(),
+   fechaIngreso: z.string().optional().nullable(),
+   categoria: z.string().optional().nullable(),
++  cargo: z.string().optional().nullable(),
+   tieneHijos: z.boolean().optional(),
+   numHijos: z.number().optional(),
+   aplicaMovilidad: z.boolean().optional(),
+   bonifAltura: z.boolean().optional(),
+   bonifAgua: z.boolean().optional(),
+   proyectoId: z.string().uuid().optional().nullable(),
+   sctrVigencia: z.string().optional().nullable(),
+   banco: z.string().optional().nullable(),
+   numCuenta: z.string().optional().nullable(),
+   tipoPlanilla: z.enum(['obrero', 'admin']).optional(),
++  sueldoBaseMensual: z.number().optional().nullable(),
++  asignacionFamiliar: z.boolean().optional(),
++  fechaCese: z.string().optional().nullable(),
+ });
+ router.post('/empleados', async (req, res) => {
+   const parse = empSchema.safeParse(req.body);
+   if (!parse.success) return res.status(400).json({ error: parse.error.flatten() });
+-  const [emp] = await db.insert(schema.empleados).values({ ...parse.data, fechaIngreso: parse.data.fechaIngreso || null, sctrVigencia: parse.data.sctrVigencia || null }).returning();
++  const d = parse.data;
++  const [emp] = await db.insert(schema.empleados).values({
++    ...d,
++    fechaIngreso: d.fechaIngreso || null,
++    sctrVigencia: d.sctrVigencia || null,
++    fechaCese: d.fechaCese || null,
++    sueldoBaseMensual: d.sueldoBaseMensual != null ? String(d.sueldoBaseMensual) : null,
++  }).returning();
+   res.json({ empleado: emp });
+ });
+ router.put('/empleados/:id', async (req, res) => {
+   const parse = empSchema.partial().safeParse(req.body);
+   if (!parse.success) return res.status(400).json({ error: parse.error.flatten() });
+   const data = { ...parse.data };
+   // fechas vacías → null (columna date no acepta '')
+-  for (const k of ['fechaIngreso', 'sctrVigencia'] as const) if (data[k] === '') data[k] = null;
++  for (const k of ['fechaIngreso', 'sctrVigencia', 'fechaCese'] as const) if (data[k] === '') data[k] = null;
++  // decimal column requiere string
++  if ('sueldoBaseMensual' in data) {
++    (data as Record<string, unknown>).sueldoBaseMensual = data.sueldoBaseMensual != null ? String(data.sueldoBaseMensual) : null;
++  }
+   const [emp] = await db.update(schema.empleados).set(data).where(eq(schema.empleados.id, req.params.id!)).returning();
+   if (!emp) return res.status(404).json({ error: 'Empleado no encontrado' });
+   res.json({ empleado: emp });
+ });
+ router.delete('/empleados/:id', async (req, res) => {
+   await db.delete(schema.empleados).where(eq(schema.empleados.id, req.params.id!));
+@@ -215,12 +230,13 @@ const lineaSchema = z.object({
+   horasExtra60: z.number().default(0),
+   horasExtra100: z.number().default(0),
+   escolaridad: z.number().default(0),
+   renta5ta: z.number().default(0),
+   adelanto: z.number().default(0),
+   sindical: z.number().default(0),
++  cuentaContable: z.string().max(10).optional().nullable(), // WS1 · cuenta de costo del obrero (default 621 en el motor)
+ });
+ router.post('/planilla-semanas/:id/calcular', async (req, res) => {
+   const parse = z.object({ lineas: z.array(lineaSchema) }).safeParse(req.body);
+   if (!parse.success) return res.status(400).json({ error: parse.error.flatten() });
+   const semanaId = req.params.id!;
+ 
+@@ -276,12 +292,13 @@ router.post('/planilla-semanas/:id/calcular', async (req, res) => {
+       montoAfpAporte: dec(calc.montoAfpAporte), montoAfpComision: dec(calc.montoAfpComision), montoAfpSeguro: dec(calc.montoAfpSeguro),
+       montoOnp: dec(calc.montoOnp), montoConafovicer: dec(calc.montoConafovicer), montoRenta5ta: dec(calc.montoRenta5ta),
+       montoAdelanto: dec(calc.montoAdelanto), montoSindical: dec(calc.montoSindical), totalDescuentos: dec(calc.totalDescuentos),
+       netoPago: dec(calc.netoPago), montoEsSalud: dec(calc.montoEsSalud),
+       montoSctrSalud: dec(calc.montoSctrSalud), montoSctrPension: dec(calc.montoSctrPension), montoSencico: dec(calc.montoSencico),
+       montoCostoTotal: dec(calc.montoCostoTotal),
++      cuentaContable: l.cuentaContable ?? null, cuentaContableOrigen: l.cuentaContable ? 'USUARIO' : null, // WS1
+     });
+   }
+   if (rows.length) await db.insert(schema.planillaDetalle).values(rows);
+   res.json({ ok: true, calculados: rows.length });
+ });
+ 
+diff --git a/apps/backend/src/routes/planillaOficina.ts b/apps/backend/src/routes/planillaOficina.ts
+new file mode 100644
+index 0000000..54ec93b
+--- /dev/null
++++ b/apps/backend/src/routes/planillaOficina.ts
+@@ -0,0 +1,1042 @@
++import { db, schema } from '@erp/db';
++import { and, asc, desc, eq, gt, inArray, ne, sql } from 'drizzle-orm';
++import type { NextFunction, Request, Response } from 'express';
++import { Router } from 'express';
++import multer from 'multer';
++import { calcularDetalleOficina } from '../lib/planillaOficinaCalc.js';
++import { requireAuth } from '../middleware/auth.js';
++import { cargarDerivarCtx } from '../lib/clasificacion.js';
++import { crearAsiento, type LineaIn } from './contabilidad.js';
++import { periodoCerrado } from '../lib/periodos.js';
++import { registrarDocumento, docsDetalle } from '../lib/documentoAdjunto.js';
++
++const router = Router();
++router.use(requireAuth);
++
++// ─── requireOficinaEdit ───────────────────────────────────────
++// Allows only users whose RBAC role (via usuario_empresa) is 'admin' or
++// 'contabilidad' in ANY empresa. This gates all mutating planilla endpoints.
++async function requireOficinaEdit(req: Request, res: Response, next: NextFunction) {
++  const userId = req.user?.id;
++  if (!userId) return res.status(401).json({ error: 'No autenticado' });
++
++  const rows = await db
++    .select({ rolNombre: schema.roles.nombre })
++    .from(schema.usuarioEmpresa)
++    .innerJoin(schema.roles, eq(schema.usuarioEmpresa.roleId, schema.roles.id))
++    .where(eq(schema.usuarioEmpresa.userId, userId));
++
++  const allowed = new Set(['admin', 'contabilidad']);
++  const hasAccess = rows.some((r) => allowed.has(r.rolNombre));
++  if (!hasAccess) {
++    return res.status(403).json({ error: 'Permisos insuficientes: se requiere rol admin o contabilidad' });
++  }
++  next();
++}
++
++const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
++
++const DOC_TIPOS_PERMITIDOS = new Set([
++  'boleta_pago', 'comprobante_pago', 'factura', 'rh', 'boleta', 'voucher', 'otro',
++]);
++
++// ─── Helper singleton ─────────────────────────────────────────
++async function getConfig() {
++  let [cfg] = await db.select().from(schema.configPlanilla).limit(1);
++  if (!cfg) [cfg] = await db.insert(schema.configPlanilla).values({ id: 'singleton' }).returning();
++  return cfg;
++}
++
++function cfgToDto(cfg: Awaited<ReturnType<typeof getConfig>>) {
++  return {
++    pctEssalud: Number(cfg.pctEsSalud),
++    pctOnp: Number(cfg.pctOnp),
++    pctAfpAporte: 0.10,
++    rmv: Number(cfg.rmv),
++    uit: Number(cfg.uit),
++    topeSeguroAfp: Number(cfg.topeSeguroAfp),
++    horasMesBase: Number(cfg.horasMesBase),
++  };
++}
++
++// frac: AFP tasas stored as fractions (0.0137) already; pass through.
++// If ever stored as percent (>1), convert ÷100.
++const frac = (v: unknown) => { const n = Number(v); return n > 1 ? n / 100 : n; };
++
++// Strip (F)/(M) comisión suffix from sistemaPension for afpTasas table lookup.
++// e.g. 'AFP Profuturo(F)' → 'AFP Profuturo', 'AFP Integra(M)' → 'AFP Integra'
++const afpKey = (s: string | null | undefined) => (s ? s.replace(/\s*\([FM]\)\s*$/i, '').trim() : '');
++
++// AFP vs ONP decision from sistemaPension string
++function sistemaPensionToTipo(sp: string | null): 'AFP' | 'ONP' {
++  const up = (sp ?? '').toUpperCase().replace(/[.\s]/g, '');
++  if (up.includes('ONP') || up.includes('SNP')) return 'ONP';
++  return 'AFP';
++}
++
++// ─── GET /api/oficina/config-planilla ────────────────────────
++router.get('/config-planilla', async (_req, res) => {
++  const cfg = await getConfig();
++  res.json(cfgToDto(cfg));
++});
++
++// ─── PUT /api/oficina/config-planilla ────────────────────────
++router.put('/config-planilla', requireOficinaEdit, async (req, res) => {
++  const b = req.body as Record<string, unknown>;
++  const allowed = ['rmv', 'uit', 'topeSeguroAfp', 'horasMesBase', 'pctEssalud', 'pctOnp'] as const;
++
++  // Validate: every supplied field must be a finite number
++  for (const key of allowed) {
++    if (b[key] !== undefined && !Number.isFinite(Number(b[key]))) {
++      return res.status(400).json({ error: `Campo '${key}' debe ser un número finito` });
++    }
++  }
++
++  // Map to DB columns (decimal columns → String, integer → Number)
++  const set: Record<string, string | number> = {};
++  if (b.rmv !== undefined)           set.rmv           = String(Number(b.rmv));
++  if (b.uit !== undefined)           set.uit           = String(Number(b.uit));
++  if (b.topeSeguroAfp !== undefined) set.topeSeguroAfp = String(Number(b.topeSeguroAfp));
++  if (b.horasMesBase !== undefined)  set.horasMesBase  = Number(b.horasMesBase);
++  if (b.pctEssalud !== undefined)    set.pctEsSalud    = String(Number(b.pctEssalud));
++  if (b.pctOnp !== undefined)        set.pctOnp        = String(Number(b.pctOnp));
++
++  // Ensure singleton exists, then update
++  await db.insert(schema.configPlanilla).values({ id: 'singleton' }).onConflictDoNothing();
++  const [cfg] = await db
++    .update(schema.configPlanilla)
++    .set(set)
++    .where(eq(schema.configPlanilla.id, 'singleton'))
++    .returning();
++
++  res.json(cfgToDto(cfg));
++});
++
++// ─── POST /api/oficina/planilla ──────────────────────────────
++// body: { mes: 'YYYY-MM' } → upsert planilla_oficina_mes for empresa_id=1
++router.post('/planilla', requireOficinaEdit, async (req, res) => {
++  const { mes } = req.body as { mes?: string };
++  if (!mes || !/^\d{4}-\d{2}$/.test(mes)) {
++    return res.status(400).json({ error: 'mes debe tener formato YYYY-MM' });
++  }
++
++  // try find existing
++  const [existing] = await db
++    .select()
++    .from(schema.planillaOficinaMes)
++    .where(and(eq(schema.planillaOficinaMes.empresaId, 1), eq(schema.planillaOficinaMes.mes, mes)))
++    .limit(1);
++  if (existing) return res.json({ mes: existing });
++
++  const [row] = await db
++    .insert(schema.planillaOficinaMes)
++    .values({ empresaId: 1, mes, estado: 'borrador', createdBy: req.user!.id })
++    .returning();
++
++  res.json({ mes: row });
++});
++
++// ─── GET /api/oficina/planilla?mes= ─────────────────────────
++router.get('/planilla', async (req, res) => {
++  const mes = req.query.mes as string | undefined;
++  if (!mes) return res.status(400).json({ error: 'Parámetro mes requerido' });
++
++  const [mesRow] = await db
++    .select()
++    .from(schema.planillaOficinaMes)
++    .where(and(eq(schema.planillaOficinaMes.empresaId, 1), eq(schema.planillaOficinaMes.mes, mes)))
++    .limit(1);
++
++  if (!mesRow) return res.json({ mes: null, detalle: [] });
++
++  const detalle = await db
++    .select()
++    .from(schema.planillaOficinaDetalle)
++    .where(eq(schema.planillaOficinaDetalle.planillaMesId, mesRow.id))
++    .orderBy(asc(schema.planillaOficinaDetalle.boletaCorrelativo));
++
++  res.json({ mes: mesRow, detalle });
++});
++
++// ─── POST /api/oficina/planilla/:mesId/calcular ──────────────
++router.post('/planilla/:mesId/calcular', requireOficinaEdit, async (req, res) => {
++  const { mesId } = req.params;
++
++  const [mesRow] = await db
++    .select()
++    .from(schema.planillaOficinaMes)
++    .where(eq(schema.planillaOficinaMes.id, mesId!))
++    .limit(1);
++
++  if (!mesRow) return res.status(404).json({ error: 'Planilla mes no encontrada' });
++  if (!['borrador', 'calculada'].includes(mesRow.estado)) {
++    return res.status(422).json({ error: `No se puede calcular en estado '${mesRow.estado}'` });
++  }
++
++  // Load active admin empleados
++  const empleados = await db
++    .select()
++    .from(schema.empleados)
++    .where(and(eq(schema.empleados.tipoPlanilla, 'admin'), eq(schema.empleados.activo, true)));
++
++  // Load AFP tasas
++  const afpTasasList = await db.select().from(schema.afpTasas);
++  const afpTasasMap = new Map(afpTasasList.map((t) => [t.afp, t]));
++
++  // Build base TasasOficina from config
++  const cfg = await getConfig();
++  const baseTasas = cfgToDto(cfg);
++
++  // Build afp snapshot map (all AFPs as fractions), keyed by STRIPPED name (no (F)/(M) suffix)
++  const afpSnapshotMap: Record<string, { pctSeguro: number; pctComision: number }> = {};
++  for (const t of afpTasasList) {
++    afpSnapshotMap[afpKey(t.afp)] = { pctSeguro: frac(t.pctSeguro), pctComision: frac(t.pctComision) };
++  }
++
++  // Snapshot: config + afp tasas
++  const tasasSnapshot = { config: baseTasas, afp: afpSnapshotMap };
++
++  // Load existing detalle to preserve manual inputs
++  const existingDetalle = await db
++    .select()
++    .from(schema.planillaOficinaDetalle)
++    .where(eq(schema.planillaOficinaDetalle.planillaMesId, mesId!));
++  const existingByEmpleado = new Map(existingDetalle.map((d) => [d.empleadoId, d]));
++
++  // Load active adelantos (vigente + saldo>0) for all empleados
++  const adelantos = await db
++    .select()
++    .from(schema.adelantoOficina)
++    .where(and(eq(schema.adelantoOficina.estado, 'vigente'), gt(schema.adelantoOficina.montoTotal, '0')));
++
++  // For each adelanto, compute cuota: monto_total / num_cuotas.
++  // Cuota already deducted = sum of adelanto_cuota_aplicada.monto for that adelanto.
++  // Only include if saldo > 0.
++  // Group by empleado.
++  const adelantoCuotaByEmpleado = new Map<string, number>();
++  for (const adel of adelantos) {
++    const aplicadas = await db
++      .select({ total: sql<string>`COALESCE(SUM(monto), 0)` })
++      .from(schema.adelantoCuotaAplicada)
++      .where(eq(schema.adelantoCuotaAplicada.adelantoId, adel.id));
++    const aplicado = Number(aplicadas[0]?.total ?? 0);
++    const montoTotal = Number(adel.montoTotal);
++    const cuota = Math.round((montoTotal / adel.numCuotas) * 100) / 100;
++    const saldo = Math.round((montoTotal - aplicado) * 100) / 100;
++    if (saldo > 0) {
++      const prev = adelantoCuotaByEmpleado.get(adel.empleadoId) ?? 0;
++      adelantoCuotaByEmpleado.set(adel.empleadoId, Math.round((prev + cuota) * 100) / 100);
++    }
++  }
++
++  // Determine next boleta correlativo (global max across all planilla_oficina_detalle)
++  const [maxBoletaRow] = await db
++    .select({ max: sql<string | null>`MAX(boleta_correlativo)` })
++    .from(schema.planillaOficinaDetalle);
++  const maxBoleta = maxBoletaRow?.max;
++  let nextBolNum = 100000;
++  if (maxBoleta && /^BOL-(\d+)$/.test(maxBoleta)) {
++    nextBolNum = parseInt(maxBoleta.replace('BOL-', ''), 10);
++  }
++
++  // Delete existing detalle for this mes
++  await db
++    .delete(schema.planillaOficinaDetalle)
++    .where(eq(schema.planillaOficinaDetalle.planillaMesId, mesId!));
++
++  // Build new detalle rows
++  const rows: (typeof schema.planillaOficinaDetalle.$inferInsert)[] = [];
++  for (const emp of empleados) {
++    const tipoSP = sistemaPensionToTipo(emp.sistemaPension);
++    // Keep original sistemaPension (with suffix) for display on boleta; strip only for tasa lookup
++    const afpName = tipoSP === 'AFP' ? (emp.sistemaPension ?? null) : null;
++    const afpTasa = afpName ? afpTasasMap.get(afpKey(afpName)) : undefined;
++
++    const afpForEngine = afpTasa
++      ? { pctSeguro: frac(afpTasa.pctSeguro), pctComision: frac(afpTasa.pctComision) }
++      : undefined;
++
++    const tasas = { ...baseTasas, afp: afpForEngine };
++
++    // Preserve manual inputs from existing detalle
++    const prev = existingByEmpleado.get(emp.id);
++    const manualInputs = prev
++      ? {
++          imptoRenta5ta: Number(prev.imptoRenta5ta ?? 0),
++          retencionJudicial: Number(prev.retencionJudicial ?? 0),
++          cantHe25: Number(prev.cantHe25 ?? 0),
++          cantHe35: Number(prev.cantHe35 ?? 0),
++          dominical: Number(prev.montoDominical ?? 0),
++          feriado: Number(prev.montoFeriado ?? 0),
++          gratificacion: Number(prev.gratificacion ?? 0),
++          vacaciones: Number(prev.vacaciones ?? 0),
++          comisiones: Number(prev.comisiones ?? 0),
++          bonificacion: Number(prev.bonificacion ?? 0),
++          otrosDescuentos: Number(prev.otrosDescuentos ?? 0),
++          diasTrab: prev.diasTrab ?? 30,
++          horasTrab: prev.horasTrab ?? 240,
++        }
++      : {
++          imptoRenta5ta: 0,
++          retencionJudicial: 0,
++          cantHe25: 0,
++          cantHe35: 0,
++          dominical: 0,
++          feriado: 0,
++          gratificacion: 0,
++          vacaciones: 0,
++          comisiones: 0,
++          bonificacion: 0,
++          otrosDescuentos: 0,
++          diasTrab: 30,
++          horasTrab: 240,
++        };
++
++    const adelantoCuota = adelantoCuotaByEmpleado.get(emp.id) ?? 0;
++    const sueldoMensual = Number(emp.sueldoBaseMensual ?? 0);
++
++    const calc = calcularDetalleOficina(
++      {
++        sueldoMensual,
++        sistemaPension: tipoSP,
++        asignacionFamiliar: emp.asignacionFamiliar ?? false,
++        cantHe25: manualInputs.cantHe25,
++        cantHe35: manualInputs.cantHe35,
++        dominical: manualInputs.dominical,
++        feriado: manualInputs.feriado,
++        gratificacion: manualInputs.gratificacion,
++        vacaciones: manualInputs.vacaciones,
++        comisiones: manualInputs.comisiones,
++        bonificacion: manualInputs.bonificacion,
++        imptoRenta5ta: manualInputs.imptoRenta5ta,
++        retencionJudicial: manualInputs.retencionJudicial,
++        adelantoCuota,
++        otrosDescuentos: manualInputs.otrosDescuentos,
++        diasTrab: manualInputs.diasTrab,
++        horasTrab: manualInputs.horasTrab,
++      },
++      tasas,
++    );
++
++    nextBolNum += 1;
++    const boletaCorrelativo = `BOL-${String(nextBolNum).padStart(6, '0')}`;
++
++    rows.push({
++      planillaMesId: mesId!,
++      empleadoId: emp.id,
++      boletaCorrelativo,
++      nombre: emp.nombre,
++      cargo: emp.cargo ?? null,
++      dni: emp.numDoc ?? null,
++      afp: afpName,
++      cuspp: emp.cuspp ?? null,
++      cuentaBancaria: emp.numCuenta ?? null,
++      diasTrab: manualInputs.diasTrab,
++      horasTrab: manualInputs.horasTrab,
++      sueldoMensual: String(sueldoMensual),
++      valorHora: String(calc.valorHora),
++      cantHe25: String(manualInputs.cantHe25),
++      montoHe25: String(calc.montoHe25),
++      cantHe35: String(manualInputs.cantHe35),
++      montoHe35: String(calc.montoHe35),
++      totalHe: String(calc.totalHe),
++      diasDominical: 0,
++      montoDominical: String(manualInputs.dominical),
++      diasFeriado: 0,
++      montoFeriado: String(manualInputs.feriado),
++      asigFamiliar: String(calc.asigFamiliar),
++      gratificacion: String(manualInputs.gratificacion),
++      vacaciones: String(manualInputs.vacaciones),
++      comisiones: String(manualInputs.comisiones),
++      bonificacion: String(manualInputs.bonificacion),
++      totalBruto: String(calc.totalBruto),
++      onp: String(calc.onp),
++      afpAporte: String(calc.afpAporte),
++      afpSeguro: String(calc.afpSeguro),
++      afpComision: String(calc.afpComision),
++      imptoRenta5ta: String(calc.imptoRenta5ta),
++      retencionJudicial: String(calc.retencionJudicial),
++      adelantoCuota: String(calc.adelantoCuota),
++      otrosDescuentos: String(calc.otrosDescuentos),
++      totalDescuento: String(calc.totalDescuento),
++      essalud: String(calc.essalud),
++      essaludVida: String(calc.essaludVida),
++      totalAporte: String(calc.totalAporte),
++      netoPago: String(calc.netoPago),
++      costoTotal: String(calc.costoTotal),
++      cuentaContable: null,
++      cuentaContableOrigen: null,
++    });
++  }
++
++  if (rows.length) await db.insert(schema.planillaOficinaDetalle).values(rows);
++
++  // Update mes: estado=calculada + snapshot
++  const [updatedMes] = await db
++    .update(schema.planillaOficinaMes)
++    .set({ estado: 'calculada', tasasSnapshot })
++    .where(eq(schema.planillaOficinaMes.id, mesId!))
++    .returning();
++
++  const detalle = await db
++    .select()
++    .from(schema.planillaOficinaDetalle)
++    .where(eq(schema.planillaOficinaDetalle.planillaMesId, mesId!))
++    .orderBy(asc(schema.planillaOficinaDetalle.boletaCorrelativo));
++
++  res.json({ mes: updatedMes, detalle });
++});
++
++// ─── PATCH /api/oficina/planilla-detalle/:id ─────────────────
++// Update manual input fields + re-run engine for that one row.
++router.patch('/planilla-detalle/:id', requireOficinaEdit, async (req, res) => {
++  const { id } = req.params;
++
++  // Load detalle row
++  const [detRow] = await db
++    .select()
++    .from(schema.planillaOficinaDetalle)
++    .where(eq(schema.planillaOficinaDetalle.id, id!))
++    .limit(1);
++  if (!detRow) return res.status(404).json({ error: 'Detalle no encontrado' });
++
++  // Load parent mes and check estado
++  const [mesRow] = await db
++    .select()
++    .from(schema.planillaOficinaMes)
++    .where(eq(schema.planillaOficinaMes.id, detRow.planillaMesId))
++    .limit(1);
++  if (!mesRow) return res.status(404).json({ error: 'Planilla mes no encontrada' });
++  if (!['borrador', 'calculada'].includes(mesRow.estado)) {
++    return res.status(422).json({ error: `No se puede editar en estado '${mesRow.estado}'` });
++  }
++
++  const b = req.body as Record<string, unknown>;
++
++  // Merge manual inputs (new overrides existing)
++  const n = (field: unknown, existing: unknown) =>
++    b[field as string] !== undefined ? Number(b[field as string]) : Number(existing ?? 0);
++
++  const imptoRenta5ta = n('imptoRenta5ta', detRow.imptoRenta5ta);
++  const retencionJudicial = n('retencionJudicial', detRow.retencionJudicial);
++  const cantHe25 = n('cantHe25', detRow.cantHe25);
++  const cantHe35 = n('cantHe35', detRow.cantHe35);
++  const dominical = n('dominical', detRow.montoDominical);
++  const feriado = n('feriado', detRow.montoFeriado);
++  const gratificacion = n('gratificacion', detRow.gratificacion);
++  const vacaciones = n('vacaciones', detRow.vacaciones);
++  const comisiones = n('comisiones', detRow.comisiones);
++  const bonificacion = n('bonificacion', detRow.bonificacion);
++  const otrosDescuentos = n('otrosDescuentos', detRow.otrosDescuentos);
++
++  // Re-derive pension type from snapshot (afp field null → ONP)
++  const tipoSP: 'AFP' | 'ONP' = detRow.afp ? 'AFP' : 'ONP';
++  const asignacionFamiliar = Number(detRow.asigFamiliar ?? 0) > 0;
++  const sueldoMensual = Number(detRow.sueldoMensual ?? 0);
++  const adelantoCuota = Number(detRow.adelantoCuota ?? 0);
++
++  // Build tasas from mes snapshot
++  const snapshot = (mesRow.tasasSnapshot ?? {}) as {
++    config?: {
++      pctEssalud: number; pctOnp: number; pctAfpAporte: number;
++      rmv: number; topeSeguroAfp: number; horasMesBase: number;
++    };
++    afp?: Record<string, { pctSeguro: number; pctComision: number }>;
++  };
++
++  const cfgSnap = snapshot.config;
++  const baseTasas = cfgSnap
++    ? {
++        pctEssalud: cfgSnap.pctEssalud,
++        pctOnp: cfgSnap.pctOnp,
++        pctAfpAporte: cfgSnap.pctAfpAporte,
++        rmv: cfgSnap.rmv,
++        topeSeguroAfp: cfgSnap.topeSeguroAfp,
++        horasMesBase: cfgSnap.horasMesBase,
++      }
++    : cfgToDto(await getConfig());
++
++  // Strip (F)/(M) suffix from stored afp name before looking up snapshot (keys are stripped)
++  const afpRates = detRow.afp && snapshot.afp ? snapshot.afp[afpKey(detRow.afp)] : undefined;
++  const afpForEngine = afpRates ? { pctSeguro: afpRates.pctSeguro, pctComision: afpRates.pctComision } : undefined;
++
++  const calc = calcularDetalleOficina(
++    {
++      sueldoMensual,
++      sistemaPension: tipoSP,
++      asignacionFamiliar,
++      cantHe25,
++      cantHe35,
++      dominical,
++      feriado,
++      gratificacion,
++      vacaciones,
++      comisiones,
++      bonificacion,
++      imptoRenta5ta,
++      retencionJudicial,
++      adelantoCuota,
++      otrosDescuentos,
++      diasTrab: detRow.diasTrab ?? 30,
++      horasTrab: detRow.horasTrab ?? 240,
++    },
++    { ...baseTasas, afp: afpForEngine },
++  );
++
++  // Determine cuentaContable update
++  const newCuentaContable = b.cuentaContable !== undefined ? (b.cuentaContable as string | null) : detRow.cuentaContable;
++  const newCuentaContableOrigen =
++    b.cuentaContable !== undefined
++      ? (b.cuentaContable ? 'USUARIO' : null)
++      : detRow.cuentaContableOrigen;
++
++  const [updated] = await db
++    .update(schema.planillaOficinaDetalle)
++    .set({
++      cantHe25: String(cantHe25),
++      montoHe25: String(calc.montoHe25),
++      cantHe35: String(cantHe35),
++      montoHe35: String(calc.montoHe35),
++      totalHe: String(calc.totalHe),
++      montoDominical: String(dominical),
++      montoFeriado: String(feriado),
++      gratificacion: String(gratificacion),
++      vacaciones: String(vacaciones),
++      comisiones: String(comisiones),
++      bonificacion: String(bonificacion),
++      totalBruto: String(calc.totalBruto),
++      onp: String(calc.onp),
++      afpAporte: String(calc.afpAporte),
++      afpSeguro: String(calc.afpSeguro),
++      afpComision: String(calc.afpComision),
++      imptoRenta5ta: String(calc.imptoRenta5ta),
++      retencionJudicial: String(calc.retencionJudicial),
++      otrosDescuentos: String(calc.otrosDescuentos),
++      totalDescuento: String(calc.totalDescuento),
++      essalud: String(calc.essalud),
++      essaludVida: String(calc.essaludVida),
++      totalAporte: String(calc.totalAporte),
++      netoPago: String(calc.netoPago),
++      costoTotal: String(calc.costoTotal),
++      cuentaContable: newCuentaContable,
++      cuentaContableOrigen: newCuentaContableOrigen,
++    })
++    .where(eq(schema.planillaOficinaDetalle.id, id!))
++    .returning();
++
++  res.json({ detalle: updated });
++});
++
++// ─── Helper: saldo pendiente de un adelanto ──────────────────
++async function saldoAdelanto(adelantoId: string, montoTotal: number): Promise<number> {
++  const [row] = await db
++    .select({ total: sql<string>`COALESCE(SUM(monto), 0)` })
++    .from(schema.adelantoCuotaAplicada)
++    .where(eq(schema.adelantoCuotaAplicada.adelantoId, adelantoId));
++  const aplicado = Number(row?.total ?? 0);
++  return Math.round((montoTotal - aplicado) * 100) / 100;
++}
++
++// ─── POST /api/oficina/adelantos ─────────────────────────────
++router.post('/adelantos', requireOficinaEdit, async (req, res) => {
++  const { empleadoId, fecha, montoTotal, numCuotas, motivo } = req.body as Record<string, unknown>;
++
++  // Validate
++  if (!empleadoId || typeof empleadoId !== 'string') {
++    return res.status(400).json({ error: 'empleadoId es requerido' });
++  }
++  if (!Number.isFinite(Number(montoTotal)) || Number(montoTotal) <= 0) {
++    return res.status(400).json({ error: 'montoTotal debe ser un número positivo' });
++  }
++  const numCuotasInt = Math.floor(Number(numCuotas));
++  if (!Number.isFinite(numCuotasInt) || numCuotasInt < 1) {
++    return res.status(400).json({ error: 'numCuotas debe ser un entero >= 1' });
++  }
++  if (!fecha || typeof fecha !== 'string') {
++    return res.status(400).json({ error: 'fecha es requerida (YYYY-MM-DD)' });
++  }
++
++  // Verify empleado exists
++  const [emp] = await db
++    .select({ id: schema.empleados.id })
++    .from(schema.empleados)
++    .where(eq(schema.empleados.id, empleadoId))
++    .limit(1);
++  if (!emp) return res.status(400).json({ error: `Empleado '${empleadoId}' no encontrado` });
++
++  const montoTotalNum = Math.round(Number(montoTotal) * 100) / 100;
++
++  const [row] = await db
++    .insert(schema.adelantoOficina)
++    .values({
++      empleadoId,
++      fecha,
++      montoTotal: String(montoTotalNum),
++      numCuotas: numCuotasInt,
++      motivo: motivo ? String(motivo) : null,
++      estado: 'vigente',
++      createdBy: req.user!.id,
++    })
++    .returning();
++
++  const montoCuota = Math.round((montoTotalNum / numCuotasInt) * 100) / 100;
++
++  res.json({
++    adelanto: {
++      ...row,
++      montoCuota,
++      saldoPendiente: montoTotalNum,
++    },
++  });
++});
++
++// ─── GET /api/oficina/adelantos?empleadoId= ──────────────────
++router.get('/adelantos', async (req, res) => {
++  const empleadoId = req.query.empleadoId as string | undefined;
++  if (!empleadoId) return res.status(400).json({ error: 'Parámetro empleadoId requerido' });
++
++  const rows = await db
++    .select()
++    .from(schema.adelantoOficina)
++    .where(eq(schema.adelantoOficina.empleadoId, empleadoId))
++    .orderBy(desc(schema.adelantoOficina.fecha));
++
++  const adelantos = await Promise.all(
++    rows.map(async (a) => {
++      const montoTotalNum = Number(a.montoTotal);
++      const montoCuota = Math.round((montoTotalNum / a.numCuotas) * 100) / 100;
++      const saldoPendiente = await saldoAdelanto(a.id, montoTotalNum);
++      return { ...a, montoCuota, saldoPendiente };
++    }),
++  );
++
++  res.json({ adelantos });
++});
++
++// ─── POST /api/oficina/planilla/:mesId/cerrar ────────────────
++router.post('/planilla/:mesId/cerrar', requireOficinaEdit, async (req, res) => {
++  const { mesId } = req.params;
++
++  const [mesRow] = await db
++    .select()
++    .from(schema.planillaOficinaMes)
++    .where(eq(schema.planillaOficinaMes.id, mesId!))
++    .limit(1);
++
++  if (!mesRow) return res.status(404).json({ error: 'Planilla mes no encontrada' });
++  if (mesRow.estado !== 'calculada') {
++    return res.status(400).json({ error: `Solo se puede cerrar en estado 'calculada'; estado actual: '${mesRow.estado}'` });
++  }
++
++  // Load detalle rows
++  const detalleRows = await db
++    .select()
++    .from(schema.planillaOficinaDetalle)
++    .where(eq(schema.planillaOficinaDetalle.planillaMesId, mesId!));
++
++  // Compute last day of mes
++  const [y, m] = mesRow.mes.split('-').map(Number) as [number, number];
++  const lastDay = new Date(y, m, 0).getDate();
++  const fecha = mesRow.mes + '-' + String(lastDay).padStart(2, '0');
++
++  // Pre-load derivar context (single load for the whole transaction)
++  const derivarCtx = await cargarDerivarCtx();
++
++  // ── Step 2: Apply advance installments (in a transaction) ──
++  await db.transaction(async (tx) => {
++    for (const det of detalleRows) {
++      const cuotaTotal = Math.round(Number(det.adelantoCuota ?? 0) * 100) / 100;
++      if (cuotaTotal <= 0) continue;
++
++      // Load vigente adelantos for this employee, ordered oldest first
++      const adelantos = await tx
++        .select()
++        .from(schema.adelantoOficina)
++        .where(and(
++          eq(schema.adelantoOficina.empleadoId, det.empleadoId),
++          eq(schema.adelantoOficina.estado, 'vigente'),
++        ))
++        .orderBy(asc(schema.adelantoOficina.fecha));
++
++      let remaining = cuotaTotal;
++      for (const adel of adelantos) {
++        if (remaining <= 0) break;
++
++        // Compute saldo for this adelanto
++        const [saldoRow] = await tx
++          .select({ total: sql<string>`COALESCE(SUM(monto), 0)` })
++          .from(schema.adelantoCuotaAplicada)
++          .where(eq(schema.adelantoCuotaAplicada.adelantoId, adel.id));
++        const aplicado = Number(saldoRow?.total ?? 0);
++        const montoTotal = Number(adel.montoTotal);
++        const saldo = Math.round((montoTotal - aplicado) * 100) / 100;
++
++        if (saldo <= 0) continue;
++
++        const montoCuota = Math.round((montoTotal / adel.numCuotas) * 100) / 100;
++        const applied = Math.round(Math.min(montoCuota, saldo, remaining) * 100) / 100;
++
++        // Insert cuota aplicada (idempotent: on conflict do nothing)
++        await tx
++          .insert(schema.adelantoCuotaAplicada)
++          .values({
++            adelantoId: adel.id,
++            planillaDetalleId: det.id,
++            monto: String(applied),
++            fecha,
++          })
++          .onConflictDoNothing();
++
++        remaining = Math.round((remaining - applied) * 100) / 100;
++
++        // If adelanto is now fully paid, mark cancelled
++        const newSaldo = Math.round((saldo - applied) * 100) / 100;
++        if (newSaldo <= 0) {
++          await tx
++            .update(schema.adelantoOficina)
++            .set({ estado: 'cancelado' })
++            .where(eq(schema.adelantoOficina.id, adel.id));
++        }
++      }
++    }
++  });
++
++  // ── Step 3: Build accounting lines ──
++  // Debit sueldos grouped by cuentaContable (default '621')
++  const suelDoGroupMap = new Map<string, { total: number; hasManual: boolean }>();
++  let totalEssalud = 0;
++  let totalAfp = 0;
++  let totalOnp = 0;
++  let totalRenta5ta = 0;
++  let totalOtros = 0;
++  let totalNeto = 0;
++
++  for (const det of detalleRows) {
++    const cuenta = det.cuentaContable ?? '621';
++    const hasManual = !!det.cuentaContable;
++    const bruto = Math.round(Number(det.totalBruto ?? 0) * 100) / 100;
++    const prev = suelDoGroupMap.get(cuenta);
++    if (prev) {
++      prev.total = Math.round((prev.total + bruto) * 100) / 100;
++      if (hasManual) prev.hasManual = true;
++    } else {
++      suelDoGroupMap.set(cuenta, { total: bruto, hasManual });
++    }
++
++    totalEssalud = Math.round((totalEssalud + Number(det.essalud ?? 0)) * 100) / 100;
++    totalAfp = Math.round((totalAfp + Number(det.afpAporte ?? 0) + Number(det.afpSeguro ?? 0) + Number(det.afpComision ?? 0)) * 100) / 100;
++    totalOnp = Math.round((totalOnp + Number(det.onp ?? 0)) * 100) / 100;
++    totalRenta5ta = Math.round((totalRenta5ta + Number(det.imptoRenta5ta ?? 0)) * 100) / 100;
++    totalOtros = Math.round((totalOtros + Number(det.retencionJudicial ?? 0) + Number(det.otrosDescuentos ?? 0) + Number(det.adelantoCuota ?? 0)) * 100) / 100;
++    totalNeto = Math.round((totalNeto + Number(det.netoPago ?? 0)) * 100) / 100;
++  }
++
++  const lineas: LineaIn[] = [];
++
++  // Debits: sueldos per account group
++  for (const [cuenta, grp] of suelDoGroupMap) {
++    if (grp.total < 0.005) continue;
++    lineas.push({
++      cuenta,
++      descripcion: 'Sueldos y salarios',
++      debe: grp.total,
++      haber: 0,
++      cuentaContable: cuenta,
++      obraId: null,
++      cuentaOrigen: grp.hasManual ? 'USUARIO' : 'AUTOMATICO',
++    });
++  }
++
++  // Debit EsSalud empleador
++  if (totalEssalud >= 0.005) {
++    lineas.push({
++      cuenta: '6271',
++      descripcion: 'EsSalud empleador',
++      debe: totalEssalud,
++      haber: 0,
++      cuentaContable: '6271',
++      obraId: null,
++      cuentaOrigen: 'AUTOMATICO',
++    });
++  }
++
++  // Credits
++  if (totalEssalud >= 0.005) {
++    lineas.push({
++      cuenta: '4031',
++      descripcion: 'EsSalud por pagar',
++      debe: 0,
++      haber: totalEssalud,
++      cuentaContable: '4031',
++      obraId: null,
++      cuentaOrigen: 'AUTOMATICO',
++    });
++  }
++  if (totalAfp >= 0.005) {
++    lineas.push({
++      cuenta: '407',
++      descripcion: 'AFP por pagar',
++      debe: 0,
++      haber: totalAfp,
++      cuentaContable: '407',
++      obraId: null,
++      cuentaOrigen: 'AUTOMATICO',
++    });
++  }
++  if (totalOnp >= 0.005) {
++    lineas.push({
++      cuenta: '4032',
++      descripcion: 'ONP por pagar',
++      debe: 0,
++      haber: totalOnp,
++      cuentaContable: '4032',
++      obraId: null,
++      cuentaOrigen: 'AUTOMATICO',
++    });
++  }
++  if (totalRenta5ta >= 0.005) {
++    lineas.push({
++      cuenta: '40173',
++      descripcion: 'Renta 5ta por pagar',
++      debe: 0,
++      haber: totalRenta5ta,
++      cuentaContable: '40173',
++      obraId: null,
++      cuentaOrigen: 'AUTOMATICO',
++    });
++  }
++  if (totalOtros >= 0.005) {
++    lineas.push({
++      cuenta: '469',
++      descripcion: 'Otros por pagar (judicial + descuentos + adelanto)',
++      debe: 0,
++      haber: totalOtros,
++      cuentaContable: '469',
++      obraId: null,
++      cuentaOrigen: 'AUTOMATICO',
++    });
++  }
++  if (totalNeto >= 0.005) {
++    lineas.push({
++      cuenta: '411',
++      descripcion: 'Neto por pagar',
++      debe: 0,
++      haber: totalNeto,
++      cuentaContable: '411',
++      obraId: null,
++      cuentaOrigen: 'AUTOMATICO',
++    });
++  }
++
++  // ── Step 4: Create accounting entry via WS1 engine (idempotent) ──
++  // If a previous cerrar call created the asiento but the mes update failed, reuse it
++  // instead of creating a duplicate.
++  const [existente] = await db
++    .select({ id: schema.asientos.id })
++    .from(schema.asientos)
++    .where(and(
++      eq(schema.asientos.origen, 'planilla_oficina'),
++      eq(schema.asientos.origenId, mesId!),
++      ne(schema.asientos.status, 'anulado'),
++    ))
++    .limit(1);
++
++  let asientoId: string;
++  if (existente) {
++    // Reuse existing asiento — no duplicate created on retry
++    asientoId = existente.id;
++  } else {
++    const asiento = await crearAsiento({
++      fecha,
++      glosa: 'Planilla oficina ' + mesRow.mes,
++      lineas,
++      origen: 'planilla_oficina',
++      origenId: mesId!,
++      empresaId: mesRow.empresaId,
++      derivarCtx,
++      userId: req.user!.id,
++    });
++    asientoId = asiento.id;
++  }
++
++  // ── Step 5: Update mes row ──
++  const [updatedMes] = await db
++    .update(schema.planillaOficinaMes)
++    .set({
++      estado: 'cerrada',
++      asientoId,
++      cerradoPor: req.user!.id,
++      cerradoEn: new Date(),
++    })
++    .where(eq(schema.planillaOficinaMes.id, mesId!))
++    .returning();
++
++  res.json({ mes: updatedMes, asientoId });
++});
++
++// ─── POST /api/oficina/planilla/:mesId/reabrir ───────────────
++router.post('/planilla/:mesId/reabrir', requireOficinaEdit, async (req, res) => {
++  const { mesId } = req.params;
++
++  const [mesRow] = await db
++    .select()
++    .from(schema.planillaOficinaMes)
++    .where(eq(schema.planillaOficinaMes.id, mesId!))
++    .limit(1);
++
++  if (!mesRow) return res.status(404).json({ error: 'Planilla mes no encontrada' });
++  if (mesRow.estado !== 'cerrada') {
++    return res.status(400).json({ error: `Solo se puede reabrir en estado 'cerrada'; estado actual: '${mesRow.estado}'` });
++  }
++
++  // Compute the periodo of the cierre fecha (last day of mes)
++  const [y, m] = mesRow.mes.split('-').map(Number) as [number, number];
++  const lastDay = new Date(y, m, 0).getDate();
++  const cierreFecha = mesRow.mes + '-' + String(lastDay).padStart(2, '0');
++  const periodo = cierreFecha.slice(0, 7);
++
++  if (await periodoCerrado(periodo)) {
++    return res.status(423).json({ error: `Periodo contable ${periodo} cerrado; reabrelo primero` });
++  }
++
++  const result = await db.transaction(async (tx) => {
++    // Load detalle ids for this mes
++    const detalles = await tx
++      .select({ id: schema.planillaOficinaDetalle.id })
++      .from(schema.planillaOficinaDetalle)
++      .where(eq(schema.planillaOficinaDetalle.planillaMesId, mesId!));
++
++    if (detalles.length > 0) {
++      const detalleIds = detalles.map((d) => d.id);
++
++      // Find adelantos that were cancelled due to this planilla's cuotas
++      // (adelantos where cuota_aplicada rows exist for these detalle_ids)
++      const cuotasRows = await tx
++        .select({ adelantoId: schema.adelantoCuotaAplicada.adelantoId })
++        .from(schema.adelantoCuotaAplicada)
++        .where(inArray(schema.adelantoCuotaAplicada.planillaDetalleId, detalleIds));
++
++      // Delete cuota_aplicada rows for this mes's detalle
++      await tx
++        .delete(schema.adelantoCuotaAplicada)
++        .where(inArray(schema.adelantoCuotaAplicada.planillaDetalleId, detalleIds));
++
++      // Restore cancelled adelantos that now have saldo > 0
++      const uniqueAdelantoIds = [...new Set(cuotasRows.map((r) => r.adelantoId))];
++      for (const adelantoId of uniqueAdelantoIds) {
++        const [adelRow] = await tx
++          .select()
++          .from(schema.adelantoOficina)
++          .where(eq(schema.adelantoOficina.id, adelantoId))
++          .limit(1);
++        if (!adelRow || adelRow.estado !== 'cancelado') continue;
++
++        const [saldoRow] = await tx
++          .select({ total: sql<string>`COALESCE(SUM(monto), 0)` })
++          .from(schema.adelantoCuotaAplicada)
++          .where(eq(schema.adelantoCuotaAplicada.adelantoId, adelantoId));
++        const aplicado = Number(saldoRow?.total ?? 0);
++        const saldo = Math.round((Number(adelRow.montoTotal) - aplicado) * 100) / 100;
++
++        if (saldo > 0) {
++          await tx
++            .update(schema.adelantoOficina)
++            .set({ estado: 'vigente' })
++            .where(eq(schema.adelantoOficina.id, adelantoId));
++        }
++      }
++    }
++
++    // Delete asiento (cascade deletes asientos_lineas)
++    if (mesRow.asientoId) {
++      await tx
++        .delete(schema.asientos)
++        .where(eq(schema.asientos.id, mesRow.asientoId));
++    }
++
++    // Reset mes to calculada
++    const [updatedMes] = await tx
++      .update(schema.planillaOficinaMes)
++      .set({
++        estado: 'calculada',
++        asientoId: null,
++        cerradoPor: null,
++        cerradoEn: null,
++      })
++      .where(eq(schema.planillaOficinaMes.id, mesId!))
++      .returning();
++
++    return { mes: updatedMes };
++  });
++
++  res.json(result);
++});
++
++// ─── POST /api/oficina/documentos/upload ─────────────────────
++// Multipart: field 'file' + body fields entidadTipo, entidadId, docTipo.
++// For planilla_oficina_detalle entities, derives subPath from mes+dni.
++router.post('/documentos/upload', requireOficinaEdit, upload.single('file'), async (req, res) => {
++  if (!req.file) return res.status(400).json({ error: 'Sin archivo (field name: file)' });
++
++  const { entidadTipo, entidadId, docTipo } = req.body as Record<string, string>;
++
++  if (!entidadTipo || !entidadId || !docTipo) {
++    return res.status(400).json({ error: 'Faltan campos: entidadTipo, entidadId, docTipo' });
++  }
++  if (!DOC_TIPOS_PERMITIDOS.has(docTipo)) {
++    return res.status(400).json({
++      error: `docTipo '${docTipo}' no permitido. Valores: ${[...DOC_TIPOS_PERMITIDOS].join('|')}`,
++    });
++  }
++
++  try {
++    // For planilla_oficina_detalle, derive subPath = mes/dni
++    let subPath: string | undefined;
++    if (entidadTipo === 'planilla_oficina_detalle') {
++      const [det] = await db
++        .select({
++          dni: schema.planillaOficinaDetalle.dni,
++          planillaMesId: schema.planillaOficinaDetalle.planillaMesId,
++        })
++        .from(schema.planillaOficinaDetalle)
++        .where(eq(schema.planillaOficinaDetalle.id, entidadId))
++        .limit(1);
++
++      if (!det) return res.status(404).json({ error: 'planilla_oficina_detalle no encontrado' });
++
++      const [mes] = await db
++        .select({ mes: schema.planillaOficinaMes.mes })
++        .from(schema.planillaOficinaMes)
++        .where(eq(schema.planillaOficinaMes.id, det.planillaMesId))
++        .limit(1);
++
++      subPath = `${mes?.mes ?? 'sin-mes'}/${det.dni ?? 'sin-dni'}`;
++    }
++
++    const { nasPath } = await registrarDocumento({
++      entidadTipo,
++      entidadId,
++      docTipo,
++      fileBuffer: req.file.buffer,
++      nombreArchivo: req.file.originalname,
++      subidoPor: req.user?.id ?? null,
++      subPath,
++    });
++
++    res.json({ ok: true, nasPath });
++  } catch (e) {
++    res.status(502).json({ error: `Upload error: ${(e as Error).message}` });
++  }
++});
++
++// ─── GET /api/oficina/planilla-detalle/:id/docs ───────────────
++router.get('/planilla-detalle/:id/docs', async (req, res) => {
++  try {
++    const result = await docsDetalle(req.params.id!);
++    res.json(result);
++  } catch (e) {
++    res.status(500).json({ error: (e as Error).message });
++  }
++});
++
++export default router;
+diff --git a/apps/frontend/src/components/oficina/AdelantosPanel.tsx b/apps/frontend/src/components/oficina/AdelantosPanel.tsx
+new file mode 100644
+index 0000000..786f4f8
+--- /dev/null
++++ b/apps/frontend/src/components/oficina/AdelantosPanel.tsx
+@@ -0,0 +1,210 @@
++import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
++import { Loader2, Plus } from 'lucide-react';
++import { useState } from 'react';
++import { api } from '@/lib/api.js';
++import { cn, fmtPEN } from '@/lib/utils.js';
++
++const inputCls = 'h-8 px-2 rounded-md border border-line bg-bg-elev text-[12px] w-full min-w-0';
++
++export function AdelantosPanel({
++  empleadoId,
++  empleadoNombre,
++}: {
++  empleadoId: string;
++  empleadoNombre?: string;
++}) {
++  const qc = useQueryClient();
++  const today = new Date().toISOString().slice(0, 10);
++
++  const [fecha, setFecha] = useState(today);
++  const [montoTotal, setMontoTotal] = useState('');
++  const [numCuotas, setNumCuotas] = useState('1');
++  const [motivo, setMotivo] = useState('');
++
++  const { data, isLoading } = useQuery({
++    queryKey: ['adelantos', empleadoId],
++    queryFn: () => api.oficina.listAdelantosOficina(empleadoId),
++  });
++
++  const crear = useMutation({
++    mutationFn: () =>
++      api.oficina.crearAdelantoOficina({
++        empleadoId,
++        fecha,
++        montoTotal: Number(montoTotal),
++        numCuotas: Number(numCuotas),
++        motivo: motivo.trim() || undefined,
++      }),
++    onSuccess: () => {
++      void qc.invalidateQueries({ queryKey: ['adelantos', empleadoId] });
++      setFecha(today);
++      setMontoTotal('');
++      setNumCuotas('1');
++      setMotivo('');
++    },
++  });
++
++  const adelantos = data?.adelantos ?? [];
++  const canSubmit = Number(montoTotal) > 0 && Number(numCuotas) >= 1 && !crear.isPending;
++
++  return (
++    <div className="space-y-4">
++      {/* Title */}
++      <div className="flex items-center gap-2">
++        <span className="text-[12px] font-medium text-foreground">
++          Adelantos
++          {empleadoNombre ? ` — ${empleadoNombre}` : ''}
++        </span>
++        <span className="text-[11px] text-ink-4">({adelantos.length})</span>
++      </div>
++
++      {/* List */}
++      {isLoading ? (
++        <div className="flex items-center gap-2 text-[12px] text-ink-4 py-2">
++          <Loader2 className="w-3.5 h-3.5 animate-spin" />
++          Cargando…
++        </div>
++      ) : adelantos.length === 0 ? (
++        <p className="text-[12px] text-ink-4 py-2">Sin adelantos registrados.</p>
++      ) : (
++        <div className="rounded-md border border-line bg-bg-elev overflow-hidden">
++          <table className="w-full text-[12px]">
++            <thead>
++              <tr className="border-b border-line bg-bg-sunken">
++                <th className="text-left px-3 py-2 text-[10px] font-mono uppercase tracking-wider text-ink-4">
++                  Fecha
++                </th>
++                <th className="text-right px-3 py-2 text-[10px] font-mono uppercase tracking-wider text-ink-4">
++                  Monto
++                </th>
++                <th className="text-right px-3 py-2 text-[10px] font-mono uppercase tracking-wider text-ink-4">
++                  Cuotas
++                </th>
++                <th className="text-right px-3 py-2 text-[10px] font-mono uppercase tracking-wider text-ink-4">
++                  Cuota/mes
++                </th>
++                <th className="text-right px-3 py-2 text-[10px] font-mono uppercase tracking-wider text-ink-4">
++                  Saldo
++                </th>
++                <th className="text-center px-3 py-2 text-[10px] font-mono uppercase tracking-wider text-ink-4">
++                  Estado
++                </th>
++              </tr>
++            </thead>
++            <tbody className="divide-y divide-line">
++              {adelantos.map((a) => (
++                <tr key={a.id} className="hover:bg-bg-sunken/50 transition-colors">
++                  <td className="px-3 py-2 text-ink-3 font-mono tabular-nums">
++                    {a.fecha.slice(0, 10)}
++                  </td>
++                  <td className="px-3 py-2 text-right font-mono tabular-nums">
++                    {fmtPEN(Number(a.montoTotal))}
++                  </td>
++                  <td className="px-3 py-2 text-right text-ink-3">{a.numCuotas}</td>
++                  <td className="px-3 py-2 text-right font-mono tabular-nums text-ink-3">
++                    {fmtPEN(a.montoCuota)}
++                  </td>
++                  <td
++                    className={cn(
++                      'px-3 py-2 text-right font-mono tabular-nums font-medium',
++                      a.saldoPendiente > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-ink-4',
++                    )}
++                  >
++                    {fmtPEN(a.saldoPendiente)}
++                  </td>
++                  <td className="px-3 py-2 text-center">
++                    <span
++                      className={cn(
++                        'inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium',
++                        a.estado === 'vigente'
++                          ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400'
++                          : 'bg-bg-sunken text-ink-4',
++                      )}
++                    >
++                      {a.estado}
++                    </span>
++                  </td>
++                </tr>
++              ))}
++            </tbody>
++          </table>
++        </div>
++      )}
++
++      {/* Create form */}
++      <div className="rounded-md border border-line bg-bg-sunken/40 p-3 space-y-3">
++        <div className="text-[10px] font-mono uppercase tracking-wider text-ink-4">
++          Registrar adelanto
++        </div>
++        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
++          <label className="block">
++            <span className="text-[10.5px] text-ink-4">Fecha</span>
++            <input
++              type="date"
++              value={fecha}
++              onChange={(e) => setFecha(e.target.value)}
++              className={cn(inputCls, 'mt-0.5')}
++            />
++          </label>
++          <label className="block">
++            <span className="text-[10.5px] text-ink-4">Monto total (S/)</span>
++            <input
++              type="number"
++              step="0.01"
++              min="0.01"
++              value={montoTotal}
++              onChange={(e) => setMontoTotal(e.target.value)}
++              placeholder="0.00"
++              className={cn(inputCls, 'mt-0.5 font-mono tabular-nums')}
++            />
++          </label>
++          <label className="block">
++            <span className="text-[10.5px] text-ink-4">N° cuotas</span>
++            <input
++              type="number"
++              step="1"
++              min="1"
++              value={numCuotas}
++              onChange={(e) => setNumCuotas(e.target.value)}
++              className={cn(inputCls, 'mt-0.5')}
++            />
++          </label>
++          <label className="block">
++            <span className="text-[10.5px] text-ink-4">Motivo</span>
++            <input
++              type="text"
++              value={motivo}
++              onChange={(e) => setMotivo(e.target.value)}
++              placeholder="opcional"
++              className={cn(inputCls, 'mt-0.5')}
++            />
++          </label>
++        </div>
++        <div className="flex justify-end">
++          <button
++            onClick={() => crear.mutate()}
++            disabled={!canSubmit}
++            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md bg-primary text-primary-foreground text-[12px] font-medium hover:opacity-90 transition-opacity disabled:opacity-40"
++          >
++            {crear.isPending ? (
++              <>
++                <Loader2 className="w-3.5 h-3.5 animate-spin" />
++                Guardando…
++              </>
++            ) : (
++              <>
++                <Plus className="w-3.5 h-3.5" />
++                Registrar adelanto
++              </>
++            )}
++          </button>
++        </div>
++        {crear.isError && (
++          <p className="text-[11px] text-red-500">
++            Error al registrar: {(crear.error as Error).message}
++          </p>
++        )}
++      </div>
++    </div>
++  );
++}
+diff --git a/apps/frontend/src/components/oficina/BoletaOficina.tsx b/apps/frontend/src/components/oficina/BoletaOficina.tsx
+new file mode 100644
+index 0000000..150899b
+--- /dev/null
++++ b/apps/frontend/src/components/oficina/BoletaOficina.tsx
+@@ -0,0 +1,209 @@
++import { Printer, X } from 'lucide-react';
++import { type PlanillaOficinaDetalle } from '@/lib/api.js';
++import { fmtPEN } from '@/lib/utils.js';
++
++function Row({ label, value }: { label: string; value: string }) {
++  return (
++    <div className="flex justify-between gap-2 py-0.5 border-b border-line/40 last:border-0">
++      <span className="text-[11px] text-ink-3 truncate">{label}</span>
++      <span className="text-[11px] font-mono tabular-nums text-foreground whitespace-nowrap">{value}</span>
++    </div>
++  );
++}
++
++function DataRow({ label, value }: { label: string; value: string | null | undefined }) {
++  if (!value) return null;
++  return (
++    <div className="flex gap-2">
++      <span className="text-[10.5px] text-ink-4 w-24 shrink-0">{label}</span>
++      <span className="text-[11px] text-foreground">{value}</span>
++    </div>
++  );
++}
++
++export function BoletaOficina({
++  detalle,
++  razonSocial,
++  ruc,
++  mes,
++  onClose,
++}: {
++  detalle: PlanillaOficinaDetalle;
++  razonSocial?: string;
++  ruc?: string;
++  mes?: string;
++  onClose: () => void;
++}) {
++  const d = detalle;
++  const n = (v: string | null | undefined) => Number(v ?? 0);
++
++  return (
++    <div
++      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 animate-backdropIn"
++      onClick={(e) => e.target === e.currentTarget && onClose()}
++    >
++      <div className="w-full max-w-2xl rounded-xl border border-line bg-bg-elev shadow-xl animate-modalPop overflow-y-auto max-h-[90vh]">
++        {/* Header */}
++        <div className="flex items-start justify-between p-4 border-b border-line">
++          <div>
++            <div className="text-[10.5px] font-mono uppercase tracking-widest text-ink-4 mb-0.5">
++              Boleta de Pago
++            </div>
++            <div className="text-[14px] font-semibold text-foreground">
++              {razonSocial ?? 'MM HIGH METRIK'}
++            </div>
++            {ruc && <div className="text-[11px] text-ink-3">RUC {ruc}</div>}
++            {mes && <div className="text-[11px] text-ink-3">Período: {mes}</div>}
++            {d.boletaCorrelativo && (
++              <div className="text-[11px] text-ink-3">N° {d.boletaCorrelativo}</div>
++            )}
++          </div>
++          <button
++            onClick={onClose}
++            className="h-7 w-7 flex items-center justify-center rounded-md border border-line hover:bg-bg-sunken text-ink-3 hover:text-foreground transition-colors"
++          >
++            <X className="w-4 h-4" />
++          </button>
++        </div>
++
++        {/* Datos del trabajador */}
++        <div className="p-4 border-b border-line bg-bg-sunken/40">
++          <div className="text-[10px] font-mono uppercase tracking-wider text-ink-4 mb-2">
++            Datos del Trabajador
++          </div>
++          <div className="grid grid-cols-2 gap-x-6 gap-y-1">
++            <DataRow label="Nombre" value={d.nombre} />
++            <DataRow label="Cargo" value={d.cargo} />
++            <DataRow label="DNI" value={d.dni} />
++            <DataRow label="AFP" value={d.afp} />
++            <DataRow label="CUSPP" value={d.cuspp} />
++            <DataRow
++              label="Días trab."
++              value={d.diasTrab != null ? String(d.diasTrab) : undefined}
++            />
++            <DataRow
++              label="Horas trab."
++              value={d.horasTrab != null ? String(d.horasTrab) : undefined}
++            />
++          </div>
++        </div>
++
++        {/* Columnas remuneraciones / descuentos */}
++        <div className="grid grid-cols-2 gap-0 divide-x divide-line">
++          {/* Remuneraciones */}
++          <div className="p-4">
++            <div className="text-[10px] font-mono uppercase tracking-wider text-ink-4 mb-2">
++              Remuneraciones
++            </div>
++            <div className="space-y-0">
++              <Row label="Mensual" value={fmtPEN(n(d.sueldoMensual))} />
++              {n(d.totalHe) > 0 && (
++                <Row label="Horas Extras" value={fmtPEN(n(d.totalHe))} />
++              )}
++              {n(d.montoDominical) > 0 && (
++                <Row label="Dominical" value={fmtPEN(n(d.montoDominical))} />
++              )}
++              {n(d.montoFeriado) > 0 && (
++                <Row label="Feriado" value={fmtPEN(n(d.montoFeriado))} />
++              )}
++              {n(d.asigFamiliar) > 0 && (
++                <Row label="Asig. Familiar" value={fmtPEN(n(d.asigFamiliar))} />
++              )}
++              {n(d.gratificacion) > 0 && (
++                <Row label="Gratificaciones" value={fmtPEN(n(d.gratificacion))} />
++              )}
++              {n(d.vacaciones) > 0 && (
++                <Row label="Vacaciones" value={fmtPEN(n(d.vacaciones))} />
++              )}
++              {n(d.comisiones) > 0 && (
++                <Row label="Comisiones" value={fmtPEN(n(d.comisiones))} />
++              )}
++              {n(d.bonificacion) > 0 && (
++                <Row label="Bonificaciones" value={fmtPEN(n(d.bonificacion))} />
++              )}
++            </div>
++            <div className="mt-2 pt-2 border-t border-line flex justify-between">
++              <span className="text-[11px] font-semibold">Total Bruto</span>
++              <span className="text-[11px] font-mono font-semibold tabular-nums">
++                {fmtPEN(n(d.totalBruto))}
++              </span>
++            </div>
++          </div>
++
++          {/* Aportes y descuentos */}
++          <div className="p-4">
++            <div className="text-[10px] font-mono uppercase tracking-wider text-ink-4 mb-2">
++              Aportes y Descuentos
++            </div>
++            <div className="text-[9.5px] font-mono uppercase tracking-wider text-ink-4 mb-1 mt-1">
++              Trabajador
++            </div>
++            <div className="space-y-0">
++              {n(d.onp) > 0 && <Row label="ONP" value={fmtPEN(n(d.onp))} />}
++              {n(d.afpAporte) > 0 && (
++                <Row label="AFP Pensión" value={fmtPEN(n(d.afpAporte))} />
++              )}
++              {n(d.afpSeguro) > 0 && (
++                <Row label="AFP Seguro" value={fmtPEN(n(d.afpSeguro))} />
++              )}
++              {n(d.afpComision) > 0 && (
++                <Row label="AFP Com." value={fmtPEN(n(d.afpComision))} />
++              )}
++              {n(d.imptoRenta5ta) > 0 && (
++                <Row label="Impto. Renta 5ta" value={fmtPEN(n(d.imptoRenta5ta))} />
++              )}
++              {n(d.retencionJudicial) > 0 && (
++                <Row label="Retenc. Judicial" value={fmtPEN(n(d.retencionJudicial))} />
++              )}
++              {n(d.adelantoCuota) > 0 && (
++                <Row label="Adelantos" value={fmtPEN(n(d.adelantoCuota))} />
++              )}
++              {n(d.otrosDescuentos) > 0 && (
++                <Row label="Descuentos" value={fmtPEN(n(d.otrosDescuentos))} />
++              )}
++            </div>
++            {n(d.essalud) > 0 && (
++              <>
++                <div className="text-[9.5px] font-mono uppercase tracking-wider text-ink-4 mb-1 mt-2">
++                  Empleador
++                </div>
++                <Row label="Reg. Salud / EsSalud" value={fmtPEN(n(d.essalud))} />
++              </>
++            )}
++            <div className="mt-2 pt-2 border-t border-line space-y-1">
++              <div className="flex justify-between">
++                <span className="text-[11px] text-ink-3">Total Descuento</span>
++                <span className="text-[11px] font-mono tabular-nums text-ink-3">
++                  {fmtPEN(n(d.totalDescuento))}
++                </span>
++              </div>
++              <div className="flex justify-between">
++                <span className="text-[11px] font-semibold">Neto Recibido</span>
++                <span className="text-[11px] font-mono font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
++                  {fmtPEN(n(d.netoPago))}
++                </span>
++              </div>
++            </div>
++          </div>
++        </div>
++
++        {/* Footer */}
++        <div className="flex justify-end gap-2 p-4 border-t border-line">
++          <button
++            onClick={onClose}
++            className="h-8 px-3 rounded-md border border-line text-[12px] hover:bg-bg-sunken transition-colors"
++          >
++            Cerrar
++          </button>
++          <button
++            onClick={() => window.print()}
++            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md bg-primary text-primary-foreground text-[12px] font-medium hover:opacity-90 transition-opacity"
++          >
++            <Printer className="w-3.5 h-3.5" />
++            Imprimir
++          </button>
++        </div>
++      </div>
++    </div>
++  );
++}
+diff --git a/apps/frontend/src/components/oficina/DocumentoAdjunto.tsx b/apps/frontend/src/components/oficina/DocumentoAdjunto.tsx
+new file mode 100644
+index 0000000..a1d54e4
+--- /dev/null
++++ b/apps/frontend/src/components/oficina/DocumentoAdjunto.tsx
+@@ -0,0 +1,99 @@
++import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
++import { AlertTriangle, CheckCircle2, Loader2, Upload } from 'lucide-react';
++import { useRef } from 'react';
++import { api } from '@/lib/api.js';
++import { cn } from '@/lib/utils.js';
++
++export function DocumentoAdjunto({
++  entidadTipo,
++  entidadId,
++  docTipo = 'comprobante_pago',
++  label,
++}: {
++  entidadTipo: string;
++  entidadId: string;
++  docTipo?: string;
++  label?: string;
++}) {
++  const qc = useQueryClient();
++  const fileRef = useRef<HTMLInputElement>(null);
++
++  const { data, isLoading } = useQuery({
++    queryKey: ['docs-detalle', entidadId],
++    queryFn: () => api.oficina.docsDetalleOficina(entidadId),
++  });
++
++  const upload = useMutation({
++    mutationFn: (file: File) => {
++      const form = new FormData();
++      form.append('entidadTipo', entidadTipo);
++      form.append('entidadId', entidadId);
++      form.append('docTipo', docTipo);
++      form.append('file', file);
++      return api.oficina.subirDocumentoOficina(form);
++    },
++    onSuccess: () => {
++      void qc.invalidateQueries({ queryKey: ['docs-detalle', entidadId] });
++    },
++  });
++
++  const hasComprobante = data?.comprobante ?? false;
++  const chipLabel = label ?? 'comprobante';
++
++  return (
++    <div className="inline-flex items-center gap-1.5">
++      {isLoading ? (
++        <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] bg-bg-sunken text-ink-4">
++          <Loader2 className="w-3 h-3 animate-spin" />
++          cargando…
++        </span>
++      ) : (
++        <span
++          className={cn(
++            'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium',
++            hasComprobante
++              ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
++              : 'bg-amber-500/10 text-amber-600 dark:text-amber-400',
++          )}
++        >
++          {hasComprobante ? (
++            <CheckCircle2 className="w-3 h-3" />
++          ) : (
++            <AlertTriangle className="w-3 h-3" />
++          )}
++          {hasComprobante ? chipLabel : `falta ${chipLabel}`}
++        </span>
++      )}
++
++      <button
++        onClick={() => fileRef.current?.click()}
++        disabled={upload.isPending}
++        className="inline-flex items-center gap-1 h-6 px-2 rounded-md border border-line bg-bg-elev text-[11px] text-ink-3 hover:text-foreground hover:bg-bg-sunken transition-colors disabled:opacity-50"
++        title="Subir documento"
++      >
++        {upload.isPending ? (
++          <>
++            <Loader2 className="w-3 h-3 animate-spin" />
++            subiendo…
++          </>
++        ) : (
++          <>
++            <Upload className="w-3 h-3" />
++            subir
++          </>
++        )}
++      </button>
++
++      <input
++        ref={fileRef}
++        type="file"
++        className="hidden"
++        onChange={(e) => {
++          const file = e.target.files?.[0];
++          if (file) upload.mutate(file);
++          e.target.value = '';
++        }}
++      />
++    </div>
++  );
++}
+diff --git a/apps/frontend/src/components/oficina/PlanillaOficinaTab.tsx b/apps/frontend/src/components/oficina/PlanillaOficinaTab.tsx
+new file mode 100644
+index 0000000..fdbafac
+--- /dev/null
++++ b/apps/frontend/src/components/oficina/PlanillaOficinaTab.tsx
+@@ -0,0 +1,384 @@
++import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
++import { useState } from 'react';
++import { createPortal } from 'react-dom';
++import { X } from 'lucide-react';
++import { type PlanillaOficinaDetalle, ApiError, api } from '@/lib/api.js';
++import { cn, fmtPEN } from '@/lib/utils.js';
++import { CuentaContableSelect } from '@/components/contabilidad/CuentaContableSelect.js';
++import { DocumentoAdjunto } from '@/components/oficina/DocumentoAdjunto.js';
++import { BoletaOficina } from '@/components/oficina/BoletaOficina.js';
++import { AdelantosPanel } from '@/components/oficina/AdelantosPanel.js';
++
++const ESTADO_BADGE: Record<string, { l: string; cls: string }> = {
++  borrador:  { l: 'Borrador',   cls: 'bg-bg-sunken text-ink-3' },
++  calculada: { l: 'Calculada',  cls: 'bg-blue-500/15 text-blue-600' },
++  cerrada:   { l: 'Cerrada',    cls: 'bg-emerald-500/15 text-emerald-600' },
++  pagada:    { l: 'Pagada',     cls: 'bg-emerald-500/25 text-emerald-700' },
++};
++
++type ModalState =
++  | { kind: 'boleta'; det: PlanillaOficinaDetalle }
++  | { kind: 'adelantos'; det: PlanillaOficinaDetalle }
++  | null;
++
++// Simple Modal wrapper
++function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
++  return createPortal(
++    <div
++      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 animate-backdropIn"
++      onClick={(e) => e.target === e.currentTarget && onClose()}
++    >
++      <div
++        className="w-full max-w-2xl max-h-[90vh] overflow-auto rounded-xl border border-line bg-bg-elev shadow-2xl animate-modalPop"
++        onClick={(e) => e.stopPropagation()}
++      >
++        <div className="flex items-center justify-between border-b border-line px-4 py-3">
++          <h3 className="text-[14px] font-semibold">{title}</h3>
++          <button onClick={onClose} className="text-ink-4 hover:text-ink-2">
++            <X className="h-4 w-4" />
++          </button>
++        </div>
++        <div className="p-4">{children}</div>
++      </div>
++    </div>,
++    document.body,
++  );
++}
++
++export function PlanillaOficinaTab() {
++  const qc = useQueryClient();
++
++  // Default to current month YYYY-MM
++  const [mes, setMes] = useState(() => new Date().toISOString().slice(0, 7));
++  const [modal, setModal] = useState<ModalState>(null);
++  const [asientoMsg, setAsientoMsg] = useState<string | null>(null);
++  const [errMsg, setErrMsg] = useState<string | null>(null);
++
++  const qKey = ['planilla-oficina', mes] as const;
++
++  const { data, isLoading } = useQuery({
++    queryKey: qKey,
++    queryFn: () => api.oficina.getPlanillaOficina(mes),
++  });
++
++  const invalidate = () => qc.invalidateQueries({ queryKey: qKey });
++
++  const crearMut = useMutation({
++    mutationFn: () => api.oficina.crearPlanillaOficina(mes),
++    onSuccess: invalidate,
++    onError: (e: Error) => setErrMsg(e.message),
++  });
++
++  const calcularMut = useMutation({
++    mutationFn: (id: string) => api.oficina.calcularPlanillaOficina(id),
++    onSuccess: () => { setErrMsg(null); invalidate(); },
++    onError: (e: Error) => setErrMsg(e.message),
++  });
++
++  const cerrarMut = useMutation({
++    mutationFn: (id: string) => api.oficina.cerrarPlanillaOficina(id),
++    onSuccess: (res) => {
++      setErrMsg(null);
++      setAsientoMsg(`Asiento generado: ${res.asientoId}`);
++      invalidate();
++    },
++    onError: (e: Error) => {
++      if (e instanceof ApiError && e.status === 423) {
++        setErrMsg(`Periodo cerrado: ${e.message}`);
++      } else {
++        setErrMsg(e.message);
++      }
++    },
++  });
++
++  const reabrirMut = useMutation({
++    mutationFn: (id: string) => api.oficina.reabrirPlanillaOficina(id),
++    onSuccess: () => { setErrMsg(null); setAsientoMsg(null); invalidate(); },
++    onError: (e: Error) => {
++      if (e instanceof ApiError && e.status === 423) {
++        setErrMsg(`Periodo cerrado: ${e.message}`);
++      } else {
++        setErrMsg(e.message);
++      }
++    },
++  });
++
++  const editarMut = useMutation({
++    mutationFn: ({ id, patch }: { id: string; patch: Record<string, unknown> }) =>
++      api.oficina.editarDetalleOficina(id, patch),
++    onSuccess: invalidate,
++  });
++
++  const planilla = data?.mes ?? null;
++  const detalle = data?.detalle ?? [];
++  const estado = planilla?.estado ?? null;
++  const readonly = estado === 'cerrada' || estado === 'pagada';
++
++  const totalBruto = detalle.reduce((s, d) => s + Number(d.totalBruto), 0);
++  const totalNeto  = detalle.reduce((s, d) => s + Number(d.netoPago), 0);
++
++  return (
++    <div className="space-y-4">
++      {/* Header row: month selector */}
++      <div className="flex flex-wrap items-center gap-3">
++        <label className="flex items-center gap-2 text-[12.5px] font-medium">
++          Mes:
++          <input
++            type="month"
++            value={mes}
++            onChange={(e) => { setMes(e.target.value); setAsientoMsg(null); setErrMsg(null); }}
++            className="h-8 px-2 rounded-md border border-line bg-bg-elev text-[12px]"
++          />
++        </label>
++
++        {/* Estado badge + actions */}
++        {planilla && (
++          <>
++            <span className={cn('rounded px-2 py-0.5 text-[11px] font-medium', ESTADO_BADGE[estado ?? '']?.cls ?? 'bg-bg-sunken text-ink-3')}>
++              {ESTADO_BADGE[estado ?? '']?.l ?? estado}
++            </span>
++
++            {(estado === 'borrador' || estado === 'calculada') && (
++              <button
++                disabled={calcularMut.isPending}
++                onClick={() => calcularMut.mutate(planilla.id)}
++                className="inline-flex items-center h-8 px-3 rounded-md bg-primary text-primary-foreground text-[12px] font-medium disabled:opacity-50"
++              >
++                {calcularMut.isPending ? 'Calculando…' : 'Calcular'}
++              </button>
++            )}
++
++            {estado === 'calculada' && (
++              <button
++                disabled={cerrarMut.isPending}
++                onClick={() => cerrarMut.mutate(planilla.id)}
++                className="inline-flex items-center h-8 px-3 rounded-md bg-emerald-600 text-white text-[12px] font-medium disabled:opacity-50"
++              >
++                {cerrarMut.isPending ? 'Cerrando…' : 'Cerrar'}
++              </button>
++            )}
++
++            {estado === 'cerrada' && (
++              <button
++                disabled={reabrirMut.isPending}
++                onClick={() => reabrirMut.mutate(planilla.id)}
++                className="inline-flex items-center h-8 px-3 rounded-md border border-line text-ink-2 text-[12px] font-medium disabled:opacity-50 hover:bg-bg-sunken"
++              >
++                {reabrirMut.isPending ? 'Reabriendo…' : 'Reabrir'}
++              </button>
++            )}
++          </>
++        )}
++
++        {/* No planilla yet */}
++        {!planilla && !isLoading && (
++          <button
++            disabled={crearMut.isPending}
++            onClick={() => crearMut.mutate()}
++            className="inline-flex items-center h-8 px-3 rounded-md bg-primary text-primary-foreground text-[12px] font-medium disabled:opacity-50"
++          >
++            {crearMut.isPending ? 'Creando…' : `Crear planilla de ${mes}`}
++          </button>
++        )}
++      </div>
++
++      {/* Feedback messages */}
++      {asientoMsg && (
++        <div className="rounded-md bg-emerald-500/10 border border-emerald-500/20 px-3 py-2 text-[12px] text-emerald-600">
++          {asientoMsg}
++        </div>
++      )}
++      {errMsg && (
++        <div className="rounded-md bg-rose-500/10 border border-rose-500/20 px-3 py-2 text-[12px] text-rose-600">
++          {errMsg}
++        </div>
++      )}
++
++      {isLoading && (
++        <div className="text-[12px] text-ink-4 py-4">Cargando…</div>
++      )}
++
++      {/* Detalle grid */}
++      {planilla && detalle.length > 0 && (
++        <div className="overflow-x-auto rounded-md border border-line bg-bg-elev">
++          <table className="w-full min-w-[900px]">
++            <thead>
++              <tr className="border-b border-line bg-bg-sunken">
++                {['Trabajador', 'Bruto', 'Renta 5ta', 'Cuenta contable', 'Adelanto', 'Dscto', 'Neto', 'Docs', 'Acciones'].map((h, i) => (
++                  <th
++                    key={i}
++                    className={cn(
++                      'px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-ink-4',
++                      i >= 1 && i <= 6 ? 'text-right' : 'text-left',
++                    )}
++                  >
++                    {h}
++                  </th>
++                ))}
++              </tr>
++            </thead>
++            <tbody>
++              {detalle.map((det) => (
++                <DetalleRow
++                  key={det.id}
++                  det={det}
++                  readonly={readonly}
++                  onEdit={(patch) => editarMut.mutate({ id: det.id, patch })}
++                  onBoleta={() => setModal({ kind: 'boleta', det })}
++                  onAdelantos={() => setModal({ kind: 'adelantos', det })}
++                />
++              ))}
++            </tbody>
++            <tfoot>
++              <tr className="border-t-2 border-line bg-bg-sunken">
++                <td className="px-3 py-2 text-[11px] font-semibold text-ink-3" colSpan={1}>Totales</td>
++                <td className="px-3 py-2 text-right font-mono text-[11.5px] font-semibold tabular-nums">{fmtPEN(totalBruto)}</td>
++                <td colSpan={4} />
++                <td className="px-3 py-2 text-right font-mono text-[11.5px] font-bold tabular-nums text-primary">{fmtPEN(totalNeto)}</td>
++                <td colSpan={2} />
++              </tr>
++            </tfoot>
++          </table>
++        </div>
++      )}
++
++      {planilla && detalle.length === 0 && !isLoading && (
++        <div className="rounded-md border border-line bg-bg-elev p-8 text-center text-[12px] text-ink-3">
++          Sin trabajadores en la planilla. Asegúrate de tener administrativos registrados.
++        </div>
++      )}
++
++      {/* Modals */}
++      {modal?.kind === 'boleta' && (
++        <BoletaOficina
++          detalle={modal.det}
++          mes={mes}
++          onClose={() => setModal(null)}
++        />
++      )}
++
++      {modal?.kind === 'adelantos' && (
++        <Modal
++          title={`Adelantos — ${modal.det.nombre ?? ''}`}
++          onClose={() => setModal(null)}
++        >
++          <AdelantosPanel
++            empleadoId={modal.det.empleadoId}
++            empleadoNombre={modal.det.nombre ?? undefined}
++          />
++        </Modal>
++      )}
++    </div>
++  );
++}
++
++function DetalleRow({
++  det,
++  readonly,
++  onEdit,
++  onBoleta,
++  onAdelantos,
++}: {
++  det: PlanillaOficinaDetalle;
++  readonly: boolean;
++  onEdit: (patch: Record<string, unknown>) => void;
++  onBoleta: () => void;
++  onAdelantos: () => void;
++}) {
++  const [renta, setRenta] = useState(String(Number(det.imptoRenta5ta) || ''));
++
++  const handleRentaBlur = () => {
++    const v = Number(renta);
++    if (v !== Number(det.imptoRenta5ta)) {
++      onEdit({ imptoRenta5ta: v });
++    }
++  };
++
++  return (
++    <tr className="border-b border-line/60 hover:bg-bg-sunken/30">
++      {/* Trabajador */}
++      <td className="px-3 py-2">
++        <div className="text-[12px] font-medium">{det.nombre ?? '—'}</div>
++        {det.cargo && <div className="text-[10.5px] text-ink-4">{det.cargo}</div>}
++      </td>
++
++      {/* Bruto */}
++      <td className="px-3 py-2 text-right font-mono text-[11.5px] tabular-nums">
++        {fmtPEN(Number(det.totalBruto))}
++      </td>
++
++      {/* Renta 5ta (editable) */}
++      <td className="px-3 py-2 text-right">
++        <input
++          type="number"
++          step="0.01"
++          min="0"
++          disabled={readonly}
++          value={renta}
++          onChange={(e) => setRenta(e.target.value)}
++          onBlur={handleRentaBlur}
++          className={cn(
++            'h-7 w-20 px-1.5 text-right rounded-md border border-line bg-bg-elev font-mono text-[11.5px] tabular-nums',
++            readonly && 'opacity-60 cursor-not-allowed',
++          )}
++        />
++      </td>
++
++      {/* Cuenta contable */}
++      <td className="px-3 py-2 min-w-[160px]">
++        {readonly ? (
++          <span className="font-mono text-[11.5px] text-ink-3">{det.cuentaContable ?? '—'}</span>
++        ) : (
++          <CuentaContableSelect
++            value={det.cuentaContable}
++            onChange={(codigo) => onEdit({ cuentaContable: codigo })}
++            soloHoja
++            placeholder="Cuenta…"
++            className="w-full"
++          />
++        )}
++      </td>
++
++      {/* Adelanto cuota */}
++      <td className="px-3 py-2 text-right font-mono text-[11.5px] tabular-nums text-ink-3">
++        {fmtPEN(Number(det.adelantoCuota))}
++      </td>
++
++      {/* Descuento */}
++      <td className="px-3 py-2 text-right font-mono text-[11.5px] tabular-nums text-ink-3">
++        {fmtPEN(Number(det.totalDescuento))}
++      </td>
++
++      {/* Neto */}
++      <td className="px-3 py-2 text-right font-mono text-[11.5px] font-bold tabular-nums">
++        {fmtPEN(Number(det.netoPago))}
++      </td>
++
++      {/* Docs */}
++      <td className="px-3 py-2">
++        <DocumentoAdjunto
++          entidadTipo="planilla_oficina_detalle"
++          entidadId={det.id}
++        />
++      </td>
++
++      {/* Acciones */}
++      <td className="px-3 py-2">
++        <div className="flex items-center gap-1.5">
++          <button
++            onClick={onBoleta}
++            className="h-7 px-2 rounded-md border border-line text-[11px] text-ink-2 hover:bg-bg-sunken hover:text-foreground"
++          >
++            Boleta
++          </button>
++          <button
++            onClick={onAdelantos}
++            className="h-7 px-2 rounded-md border border-line text-[11px] text-ink-2 hover:bg-bg-sunken hover:text-foreground"
++          >
++            Adelantos
++          </button>
++        </div>
++      </td>
++    </tr>
++  );
++}
+diff --git a/apps/frontend/src/pages/OficinaPage.tsx b/apps/frontend/src/pages/OficinaPage.tsx
+index 0c6def0..6ea79c5 100644
+--- a/apps/frontend/src/pages/OficinaPage.tsx
++++ b/apps/frontend/src/pages/OficinaPage.tsx
+@@ -1,16 +1,17 @@
+ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+-import { Check, Fingerprint, Pencil, Plus, Receipt, Trash2, UserCog, Users, X } from 'lucide-react';
++import { Check, Fingerprint, Pencil, Plus, Receipt, Trash2, UserCog, Users, Wallet, X } from 'lucide-react';
+ import { createPortal } from 'react-dom';
+ import { useState } from 'react';
+ import { ConfirmDialog } from '@/components/ui/ConfirmDialog.js';
+ import { EmittingOverlay } from '@/components/ui/EmittingOverlay.js';
+ import { TabFade } from '@/components/ui/Skeleton.js';
+ import { type EmpleadoInput, type Profesional, type ProfesionalInput, type Rendicion, type RendicionItemInput, api } from '@/lib/api.js';
+ import { useAuthStore } from '@/lib/auth-store.js';
+ import { cn, fmtDate, fmtPEN } from '@/lib/utils.js';
++import { PlanillaOficinaTab } from '@/components/oficina/PlanillaOficinaTab.js';
+ 
+ const TIPOS = [
+   { v: 'viatico', l: 'Viático' }, { v: 'movilidad', l: 'Movilidad' }, { v: 'utiles', l: 'Útiles' },
+   { v: 'servicio', l: 'Servicio' }, { v: 'compra_menor', l: 'Compra menor' }, { v: 'otro', l: 'Otro' },
+ ];
+ const COMPROB = [
+@@ -24,64 +25,104 @@ const ESTADO: Record<string, { l: string; cls: string }> = {
+   rendido: { l: 'Rendido', cls: 'bg-indigo-500/15 text-indigo-600' },
+   cerrado: { l: 'Cerrado', cls: 'bg-emerald-500/15 text-emerald-600' },
+   rechazado: { l: 'Rechazado', cls: 'bg-rose-500/15 text-rose-600' },
+ };
+ const inputCls = 'h-8 px-2 rounded-md border border-line bg-bg-elev text-[12px] min-w-0';
+ const TABS = [
+-  { id: 'rendiciones', lbl: 'Rendiciones', icon: Receipt },
+-  { id: 'profesionales', lbl: 'Profesionales', icon: UserCog },
+-  { id: 'personal', lbl: 'Personal admin', icon: Users },
+-  { id: 'asistencia', lbl: 'Asistencia', icon: Fingerprint },
++  { id: 'rendiciones',  lbl: 'Rendiciones',  icon: Receipt,      gated: false },
++  { id: 'profesionales', lbl: 'Profesionales', icon: UserCog,    gated: false },
++  { id: 'personal',    lbl: 'Personal',       icon: Users,        gated: false },
++  { id: 'planilla',    lbl: 'Planilla',       icon: Wallet,       gated: true  },
++  { id: 'asistencia',  lbl: 'Asistencia',     icon: Fingerprint,  gated: true  },
+ ] as const;
+ 
+ export function OficinaPage() {
+   const [tab, setTab] = useState<(typeof TABS)[number]['id']>('rendiciones');
++  const empresaActiva = useAuthStore((s) => s.empresaActiva);
++  const isAdminOrContab = empresaActiva?.rol === 'admin' || empresaActiva?.rol === 'contabilidad';
++
++  const visibleTabs = TABS.filter((t) => !t.gated || isAdminOrContab);
++
+   return (
+     <div className="space-y-5">
+       <header>
+         <h1 className="text-[22px] font-semibold tracking-[-0.02em]">Oficina</h1>
+         <p className="text-[13px] text-ink-3 mt-0.5">Rendiciones y viáticos · personal administrativo · asistencia</p>
+       </header>
+       <div className="flex gap-1 border-b border-line">
+-        {TABS.map((t) => (
++        {visibleTabs.map((t) => (
+           <button key={t.id} onClick={() => setTab(t.id)} className={cn('inline-flex items-center gap-1.5 px-3 py-2 text-[12.5px] font-medium border-b-2 -mb-px transition-colors', tab === t.id ? 'border-primary text-primary' : 'border-transparent text-ink-3 hover:text-ink-2')}>
+             <t.icon className="h-3.5 w-3.5" /> {t.lbl}
+           </button>
+         ))}
+       </div>
+       <TabFade tabKey={tab}>
+         {tab === 'rendiciones' && <RendicionesTab />}
+         {tab === 'profesionales' && <ProfesionalesTab />}
+         {tab === 'personal' && <PersonalAdminTab />}
+-        {tab === 'asistencia' && <AsistenciaHuella />}
++        {tab === 'planilla' && isAdminOrContab && <PlanillaOficinaTab />}
++        {tab === 'asistencia' && isAdminOrContab && <AsistenciaHuella />}
+       </TabFade>
+     </div>
+   );
+ }
+ 
+ // ─── Rendiciones ─────────────────────────────────────────────
+ function RendicionesTab() {
+   const user = useAuthStore((s) => s.user);
+   const puedeAprobar = useAuthStore((s) => s.can)('oficina', 'edicion');
+   const [scope, setScope] = useState<'mias' | 'aprobar' | 'todas'>('todas');
+-  const [nueva, setNueva] = useState(false);
++  const [nueva, setNueva] = useState<null | 'reembolso' | 'anticipo'>(null);
+   const [detId, setDetId] = useState<string | null>(null);
+   const q = useQuery({ queryKey: ['rendiciones', scope], queryFn: () => api.oficina.listRendiciones(scope) });
++  const saldosQ = useQuery({ queryKey: ['saldos-rendir'], queryFn: () => api.oficina.getSaldosRendir() });
+   const rends = q.data?.rendiciones ?? [];
++  const miSaldo = saldosQ.data?.miSaldo ?? 0;
++  const refetchAll = () => { q.refetch(); saldosQ.refetch(); };
+ 
+   const monto = (r: Rendicion) => (r.modo === 'anticipo' && r.estado !== 'cerrado' ? Number(r.montoAnticipo) : Number(r.montoRendido));
+-  const scopes = [{ v: 'todas', l: 'Todas' }, { v: 'mias', l: 'Mías' }, ...(puedeAprobar ? [{ v: 'aprobar', l: 'Por aprobar' }] : [])] as const;
++  const scopes = [{ v: 'mias', l: 'Mías' }, { v: 'todas', l: 'Todas' }, ...(puedeAprobar ? [{ v: 'aprobar', l: 'Por aprobar' }] : [])] as const;
+ 
+   return (
+-    <div className="space-y-3">
++    <div className="space-y-4">
++      {/* Mi rendición · saldo por rendir + acciones */}
++      <div className="rounded-xl border border-line bg-bg-elev p-5 flex flex-col sm:flex-row sm:items-center gap-4">
++        <div className="flex-1">
++          <div className="text-[12px] text-ink-3">Mi saldo por rendir</div>
++          <div className={cn('mt-1 text-[30px] font-bold font-mono tabular-nums leading-none', miSaldo > 0.01 ? 'text-warn-ink' : 'text-ok')}>{fmtPEN(miSaldo)}</div>
++          <div className="text-[11px] text-ink-4 mt-1">{miSaldo > 0.01 ? `${saldosQ.data?.miCount ?? 0} anticipo(s) sin justificar` : 'Al día · nada pendiente de rendir'}</div>
++        </div>
++        <div className="flex gap-2 shrink-0">
++          <button onClick={() => setNueva('anticipo')} className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-md bg-primary text-primary-foreground text-[12.5px] font-medium"><Wallet className="h-4 w-4" /> Solicitar anticipo</button>
++          <button onClick={() => setNueva('reembolso')} className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-md border border-line text-ink-2 text-[12.5px] font-medium hover:bg-bg-sunken"><Receipt className="h-4 w-4" /> Registrar reembolso</button>
++        </div>
++      </div>
++
++      {/* Rollup para aprobadores · por rendir por persona (reemplaza las cuentas REND-* a mano) */}
++      {puedeAprobar && (saldosQ.data?.saldos.length ?? 0) > 0 && (
++        <div className="rounded-lg border border-line bg-bg-elev p-4">
++          <div className="flex items-center justify-between mb-2.5">
++            <h3 className="text-[13px] font-semibold flex items-center gap-1.5"><Users className="h-4 w-4 text-ink-3" /> Por rendir por persona</h3>
++            <span className="font-mono text-[12.5px] font-semibold text-warn-ink tabular-nums">{fmtPEN(saldosQ.data!.total)}</span>
++          </div>
++          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
++            {saldosQ.data!.saldos.map((s) => (
++              <div key={s.userId ?? s.nombre} className="flex items-center justify-between rounded-md bg-bg-sunken/50 px-3 py-2">
++                <div className="min-w-0"><div className="text-[12px] font-medium truncate">{s.nombre}</div><div className="text-[10px] text-ink-4">{s.count} anticipo(s)</div></div>
++                <span className="font-mono text-[12.5px] tabular-nums text-warn-ink shrink-0 ml-2">{fmtPEN(s.saldo)}</span>
++              </div>
++            ))}
++          </div>
++        </div>
++      )}
++
+       <div className="flex flex-wrap items-center gap-2">
+         <div className="flex items-center gap-1">
+           {scopes.map((s) => <button key={s.v} onClick={() => setScope(s.v as typeof scope)} className={cn('h-8 px-3 rounded-md text-[11.5px] border', scope === s.v ? 'bg-primary text-primary-foreground border-primary' : 'border-line text-ink-2')}>{s.l}</button>)}
+         </div>
+         {scope === 'aprobar' && <span className="text-[11px] text-ink-4">{rends.length} esperando acción</span>}
+-        <button onClick={() => setNueva(true)} className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md bg-primary text-primary-foreground text-[12px] font-medium ml-auto"><Plus className="h-3.5 w-3.5" /> Nueva rendición</button>
+       </div>
+ 
+       <div className="rounded-md border border-line bg-bg-elev overflow-x-auto">
+         <table className="w-full">
+           <thead><tr className="border-b border-line bg-bg-sunken">{['Código', 'Solicitante', 'Tipo', 'Modo', 'Fecha', 'Obra', 'Monto', 'Estado'].map((h, i) => <th key={i} className={cn('px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-ink-4', i === 6 ? 'text-right' : 'text-left')}>{h}</th>)}</tr></thead>
+           <tbody>
+@@ -100,23 +141,23 @@ function RendicionesTab() {
+               </tr>
+             ))}
+           </tbody>
+         </table>
+       </div>
+ 
+-      {nueva && <NuevaRendicion onClose={() => setNueva(false)} onCreated={(id) => { q.refetch(); setNueva(false); setDetId(id); }} />}
+-      {detId && <RendicionDetalle id={detId} puedeAprobar={puedeAprobar} esMio={(r) => r.solicitanteUserId === user?.id} onClose={() => setDetId(null)} onChanged={() => q.refetch()} />}
++      {nueva && <NuevaRendicion initialMode={nueva} onClose={() => setNueva(null)} onCreated={(id) => { refetchAll(); setNueva(null); setDetId(id); }} />}
++      {detId && <RendicionDetalle id={detId} puedeAprobar={puedeAprobar} esMio={(r) => r.solicitanteUserId === user?.id} onClose={() => setDetId(null)} onChanged={refetchAll} />}
+     </div>
+   );
+ }
+ 
+-function NuevaRendicion({ onClose, onCreated }: { onClose: () => void; onCreated: (id: string) => void }) {
++function NuevaRendicion({ initialMode = 'reembolso', onClose, onCreated }: { initialMode?: 'reembolso' | 'anticipo'; onClose: () => void; onCreated: (id: string) => void }) {
+   const proyQ = useQuery({ queryKey: ['proyectos-list'], queryFn: () => api.proyectos.list() });
+   const cuentasQ = useQuery({ queryKey: ['cuentas'], queryFn: () => api.finanzas.listCuentas() });
+   const hoy = new Date().toISOString().slice(0, 10);
+-  const [f, setF] = useState({ modo: 'reembolso' as 'reembolso' | 'anticipo', tipo: 'viatico', concepto: '', fecha: hoy, proyectoId: '', cuentaId: '', montoAnticipo: 0 });
++  const [f, setF] = useState({ modo: initialMode, tipo: 'viatico', concepto: '', fecha: hoy, proyectoId: '', cuentaId: '', montoAnticipo: 0 });
+   const create = useMutation({
+     mutationFn: () => api.oficina.crearRendicion({ ...f, proyectoId: f.proyectoId || null, cuentaId: f.cuentaId || null }),
+     onSuccess: (r) => onCreated(r.rendicion.id),
+   });
+   const set = (p: Partial<typeof f>) => setF((s) => ({ ...s, ...p }));
+   return createPortal(
+@@ -244,13 +285,13 @@ function ItemForm({ rendId, onAdded }: { rendId: string; onAdded: () => void })
+   const onTipo = (tipo: RendicionItemInput['tipoComprobante']) => { setF((s) => ({ ...s, tipoComprobante: tipo })); onTotal(f.total, tipo); };
+   return (
+     <div className="border-t border-line bg-bg-sunken/30 p-2.5 flex flex-wrap items-end gap-1.5">
+       <select className={cn(inputCls, 'w-24')} value={f.tipoComprobante} onChange={(e) => onTipo(e.target.value as RendicionItemInput['tipoComprobante'])}>{COMPROB.map((c) => <option key={c.v} value={c.v}>{c.l}</option>)}</select>
+       <input className={cn(inputCls, 'w-16')} placeholder="serie" value={f.serie ?? ''} onChange={(e) => setF({ ...f, serie: e.target.value })} />
+       <input className={cn(inputCls, 'w-20')} placeholder="número" value={f.numero ?? ''} onChange={(e) => setF({ ...f, numero: e.target.value })} />
+-      <input className={cn(inputCls, 'w-24')} placeholder="RUC" value={f.ruc ?? ''} onChange={(e) => setF({ ...f, ruc: e.target.value })} />
++      <input inputMode="numeric" maxLength={11} className={cn(inputCls, 'w-24', f.ruc && f.ruc.length !== 11 && 'border-rose-500')} placeholder="RUC" value={f.ruc ?? ''} onChange={(e) => setF({ ...f, ruc: e.target.value.replace(/\D/g, '').slice(0, 11) })} />
+       <input className={cn(inputCls, 'flex-1 min-w-[100px]')} placeholder="razón / detalle" value={f.razon ?? ''} onChange={(e) => setF({ ...f, razon: e.target.value })} />
+       <select className={cn(inputCls, 'w-28')} value={f.categoria ?? ''} onChange={(e) => setF({ ...f, categoria: e.target.value })}>{CAT_ITEM.map((c) => <option key={c} value={c}>{c}</option>)}</select>
+       <input className={cn(inputCls, 'w-24 text-right')} type="number" step="0.01" placeholder="total S/" value={f.total || ''} onChange={(e) => onTotal(Number(e.target.value))} />
+       <label className="flex items-center gap-1 text-[10.5px] text-ink-3"><input type="checkbox" checked={f.deducible} onChange={(e) => setF({ ...f, deducible: e.target.checked })} /> deducible</label>
+       <button disabled={!f.total || add.isPending} onClick={() => add.mutate()} className="h-8 px-3 rounded-md bg-primary text-primary-foreground text-[11.5px] font-medium disabled:opacity-50">+ Comprobante</button>
+     </div>
+@@ -375,26 +416,35 @@ function PersonalAdminTab() {
+         </div>
+       )}
+       {add && <AdminForm onClose={() => setAdd(false)} onSaved={() => { qc.invalidateQueries({ queryKey: ['empleados', 'admin'] }); setAdd(false); }} />}
+     </div>
+   );
+ }
++type AdminFormExtra = EmpleadoInput & { cargo?: string; sueldoBaseMensual?: number; asignacionFamiliar?: boolean };
++
+ function AdminForm({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+-  const [f, setF] = useState<EmpleadoInput>({ nombre: '', numDoc: '', categoria: 'Administrador', sistemaPension: 'S.N.P.', fechaIngreso: '', tipoPlanilla: 'admin' });
+-  const save = useMutation({ mutationFn: () => api.planilla.createEmpleado(f), onSuccess: onSaved });
+-  const set = (p: Partial<EmpleadoInput>) => setF((s) => ({ ...s, ...p }));
++  const [f, setF] = useState<AdminFormExtra>({ nombre: '', numDoc: '', categoria: 'Administrador', cargo: '', sistemaPension: 'S.N.P.', fechaIngreso: '', tipoPlanilla: 'admin', sueldoBaseMensual: undefined, asignacionFamiliar: false });
++  const save = useMutation({ mutationFn: () => api.planilla.createEmpleado(f as EmpleadoInput), onSuccess: onSaved });
++  const set = (p: Partial<AdminFormExtra>) => setF((s) => ({ ...s, ...p }));
+   return createPortal(
+     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 animate-backdropIn" onClick={onClose}>
+-      <div className="w-[420px] rounded-xl border border-line bg-bg-elev shadow-2xl animate-modalPop" onClick={(e) => e.stopPropagation()}>
++      <div className="w-[460px] rounded-xl border border-line bg-bg-elev shadow-2xl animate-modalPop" onClick={(e) => e.stopPropagation()}>
+         <div className="flex items-center justify-between border-b border-line px-4 py-3"><h3 className="text-[14px] font-semibold">Nuevo administrativo</h3><button onClick={onClose} className="text-ink-4 hover:text-ink-2"><X className="h-4 w-4" /></button></div>
+         <div className="p-4 grid grid-cols-2 gap-2.5">
+           <Lbl t="Nombre" span2><input className={cn(inputCls, 'w-full')} value={f.nombre} onChange={(e) => set({ nombre: e.target.value })} /></Lbl>
+-          <Lbl t="DNI"><input className={cn(inputCls, 'w-full')} value={f.numDoc ?? ''} onChange={(e) => set({ numDoc: e.target.value })} /></Lbl>
+-          <Lbl t="Cargo"><input className={cn(inputCls, 'w-full')} value={f.categoria ?? ''} onChange={(e) => set({ categoria: e.target.value })} placeholder="Contador, Ingeniero…" /></Lbl>
++          <Lbl t="DNI"><input inputMode="numeric" maxLength={8} className={cn(inputCls, 'w-full', f.numDoc && f.numDoc.length !== 8 && 'border-rose-500')} value={f.numDoc ?? ''} onChange={(e) => set({ numDoc: e.target.value.replace(/\D/g, '').slice(0, 8) })} /></Lbl>
++          <Lbl t="Cargo"><input className={cn(inputCls, 'w-full')} value={f.cargo ?? ''} onChange={(e) => set({ cargo: e.target.value })} placeholder="Contador, Ingeniero…" /></Lbl>
+           <Lbl t="Sistema pensión"><select className={cn(inputCls, 'w-full')} value={f.sistemaPension ?? ''} onChange={(e) => set({ sistemaPension: e.target.value })}>{['S.N.P.', 'AFP Habitat', 'AFP Integra', 'AFP Prima', 'AFP Profuturo'].map((a) => <option key={a}>{a}</option>)}</select></Lbl>
+           <Lbl t="Fecha ingreso"><input type="date" className={cn(inputCls, 'w-full')} value={f.fechaIngreso ?? ''} onChange={(e) => set({ fechaIngreso: e.target.value })} /></Lbl>
++          <Lbl t="Sueldo base S/"><input type="number" step="0.01" min="0" className={cn(inputCls, 'w-full')} value={f.sueldoBaseMensual ?? ''} onChange={(e) => set({ sueldoBaseMensual: e.target.value ? Number(e.target.value) : undefined })} placeholder="0.00" /></Lbl>
++          <Lbl t="Asig. familiar" span2>
++            <label className="flex items-center gap-2 h-8 cursor-pointer">
++              <input type="checkbox" checked={f.asignacionFamiliar ?? false} onChange={(e) => set({ asignacionFamiliar: e.target.checked })} className="h-4 w-4 rounded border-line accent-primary" />
++              <span className="text-[12px] text-ink-2">Tiene hijos (aplica asignación familiar)</span>
++            </label>
++          </Lbl>
+         </div>
+         <div className="flex justify-end gap-2 border-t border-line px-4 py-3">
+           <button onClick={onClose} className="h-8 px-3 rounded-md border border-line text-[12px] text-ink-2">Cancelar</button>
+           <button disabled={!f.nombre || save.isPending} onClick={() => save.mutate()} className="h-8 px-4 rounded-md bg-primary text-primary-foreground text-[12px] font-medium disabled:opacity-50">Guardar</button>
+         </div>
+       </div>

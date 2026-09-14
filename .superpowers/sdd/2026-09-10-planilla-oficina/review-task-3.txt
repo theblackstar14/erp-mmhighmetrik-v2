@@ -1,0 +1,121 @@
+﻿=== commits ===
+79c9bbc feat(oficina): router de planilla oficina + endpoints de config de tasas
+
+=== files changed ===
+ apps/backend/src/routes/planillaOficina.ts | 66 ++++++++++++++++++++++++++++++
+ apps/backend/src/server.ts                 |  2 +
+ 2 files changed, 68 insertions(+)
+
+=== diff ===
+diff --git a/apps/backend/src/routes/planillaOficina.ts b/apps/backend/src/routes/planillaOficina.ts
+new file mode 100644
+index 0000000..78a6ba2
+--- /dev/null
++++ b/apps/backend/src/routes/planillaOficina.ts
+@@ -0,0 +1,66 @@
++import { db, schema } from '@erp/db';
++import { eq } from 'drizzle-orm';
++import { Router } from 'express';
++import { requireAuth } from '../middleware/auth.js';
++
++const router = Router();
++router.use(requireAuth);
++
++// ─── Helper singleton ─────────────────────────────────────────
++async function getConfig() {
++  let [cfg] = await db.select().from(schema.configPlanilla).limit(1);
++  if (!cfg) [cfg] = await db.insert(schema.configPlanilla).values({ id: 'singleton' }).returning();
++  return cfg;
++}
++
++function cfgToDto(cfg: Awaited<ReturnType<typeof getConfig>>) {
++  return {
++    pctEssalud: Number(cfg.pctEsSalud),
++    pctOnp: Number(cfg.pctOnp),
++    pctAfpAporte: 0.10,
++    rmv: Number(cfg.rmv),
++    uit: Number(cfg.uit),
++    topeSeguroAfp: Number(cfg.topeSeguroAfp),
++    horasMesBase: Number(cfg.horasMesBase),
++  };
++}
++
++// ─── GET /api/oficina/config-planilla ────────────────────────
++router.get('/config-planilla', async (_req, res) => {
++  const cfg = await getConfig();
++  res.json(cfgToDto(cfg));
++});
++
++// ─── PUT /api/oficina/config-planilla ────────────────────────
++router.put('/config-planilla', async (req, res) => {
++  const b = req.body as Record<string, unknown>;
++  const allowed = ['rmv', 'uit', 'topeSeguroAfp', 'horasMesBase', 'pctEssalud', 'pctOnp'] as const;
++
++  // Validate: every supplied field must be a finite number
++  for (const key of allowed) {
++    if (b[key] !== undefined && !Number.isFinite(Number(b[key]))) {
++      return res.status(400).json({ error: `Campo '${key}' debe ser un número finito` });
++    }
++  }
++
++  // Map to DB columns (decimal columns → String, integer → Number)
++  const set: Record<string, string | number> = {};
++  if (b.rmv !== undefined)           set.rmv           = String(Number(b.rmv));
++  if (b.uit !== undefined)           set.uit           = String(Number(b.uit));
++  if (b.topeSeguroAfp !== undefined) set.topeSeguroAfp = String(Number(b.topeSeguroAfp));
++  if (b.horasMesBase !== undefined)  set.horasMesBase  = Number(b.horasMesBase);
++  if (b.pctEssalud !== undefined)    set.pctEsSalud    = String(Number(b.pctEssalud));
++  if (b.pctOnp !== undefined)        set.pctOnp        = String(Number(b.pctOnp));
++
++  // Ensure singleton exists, then update
++  await db.insert(schema.configPlanilla).values({ id: 'singleton' }).onConflictDoNothing();
++  const [cfg] = await db
++    .update(schema.configPlanilla)
++    .set(set)
++    .where(eq(schema.configPlanilla.id, 'singleton'))
++    .returning();
++
++  res.json(cfgToDto(cfg));
++});
++
++export default router;
+diff --git a/apps/backend/src/server.ts b/apps/backend/src/server.ts
+index 405fbda..4474e86 100644
+--- a/apps/backend/src/server.ts
++++ b/apps/backend/src/server.ts
+@@ -15,16 +15,17 @@ import contractualRoutes from './routes/contractual.js';
+ import documentosRoutes from './routes/documentos.js';
+ import finanzasRoutes from './routes/finanzas.js';
+ import planillaRoutes from './routes/planilla.js';
+ import iaRoutes from './routes/ia.js';
+ import inversionesRoutes from './routes/inversiones.js';
+ import logisticaRoutes from './routes/logistica.js';
+ import notificacionesRoutes from './routes/notificaciones.js';
+ import oficinaRoutes from './routes/oficina.js';
++import planillaOficinaRoutes from './routes/planillaOficina.js';
+ import profesionalesRoutes from './routes/profesionales.js';
+ import proyectosRoutes from './routes/proyectos.js';
+ import reportesRoutes from './routes/reportes.js';
+ import usuariosRoutes from './routes/usuarios.js';
+ 
+ // TLS self-signed (Synology HTTPS LAN)
+ if (env.NAS_TLS_INSECURE) {
+   process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+@@ -67,16 +68,17 @@ app.use('/api/proyectos', proyectosRoutes);
+ app.use('/api/inversiones', inversionesRoutes);
+ app.use('/api/logistica', logisticaRoutes);
+ app.use('/api', avancesRoutes); // POST /api/partidas/:id/avances + GET /api/proyectos/:id/avances
+ app.use('/api', contractualRoutes); // hitos · garantías · adelantos (por proyecto)
+ app.use('/api', documentosRoutes); // NAS Synology · documentos por proyecto
+ app.use('/api', finanzasRoutes); // gastos reales (Fact de Compras) · cuentas bancarias
+ app.use('/api', planillaRoutes); // FIN-4 · planilla construcción civil
+ app.use('/api', oficinaRoutes); // FIN-5 · oficina · rendiciones / viáticos
++app.use('/api/oficina', planillaOficinaRoutes); // FIN-5B · planilla oficina (régimen general)
+ app.use('/api/contabilidad', contabilidadRoutes); // PCGE · asientos · diario/mayor · fiscal
+ app.use('/api/conciliacion', conciliacionRoutes); // H3 · conciliación bancaria (ERP ↔ extracto)
+ app.use('/api', activosRoutes); // activos · herramientas y equipos + traslados
+ app.use('/api', notificacionesRoutes); // alertas / campana
+ app.use('/api', usuariosRoutes); // usuarios para asignar responsables
+ app.use('/api', reportesRoutes); // reportes financieros (A2/A4/A5) + export Excel
+ app.use('/api', profesionalesRoutes); // padrón de profesionales (equipo de obra)
+ app.use('/api/ia', iaRoutes);

@@ -1,0 +1,379 @@
+﻿=== commits ===
+0a47162 feat(oficina): snapshot fechas + renta 5ta auto (overridable) en calcular
+
+=== stat ===
+ .../scripts/oficina/2026-09-10-boleta-fechas.sql   |   6 +
+ .../scripts/oficina/test-rta5ta-integracion.ts     | 145 +++++++++++++++++++++
+ apps/backend/src/routes/planillaOficina.ts         |  28 +++-
+ packages/db/src/schema.ts                          |   3 +
+ 4 files changed, 179 insertions(+), 3 deletions(-)
+
+=== diff ===
+diff --git a/apps/backend/scripts/oficina/2026-09-10-boleta-fechas.sql b/apps/backend/scripts/oficina/2026-09-10-boleta-fechas.sql
+new file mode 100644
+index 0000000..65ac7d4
+--- /dev/null
++++ b/apps/backend/scripts/oficina/2026-09-10-boleta-fechas.sql
+@@ -0,0 +1,6 @@
++-- Boleta: fechas de ingreso/cese + flag manual de renta 5ta. Solo erp_mmh_test. Idempotente.
++BEGIN;
++ALTER TABLE planilla_oficina_detalle ADD COLUMN IF NOT EXISTS fecha_ingreso  date;
++ALTER TABLE planilla_oficina_detalle ADD COLUMN IF NOT EXISTS fecha_cese     date;
++ALTER TABLE planilla_oficina_detalle ADD COLUMN IF NOT EXISTS renta5ta_manual boolean NOT NULL DEFAULT false;
++COMMIT;
+diff --git a/apps/backend/scripts/oficina/test-rta5ta-integracion.ts b/apps/backend/scripts/oficina/test-rta5ta-integracion.ts
+new file mode 100644
+index 0000000..8d08559
+--- /dev/null
++++ b/apps/backend/scripts/oficina/test-rta5ta-integracion.ts
+@@ -0,0 +1,145 @@
++/**
++ * Integration test: Renta 5ta auto + override + snapshot de fechas en planilla oficina.
++ * Ejecutar:
++ *   node apps/backend/node_modules/tsx/dist/cli.mjs apps/backend/scripts/oficina/test-rta5ta-integracion.ts
++ * Requiere DATABASE_URL=erp_mmh_test. Imprime 'rta5ta-integracion VERDE' en exito.
++ * Note: exit code 9 on Windows is a cosmetic libuv issue -- success = VERDE printed.
++ */
++import assert from 'node:assert/strict';
++import express from 'express';
++import { authMiddleware } from '../../src/middleware/auth.js';
++import planillaOficinaRoutes from '../../src/routes/planillaOficina.js';
++import { lucia } from '../../src/auth.js';
++import { db, schema } from '@erp/db';
++import { eq } from 'drizzle-orm';
++
++const USER = 'af36a9b1-3b8e-4471-99d0-d08cf271187d'; // admin
++const MES = '2026-07';
++const AFP_SISTEMA_PENSION = 'AFP Profuturo(F)';
++
++let testEmpleadoId: string | null = null;
++let testMesId: string | null = null;
++
++(async () => {
++  let failed = false;
++
++  const app = express();
++  app.use(express.json());
++  app.use(authMiddleware);
++  app.use('/api/oficina', planillaOficinaRoutes);
++
++  const server = app.listen(0);
++  const port = (server.address() as any).port;
++  const base = `http://localhost:${port}`;
++
++  const session = await lucia.createSession(USER, {});
++  const cookie = lucia.createSessionCookie(session.id).serialize();
++
++  const post = (path: string, body: unknown) =>
++    fetch(base + path, { method: 'POST', headers: { 'content-type': 'application/json', cookie }, body: JSON.stringify(body) });
++  const patch = (path: string, body: unknown) =>
++    fetch(base + path, { method: 'PATCH', headers: { 'content-type': 'application/json', cookie }, body: JSON.stringify(body) });
++
++  try {
++    console.log('==== rta5ta-integracion ====');
++
++    // ── Setup: create temp admin empleado ──
++    const [testEmp] = await db.insert(schema.empleados).values({
++      nombre: 'TEST RTA5TA INTEGRACION',
++      numDoc: '88888888RTA',
++      sistemaPension: AFP_SISTEMA_PENSION,
++      sueldoBaseMensual: '6000',
++      asignacionFamiliar: false,
++      tipoPlanilla: 'admin',
++      activo: true,
++      fechaIngreso: '2026-01-01',
++    }).returning();
++    testEmpleadoId = testEmp.id;
++    console.log(`  setup: empleado creado id=${testEmp.id}`);
++
++    // ── 1. POST /api/oficina/planilla {mes:'2026-07'} ──
++    const r1 = await post('/api/oficina/planilla', { mes: MES });
++    assert.equal(r1.status, 200, `POST /planilla status ${r1.status}`);
++    const j1 = await r1.json() as { mes: any };
++    assert.ok(j1.mes, 'POST /planilla => mes row');
++    testMesId = j1.mes.id;
++    console.log(`  1. planilla creada mesId=${testMesId}`);
++
++    // ── 2. POST calcular ──
++    const r2 = await post(`/api/oficina/planilla/${testMesId}/calcular`, {});
++    assert.equal(r2.status, 200, `POST calcular status ${r2.status}`);
++    const j2 = await r2.json() as { mes: any; detalle: any[] };
++    assert.equal(j2.mes.estado, 'calculada', 'mes estado=calculada');
++
++    // Find detalle for our test employee
++    const det = j2.detalle.find((d: any) => d.empleado_id === testEmp.id || d.empleadoId === testEmp.id);
++    assert.ok(det, `detalle not found for empleado ${testEmp.id} (total=${j2.detalle.length})`);
++
++    const detalleId = det.id;
++    const imptoRenta5taAuto = Number(det.impto_renta5ta ?? det.imptoRenta5ta);
++    const renta5taManual1 = det.renta5ta_manual ?? det.renta5taManual;
++    const fechaIngresoSnap = det.fecha_ingreso ?? det.fechaIngreso;
++
++    // Assert: auto Rta5ta > 0 (6000 sueldo, mes 7 => should have positive retention)
++    assert.ok(imptoRenta5taAuto > 0, `imptoRenta5ta should be > 0 (auto), got ${imptoRenta5taAuto}`);
++    // Assert: renta5taManual = false (auto, not overridden)
++    assert.equal(renta5taManual1, false, `renta5taManual should be false, got ${renta5taManual1}`);
++    // Assert: fechaIngreso snapshotted from empleado
++    assert.ok(fechaIngresoSnap, `fechaIngreso should be snapshotted, got ${fechaIngresoSnap}`);
++    assert.ok(
++      String(fechaIngresoSnap).startsWith('2026-01-01'),
++      `fechaIngreso should be '2026-01-01', got '${fechaIngresoSnap}'`,
++    );
++
++    console.log(`  2. calcular OK: imptoRenta5ta=${imptoRenta5taAuto} (auto), renta5taManual=${renta5taManual1}, fechaIngreso=${fechaIngresoSnap}`);
++
++    // ── 3. PATCH imptoRenta5ta:42 => renta5taManual must flip to true ──
++    const r3 = await patch(`/api/oficina/planilla-detalle/${detalleId}`, { imptoRenta5ta: 42 });
++    assert.equal(r3.status, 200, `PATCH detalle status ${r3.status}`);
++    const j3 = await r3.json() as { detalle: any };
++    const det3 = j3.detalle;
++
++    const imptoRenta5ta3 = Number(det3.impto_renta5ta ?? det3.imptoRenta5ta);
++    const renta5taManual3 = det3.renta5ta_manual ?? det3.renta5taManual;
++
++    assert.equal(imptoRenta5ta3, 42, `After PATCH, imptoRenta5ta should be 42, got ${imptoRenta5ta3}`);
++    assert.equal(renta5taManual3, true, `After PATCH, renta5taManual should be true, got ${renta5taManual3}`);
++
++    console.log(`  3. PATCH OK: imptoRenta5ta=${imptoRenta5ta3}, renta5taManual=${renta5taManual3}`);
++
++    // ── 4. Re-calcular => Kelly's override (42) must survive ──
++    const r4 = await post(`/api/oficina/planilla/${testMesId}/calcular`, {});
++    assert.equal(r4.status, 200, `Re-calcular status ${r4.status}`);
++    const j4 = await r4.json() as { mes: any; detalle: any[] };
++
++    const det4 = j4.detalle.find((d: any) => d.empleado_id === testEmp.id || d.empleadoId === testEmp.id);
++    assert.ok(det4, `detalle not found for empleado ${testEmp.id} after re-calcular`);
++
++    const imptoRenta5ta4 = Number(det4.impto_renta5ta ?? det4.imptoRenta5ta);
++    const renta5taManual4 = det4.renta5ta_manual ?? det4.renta5taManual;
++
++    assert.equal(imptoRenta5ta4, 42, `After re-calcular, imptoRenta5ta should still be 42 (Kelly override), got ${imptoRenta5ta4}`);
++    assert.equal(renta5taManual4, true, `After re-calcular, renta5taManual should still be true, got ${renta5taManual4}`);
++
++    console.log(`  4. Re-calcular OK: imptoRenta5ta=${imptoRenta5ta4} (override survives), renta5taManual=${renta5taManual4}`);
++
++    console.log('\n  rta5ta-integracion VERDE\n');
++  } catch (e: any) {
++    failed = true;
++    console.error('\n  FALLO:', e?.message ?? e, '\n');
++    if (e?.stack) console.error(e.stack);
++  } finally {
++    // ── Cleanup ──
++    if (testMesId) {
++      await db.delete(schema.planillaOficinaMes).where(eq(schema.planillaOficinaMes.id, testMesId)).catch(() => {});
++    }
++    if (testEmpleadoId) {
++      await db.delete(schema.empleados).where(eq(schema.empleados.id, testEmpleadoId)).catch(() => {});
++    }
++
++    await lucia.invalidateSession(session.id).catch(() => {});
++    server.close();
++    await (db as any).$client?.end?.().catch(() => {});
++    process.exit(failed ? 1 : 0);
++  }
++})();
+diff --git a/apps/backend/src/routes/planillaOficina.ts b/apps/backend/src/routes/planillaOficina.ts
+index b7889e4..4a8c59b 100644
+--- a/apps/backend/src/routes/planillaOficina.ts
++++ b/apps/backend/src/routes/planillaOficina.ts
+@@ -1,16 +1,17 @@
+ import { db, schema } from '@erp/db';
+ import { and, asc, desc, eq, gt, inArray, ne, sql } from 'drizzle-orm';
+ import type { NextFunction, Request, Response } from 'express';
+ import { Router } from 'express';
+ import multer from 'multer';
+ import { calcularDetalleOficina } from '../lib/planillaOficinaCalc.js';
++import { calcularRta5ta } from '../lib/rta5taCalc.js';
+ import { requireAuth } from '../middleware/auth.js';
+ import { cargarDerivarCtx } from '../lib/clasificacion.js';
+ import { crearAsiento, type LineaIn } from './contabilidad.js';
+ import { periodoCerrado } from '../lib/periodos.js';
+ import { registrarDocumento, docsDetalle } from '../lib/documentoAdjunto.js';
+ 
+ const router = Router();
+ router.use(requireAuth);
+ 
+ // ─── requireOficinaEdit ───────────────────────────────────────
+@@ -255,67 +256,81 @@ router.post('/planilla/:mesId/calcular', requireOficinaEdit, async (req, res) =>
+     const afpForEngine = afpTasa
+       ? { pctSeguro: frac(afpTasa.pctSeguro), pctComision: frac(afpTasa.pctComision) }
+       : undefined;
+ 
+     const tasas = { ...baseTasas, afp: afpForEngine };
+ 
+     // Preserve manual inputs from existing detalle
+     const prev = existingByEmpleado.get(emp.id);
+     const manualInputs = prev
+       ? {
+-          imptoRenta5ta: Number(prev.imptoRenta5ta ?? 0),
++          // imptoRenta5ta is governed by renta5taManual flag — NOT blanket-preserved here
+           retencionJudicial: Number(prev.retencionJudicial ?? 0),
+           cantHe25: Number(prev.cantHe25 ?? 0),
+           cantHe35: Number(prev.cantHe35 ?? 0),
+           dominical: Number(prev.montoDominical ?? 0),
+           feriado: Number(prev.montoFeriado ?? 0),
+           gratificacion: Number(prev.gratificacion ?? 0),
+           vacaciones: Number(prev.vacaciones ?? 0),
+           comisiones: Number(prev.comisiones ?? 0),
+           bonificacion: Number(prev.bonificacion ?? 0),
+           otrosDescuentos: Number(prev.otrosDescuentos ?? 0),
+           diasTrab: prev.diasTrab ?? 30,
+           horasTrab: prev.horasTrab ?? 240,
+         }
+       : {
+-          imptoRenta5ta: 0,
+           retencionJudicial: 0,
+           cantHe25: 0,
+           cantHe35: 0,
+           dominical: 0,
+           feriado: 0,
+           gratificacion: 0,
+           vacaciones: 0,
+           comisiones: 0,
+           bonificacion: 0,
+           otrosDescuentos: 0,
+           diasTrab: 30,
+           horasTrab: 240,
+         };
+ 
+     const adelantoCuota = adelantoCuotaByEmpleado.get(emp.id) ?? 0;
+     const sueldoMensual = Number(emp.sueldoBaseMensual ?? 0);
+ 
++    // Compute AUTO Renta 5ta (v1 approximation: continuous employment from January)
++    const mesNumero = Number(mesRow.mes.slice(5, 7));
++    const acumuladoPercibidoAntes = sueldoMensual * (mesNumero - 1);
++    const autoRenta5ta = calcularRta5ta({
++      sueldoMensual,
++      mesNumero,
++      acumuladoPercibidoAntes,
++      retencionesPrevias: 0,
++      uit: Number(cfg.uit),
++    }).retencionMes;
++
++    // Preserve Kelly's override if renta5taManual flag is set on existing detalle
++    const useManualRenta5ta = !!(prev && prev.renta5taManual);
++    const imptoRenta5taFinal = useManualRenta5ta ? Number(prev!.imptoRenta5ta ?? 0) : autoRenta5ta;
++
+     const calc = calcularDetalleOficina(
+       {
+         sueldoMensual,
+         sistemaPension: tipoSP,
+         asignacionFamiliar: emp.asignacionFamiliar ?? false,
+         cantHe25: manualInputs.cantHe25,
+         cantHe35: manualInputs.cantHe35,
+         dominical: manualInputs.dominical,
+         feriado: manualInputs.feriado,
+         gratificacion: manualInputs.gratificacion,
+         vacaciones: manualInputs.vacaciones,
+         comisiones: manualInputs.comisiones,
+         bonificacion: manualInputs.bonificacion,
+-        imptoRenta5ta: manualInputs.imptoRenta5ta,
++        imptoRenta5ta: imptoRenta5taFinal,
+         retencionJudicial: manualInputs.retencionJudicial,
+         adelantoCuota,
+         otrosDescuentos: manualInputs.otrosDescuentos,
+         diasTrab: manualInputs.diasTrab,
+         horasTrab: manualInputs.horasTrab,
+       },
+       tasas,
+     );
+ 
+     nextBolNum += 1;
+@@ -359,20 +374,23 @@ router.post('/planilla/:mesId/calcular', requireOficinaEdit, async (req, res) =>
+       adelantoCuota: String(calc.adelantoCuota),
+       otrosDescuentos: String(calc.otrosDescuentos),
+       totalDescuento: String(calc.totalDescuento),
+       essalud: String(calc.essalud),
+       essaludVida: String(calc.essaludVida),
+       totalAporte: String(calc.totalAporte),
+       netoPago: String(calc.netoPago),
+       costoTotal: String(calc.costoTotal),
+       cuentaContable: null,
+       cuentaContableOrigen: null,
++      fechaIngreso: emp.fechaIngreso ?? null,
++      fechaCese: emp.fechaCese ?? null,
++      renta5taManual: useManualRenta5ta,
+     });
+   }
+ 
+   if (rows.length) await db.insert(schema.planillaOficinaDetalle).values(rows);
+ 
+   // Update mes: estado=calculada + snapshot
+   const [updatedMes] = await db
+     .update(schema.planillaOficinaMes)
+     .set({ estado: 'calculada', tasasSnapshot })
+     .where(eq(schema.planillaOficinaMes.id, mesId!))
+@@ -483,20 +501,23 @@ router.patch('/planilla-detalle/:id', requireOficinaEdit, async (req, res) => {
+     { ...baseTasas, afp: afpForEngine },
+   );
+ 
+   // Determine cuentaContable update
+   const newCuentaContable = b.cuentaContable !== undefined ? (b.cuentaContable as string | null) : detRow.cuentaContable;
+   const newCuentaContableOrigen =
+     b.cuentaContable !== undefined
+       ? (b.cuentaContable ? 'USUARIO' : null)
+       : detRow.cuentaContableOrigen;
+ 
++  // If imptoRenta5ta is provided in the PATCH body, Kelly is taking manual control
++  const setRenta5taManual = b.imptoRenta5ta !== undefined ? true : detRow.renta5taManual;
++
+   const [updated] = await db
+     .update(schema.planillaOficinaDetalle)
+     .set({
+       cantHe25: String(cantHe25),
+       montoHe25: String(calc.montoHe25),
+       cantHe35: String(cantHe35),
+       montoHe35: String(calc.montoHe35),
+       totalHe: String(calc.totalHe),
+       montoDominical: String(dominical),
+       montoFeriado: String(feriado),
+@@ -513,20 +534,21 @@ router.patch('/planilla-detalle/:id', requireOficinaEdit, async (req, res) => {
+       retencionJudicial: String(calc.retencionJudicial),
+       otrosDescuentos: String(calc.otrosDescuentos),
+       totalDescuento: String(calc.totalDescuento),
+       essalud: String(calc.essalud),
+       essaludVida: String(calc.essaludVida),
+       totalAporte: String(calc.totalAporte),
+       netoPago: String(calc.netoPago),
+       costoTotal: String(calc.costoTotal),
+       cuentaContable: newCuentaContable,
+       cuentaContableOrigen: newCuentaContableOrigen,
++      renta5taManual: setRenta5taManual,
+     })
+     .where(eq(schema.planillaOficinaDetalle.id, id!))
+     .returning();
+ 
+   res.json({ detalle: updated });
+ });
+ 
+ // ─── Helper: saldo pendiente de un adelanto ──────────────────
+ async function saldoAdelanto(adelantoId: string, montoTotal: number): Promise<number> {
+   const [row] = await db
+diff --git a/packages/db/src/schema.ts b/packages/db/src/schema.ts
+index 2a4de75..8f02d76 100644
+--- a/packages/db/src/schema.ts
++++ b/packages/db/src/schema.ts
+@@ -1246,20 +1246,23 @@ export const planillaOficinaDetalle = pgTable(
+     adelantoCuota: decimal('adelanto_cuota', { precision: 14, scale: 2 }).default('0'),
+     otrosDescuentos: decimal('otros_descuentos', { precision: 14, scale: 2 }).default('0'),
+     totalDescuento: decimal('total_descuento', { precision: 14, scale: 2 }).default('0'),
+     essalud: decimal('essalud', { precision: 14, scale: 2 }).default('0'),
+     essaludVida: decimal('essalud_vida', { precision: 14, scale: 2 }).default('0'),
+     totalAporte: decimal('total_aporte', { precision: 14, scale: 2 }).default('0'),
+     netoPago: decimal('neto_pago', { precision: 14, scale: 2 }).default('0'),
+     costoTotal: decimal('costo_total', { precision: 14, scale: 2 }).default('0'),
+     cuentaContable: varchar('cuenta_contable', { length: 10 }).references(() => planContable.codigo),
+     cuentaContableOrigen: varchar('cuenta_contable_origen', { length: 10 }),
++    fechaIngreso: date('fecha_ingreso'),
++    fechaCese: date('fecha_cese'),
++    renta5taManual: boolean('renta5ta_manual').notNull().default(false),
+   },
+   (t) => ({
+     mesIdx: index('pod_mes_idx').on(t.planillaMesId),
+   }),
+ );
+ export type PlanillaOficinaDetalle = typeof planillaOficinaDetalle.$inferSelect;
+ 
+ export const adelantoOficina = pgTable(
+   'adelanto_oficina',
+   {

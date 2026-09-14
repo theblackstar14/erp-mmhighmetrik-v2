@@ -1,9 +1,11 @@
 import { db, schema } from '@erp/db';
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, desc, eq, sql } from 'drizzle-orm';
+import { createHash } from 'node:crypto';
 import { Router } from 'express';
 import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
 import { clasificarHitos, type HitoItem } from '../lib/hitos.js';
+import { audit } from '../lib/audit.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -183,6 +185,27 @@ router.delete('/garantias/:id', async (req, res) => {
   res.json({ ok: true });
 });
 
+// Genera/actualiza la garantía de retención = Σ retención de las valorizaciones (evita sumar a mano).
+router.post('/proyectos/:proyectoId/garantias/generar-retencion', async (req, res) => {
+  const proyectoId = req.params.proyectoId!;
+  const vals = await db.select({ ret: schema.valorizaciones.montoRetencion }).from(schema.valorizaciones).where(eq(schema.valorizaciones.proyectoId, proyectoId));
+  const conRet = vals.filter((v) => Number(v.ret ?? 0) > 0);
+  const total = conRet.reduce((s, v) => s + Number(v.ret ?? 0), 0);
+  if (total <= 0) return res.status(400).json({ error: 'No hay retención acumulada en las valorizaciones' });
+  const [existente] = await db.select().from(schema.garantias).where(and(eq(schema.garantias.proyectoId, proyectoId), eq(schema.garantias.tipo, 'retencion'))).limit(1);
+  const notas = `Retención acumulada de ${conRet.length} valorización(es) · autogenerada`;
+  let garantia;
+  if (existente) {
+    [garantia] = await db.update(schema.garantias).set({ monto: total.toFixed(2), notas }).where(eq(schema.garantias.id, existente.id)).returning();
+  } else {
+    [garantia] = await db.insert(schema.garantias).values({
+      proyectoId, tipo: 'retencion', monto: total.toFixed(2), estado: 'vigente',
+      liberaEnHito: 'consentimiento_liquidacion', notas,
+    }).returning();
+  }
+  res.json({ garantia, total });
+});
+
 // ════════════════════ ADELANTOS ════════════════════
 const adelantoSchema = z.object({
   tipo: garantiaTipo, // reusa enum (adelanto_directo/materiales/avance)
@@ -196,12 +219,17 @@ const adelantoSchema = z.object({
 });
 
 router.get('/proyectos/:proyectoId/adelantos', async (req, res) => {
-  const list = await db
-    .select()
-    .from(schema.adelantos)
-    .where(eq(schema.adelantos.proyectoId, req.params.proyectoId!))
-    .orderBy(asc(schema.adelantos.fechaSolicitud));
-  res.json({ adelantos: list });
+  const pid = req.params.proyectoId!;
+  const [list, vals] = await Promise.all([
+    db.select().from(schema.adelantos).where(eq(schema.adelantos.proyectoId, pid)).orderBy(asc(schema.adelantos.fechaSolicitud)),
+    db.select({ am: schema.valorizaciones.montoAmortizaciones }).from(schema.valorizaciones).where(eq(schema.valorizaciones.proyectoId, pid)),
+  ]);
+  // Pendiente real desde valos (no confiar en montoAmortizado manual). MAX evita regresión/doble conteo.
+  const totalAdelantos = list.reduce((s, a) => s + Number(a.monto ?? 0), 0);
+  const amortizadoManual = list.reduce((s, a) => s + Number(a.montoAmortizado ?? 0), 0);
+  const amortizadoValos = vals.reduce((s, v) => s + Number(v.am ?? 0), 0);
+  const amortizadoReal = Math.max(amortizadoManual, amortizadoValos);
+  res.json({ adelantos: list, resumen: { totalAdelantos, amortizadoManual, amortizadoValos, amortizadoReal, pendiente: Math.max(0, totalAdelantos - amortizadoReal) } });
 });
 
 router.post('/proyectos/:proyectoId/adelantos', async (req, res) => {
@@ -250,6 +278,98 @@ router.put('/adelantos/:id', async (req, res) => {
 router.delete('/adelantos/:id', async (req, res) => {
   await db.delete(schema.adelantos).where(eq(schema.adelantos.id, req.params.id!));
   res.json({ ok: true });
+});
+
+// ════════════════════ LIQUIDACIÓN DE OBRA (Fase 1 · saldo + snapshot, sin asientos) ════════════════════
+const num = (x: unknown) => Number(x ?? 0);
+
+// Rollup del saldo final desde valos + conciliación con el libro (detecta retención sin segregar).
+async function buildLiquidacion(proyectoId: string) {
+  const [vals, adelantos, ledger] = await Promise.all([
+    db.select().from(schema.valorizaciones).where(eq(schema.valorizaciones.proyectoId, proyectoId)),
+    db.select().from(schema.adelantos).where(eq(schema.adelantos.proyectoId, proyectoId)),
+    db
+      .select({ debe: sql<string>`COALESCE(SUM(${schema.asientosLineas.debe}),0)`, haber: sql<string>`COALESCE(SUM(${schema.asientosLineas.haber}),0)` })
+      .from(schema.asientosLineas)
+      .innerJoin(schema.asientos, eq(schema.asientosLineas.asientoId, schema.asientos.id))
+      .where(and(eq(schema.asientos.proyectoId, proyectoId), sql`${schema.asientosLineas.cuenta} LIKE '1212%'`)),
+  ]);
+
+  // Base CAJA con-IGV consistente. montoTotalConIgv ya está NETO de deducciones+amortización (aguas arriba
+  // en la cadena de la valo), así que NO se restan de nuevo. reajustes/deducciones/multas/amortización/retención
+  // son informativos del desglose; el saldo real por cobrar = facturado c/IGV − cobrado.
+  const round = (n: number) => Number(n.toFixed(2));
+  const facturadoConIgv = vals.reduce((s, v) => s + (num(v.montoTotalConIgv) || num(v.montoValorizacionBruta) * 1.18 || num(v.totalContratista)), 0);
+  const valorizadoSinIgv = vals.reduce((s, v) => s + (num(v.montoValorizacionBruta) || num(v.montoCd)), 0);
+  const reajustes = vals.reduce((s, v) => s + num(v.montoReajuste), 0);
+  const deducciones = vals.reduce((s, v) => s + num(v.montoDeducciones), 0);
+  const multas = vals.reduce((s, v) => s + num(v.multa), 0);
+  const amortizValos = vals.reduce((s, v) => s + num(v.montoAmortizaciones), 0);
+  const amortizManual = adelantos.reduce((s, a) => s + num(a.montoAmortizado), 0);
+  const amortizAdelantos = Math.max(amortizValos, amortizManual); // rollup pre-fix (informativo)
+  const retencionAcum = vals.reduce((s, v) => s + num(v.montoRetencion), 0); // pendiente de liberar
+  const cobrado = vals.filter((v) => v.status === 'cobrada').reduce((s, v) => s + num(v.totalContratista), 0);
+
+  // Saldo por cobrar (+) al contratista / por pagar (−) a la entidad. Incluye la retención pendiente.
+  const saldoFinal = facturadoConIgv - cobrado;
+
+  const saldo1212 = num(ledger[0]?.debe) - num(ledger[0]?.haber);
+
+  return {
+    componentes: { facturadoConIgv: round(facturadoConIgv), valorizadoSinIgv: round(valorizadoSinIgv), reajustes: round(reajustes), deducciones: round(deducciones), multas: round(multas), amortizAdelantos: round(amortizAdelantos), retencionAcum: round(retencionAcum), cobrado: round(cobrado) },
+    saldoFinal: round(saldoFinal),
+    conciliacion: {
+      valorizadoBrutoIgv: round(facturadoConIgv),
+      saldo1212: round(saldo1212),
+      retencionMezclada: round(retencionAcum),
+      porCobrarNeto: round(saldoFinal),
+      motorSegregaRetencion: false,
+      nota: 'Retención hoy mezclada dentro del 1212; Fase 2 la segrega en subcuenta garantía. Sin asientos de liquidación aún.',
+    },
+    valos: vals.length,
+    valosCobradas: vals.filter((v) => v.status === 'cobrada').length,
+  };
+}
+
+// GET · liquidación vigente (si existe) + preview en vivo del cálculo/conciliación.
+router.get('/proyectos/:proyectoId/liquidacion', async (req, res) => {
+  const proyectoId = req.params.proyectoId!;
+  const [actual] = await db.select().from(schema.liquidaciones).where(eq(schema.liquidaciones.proyectoId, proyectoId)).orderBy(desc(schema.liquidaciones.createdAt)).limit(1);
+  const preview = await buildLiquidacion(proyectoId);
+  res.json({ liquidacion: actual ?? null, preview });
+});
+
+// POST · practicar: congela snapshot + hash. Idempotente: bloquea si ya hay una practicada vigente.
+router.post('/proyectos/:proyectoId/liquidacion/practicar', async (req, res) => {
+  const proyectoId = req.params.proyectoId!;
+  const fecha = typeof req.body?.fecha === 'string' && req.body.fecha ? req.body.fecha : new Date().toISOString().slice(0, 10);
+  const [vigente] = await db.select().from(schema.liquidaciones).where(and(eq(schema.liquidaciones.proyectoId, proyectoId), eq(schema.liquidaciones.estado, 'practicada'))).limit(1);
+  if (vigente) return res.status(409).json({ error: 'Ya existe una liquidación practicada. Reábrela primero para volver a practicar.' });
+  const snapshot = await buildLiquidacion(proyectoId);
+  const hash = createHash('sha256').update(JSON.stringify(snapshot)).digest('hex');
+  const [liq] = await db.insert(schema.liquidaciones).values({
+    proyectoId,
+    fechaPractica: fecha,
+    practicadaPorUserId: req.user!.id,
+    estado: 'practicada',
+    snapshot,
+    saldoFinal: String(snapshot.saldoFinal),
+    hash,
+  }).returning();
+  await audit(req, { action: 'create', entityType: 'liquidacion', entityId: liq!.id, after: { saldoFinal: snapshot.saldoFinal, valos: snapshot.valos } });
+  res.json({ liquidacion: liq });
+});
+
+// POST · reabrir: auditado con motivo (patrón cierre H2).
+router.post('/liquidaciones/:id/reabrir', async (req, res) => {
+  const motivo = typeof req.body?.motivo === 'string' ? req.body.motivo.trim() : '';
+  if (!motivo) return res.status(400).json({ error: 'Indica el motivo de reapertura' });
+  const [liq] = await db.update(schema.liquidaciones)
+    .set({ estado: 'reabierta', motivoReapertura: motivo, reabiertaPorUserId: req.user!.id, reabiertaAt: new Date(), updatedAt: new Date() })
+    .where(eq(schema.liquidaciones.id, req.params.id!)).returning();
+  if (!liq) return res.status(404).json({ error: 'Liquidación no encontrada' });
+  await audit(req, { action: 'update', entityType: 'liquidacion', entityId: liq.id, after: { estado: 'reabierta', motivo } });
+  res.json({ liquidacion: liq });
 });
 
 export default router;

@@ -13,13 +13,14 @@ import {
   Wallet,
   X,
 } from 'lucide-react';
-import { Suspense, lazy, useMemo, useState } from 'react';
+import { Suspense, lazy, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { type FinanzasResumen, type MovimientoInput, api } from '@/lib/api.js';
+import { type FinanzasResumen, type MovimientoInput, type GastoInput, type ConciliacionResumen, type PartidaConcil, type PlanCuentaBusqueda, api } from '@/lib/api.js';
 import { cn, fmtPEN } from '@/lib/utils.js';
+import { CuentaContableSelect, claseDerivadaUI } from '@/components/contabilidad/CuentaContableSelect.js';
 import { invalidateResumen } from '@/lib/invalidate.js';
 import { NATURALEZAS_CONTABLES } from '@erp/shared';
-import { FinanzasTab, GastoForm } from '@/components/proyectos/tabs/FinanzasTab.js';
+import { FinanzasTab } from '@/components/proyectos/tabs/FinanzasTab.js';
 
 import { FinanzasOcQueue } from '@/components/finanzas/FinanzasOcQueue.js';
 import { Skel, SkelCards, SkelRows, TabFade } from '@/components/ui/Skeleton.js';
@@ -40,12 +41,9 @@ export function FinanzasPage() {
   const [filtro, setFiltro] = useState<string>('todos');
   const [sub, setSub] = useState<Sub>('resumen');
   const [movOpen, setMovOpen] = useState(false);
-  const [gastoOpen, setGastoOpen] = useState(false);
 
   const proyectosQ = useQuery({ queryKey: ['proyectos-list'], queryFn: () => api.proyectos.list() });
   const proyectos = proyectosQ.data?.proyectos ?? [];
-  const cuentasQ = useQuery({ queryKey: ['cuentas'], queryFn: () => api.finanzas.listCuentas() });
-  const qc = useQueryClient();
 
   const resumenQ = useQuery({
     queryKey: ['finanzas-resumen', filtro],
@@ -75,12 +73,6 @@ export function FinanzasPage() {
               </option>
             ))}
           </select>
-          <button
-            onClick={() => setGastoOpen(true)}
-            className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md bg-primary text-primary-foreground text-[12px] font-medium hover:opacity-90"
-          >
-            <Plus className="h-3.5 w-3.5" /> Registrar gasto
-          </button>
           <button
             onClick={() => setMovOpen(true)}
             className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md bg-primary text-primary-foreground text-[12px] font-medium hover:opacity-90"
@@ -131,26 +123,6 @@ export function FinanzasPage() {
       </TabFade>
 
       {movOpen && <MovModal proyectos={proyectos} defaultProyecto={filtro} onClose={() => setMovOpen(false)} />}
-      {gastoOpen && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 animate-backdropIn" onClick={(e) => e.target === e.currentTarget && setGastoOpen(false)}>
-          <div className="w-full max-w-2xl mt-10 rounded-xl border border-line bg-bg-elev p-4 shadow-xl animate-modalPop">
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-[14px] font-semibold">Registrar gasto</h3>
-              <button onClick={() => setGastoOpen(false)} className="text-ink-4 hover:text-ink-2">✕</button>
-            </div>
-            <GastoForm
-              proyectos={proyectos}
-              cuentas={cuentasQ.data?.cuentas ?? []}
-              onDone={() => {
-                qc.invalidateQueries({ queryKey: ['gas-global'] });
-                qc.invalidateQueries({ queryKey: ['finanzas-resumen'] });
-                qc.invalidateQueries({ queryKey: ['costos-obra'] });
-                setGastoOpen(false);
-              }}
-            />
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -734,8 +706,16 @@ function CuentaModal({ onClose, onDone }: { onClose: () => void; onDone: () => v
 
 type MovTipo = 'Ingreso' | 'Egreso' | 'Bancario';
 const SUBTIPOS_BANC = ['Transferencia entre cuentas', 'Comisión bancaria', 'ITF', 'Mantenimiento', 'Otros'];
-const TIPOS_COMP = ['Factura', 'Boleta', 'Recibo Honorarios', 'Nota de crédito', 'Recibo', 'Otro'];
+// Catálogos canónicos (deben coincidir con la plantilla maestra · TiposDocumento / TiposGasto)
+const TIPOS_COMP = ['Factura', 'Boleta', 'Recibo por Honorarios', 'Nota de Crédito', 'Sin Comprobante', 'Contrato', 'Invoice', 'Recibo de servicios'];
 const DETRAC_PCT = [{ v: '4', l: '4% · Construcción' }, { v: '10', l: '10% · Servicios diversos' }, { v: '12', l: '12% · Intermediación' }, { v: '1.5', l: '1.5% · Comisión mercantil' }];
+const TIPOS_GASTO = [
+  'Compra Materiales', 'Servicio Terceros', 'Movilidad', 'Viáticos', 'Seguro', 'Servicios básicos',
+  'Comisión', 'Planilla', 'Cliente', 'Socio', 'Varios', 'Impuestos', 'Mantenimiento', 'Devolucion',
+  'Gasto Bancario', 'Herramientas', 'Maquinaria y equipo', 'EPPS', 'Abono de cliente', 'Prestamo otorgado',
+  'Prestamo recibido', 'Gasto Administrativo', 'Combustible', 'Otros', 'Alquileres', 'Utiles de oficina', 'Nota de Credito',
+];
+const TIPOS_INVENTARIABLES = new Set(['Herramientas', 'Maquinaria y equipo', 'EPPS']);
 
 function MovModal({ proyectos, defaultProyecto, onClose }: { proyectos: { id: string; codigo: string; nombre: string }[]; defaultProyecto: string; onClose: () => void }) {
   const qc = useQueryClient();
@@ -746,6 +726,26 @@ function MovModal({ proyectos, defaultProyecto, onClose }: { proyectos: { id: st
 
   const [tipo, setTipo] = useState<MovTipo>('Egreso');
   const [proyectoId, setProyectoId] = useState(defaultProyecto === 'todos' ? '' : defaultProyecto);
+  // ponytail: UI-only por ahora — esGasto/estadoPago/clasificación aún no se envían al backend
+  const [esGasto, setEsGasto] = useState(true);
+  const [estadoPago, setEstadoPago] = useState<'pagado' | 'pendiente'>('pagado');
+  const [tipoGasto, setTipoGasto] = useState('Compra Materiales');
+  const [inventariable, setInventariable] = useState(false);
+  // WS1 · cuenta contable MANUAL (Kelly) · CD/GG se deriva de ella (chip, no editable)
+  const [cuentaContable, setCuentaContable] = useState<string | null>(null);
+  const [cuentaRow, setCuentaRow] = useState<PlanCuentaBusqueda | undefined>();
+  const [cuentaSugerida, setCuentaSugerida] = useState(false); // prefill por proveedor → origen SUGERIDO
+  const prefillCuenta = async (ruc: string) => {
+    if (!ruc.trim() || cuentaContable) return;
+    const { cuenta } = await api.contabilidad.sugerirCuenta({ proveedorRuc: ruc.trim(), tipoGasto });
+    if (!cuenta) return;
+    const { cuentas } = await api.contabilidad.searchPlan(cuenta);
+    setCuentaContable(cuenta); setCuentaRow(cuentas.find((c) => c.codigo === cuenta)); setCuentaSugerida(true);
+  };
+  // Prorrateo · repartir un gasto compartido entre varias obras (montos manuales)
+  const [prorratear, setProrratear] = useState(false);
+  const [reparto, setReparto] = useState<{ proyectoId: string; monto: string }[]>([{ proyectoId: '', monto: '' }, { proyectoId: '', monto: '' }]);
+  const costosObraQ = useQuery({ queryKey: ['costos-obra', proyectoId], queryFn: () => api.proyectos.getCostosObra(proyectoId), enabled: !!proyectoId && esGasto && tipo === 'Egreso' });
   const [showAuto, setShowAuto] = useState(false);
   const [emitting, setEmitting] = useState(false);
   const [emitDone, setEmitDone] = useState(false);
@@ -794,42 +794,101 @@ function MovModal({ proyectos, defaultProyecto, onClose }: { proyectos: { id: st
     return proveedores.filter((p) => p.razonSocial.toLowerCase().includes(ql) || (p.ruc?.includes(ql) ?? false)).slice(0, 6);
   }, [f.contraparte, isIngreso, isBanc, proveedores]);
 
+  const esGastoEgreso = tipo === 'Egreso' && esGasto;
+  const buildMov = (gastoId?: string): MovimientoInput & { proyectoId?: string | null } => ({
+    fecha: f.fecha,
+    tipoMovimiento: isBanc ? 'Egreso' : tipo,
+    proyectoId: proyectoId || null,
+    cuentaId: f.cuentaId || null,
+    cuentaDestinoId: esTransfer ? f.cuentaDestinoId || null : null,
+    subtipo: f.subtipo || null,
+    naturalezaContable: isBanc ? 'TRANSFERENCIA' : f.naturalezaContable || null,
+    clienteNombre: f.contraparte || null,
+    tipoComprobante: isBanc ? null : f.tipoComprobante,
+    serie: isBanc ? null : f.serie || null,
+    numero: isBanc ? null : f.numero || null,
+    moneda: f.moneda,
+    monto: isBanc ? sub : totalComp,
+    subtotal: isBanc ? sub : base,
+    igv: isBanc ? 0 : igv,
+    detraccion: detrac,
+    retencion: retenc,
+    fechaVencimiento: f.fechaVencimiento || null,
+    estado: f.estado || null,
+    numOperacion: f.numOperacion || null,
+    descripcion: f.descripcion || null,
+    gastoId: gastoId ?? null,
+  });
+
   const create = useMutation({
-    mutationFn: () => {
-      const payload: MovimientoInput & { proyectoId?: string | null } = {
-        fecha: f.fecha,
-        tipoMovimiento: isBanc ? 'Egreso' : tipo,
-        proyectoId: proyectoId || null,
-        cuentaId: f.cuentaId || null,
-        cuentaDestinoId: esTransfer ? f.cuentaDestinoId || null : null,
-        subtipo: f.subtipo || null,
-        naturalezaContable: isBanc ? 'TRANSFERENCIA' : f.naturalezaContable || null,
-        clienteNombre: f.contraparte || null,
-        tipoComprobante: isBanc ? null : f.tipoComprobante,
-        serie: isBanc ? null : f.serie || null,
-        numero: isBanc ? null : f.numero || null,
-        moneda: f.moneda,
-        monto: isBanc ? sub : totalComp,
-        subtotal: isBanc ? sub : base,
-        igv: isBanc ? 0 : igv,
-        detraccion: detrac,
-        retencion: retenc,
-        fechaVencimiento: f.fechaVencimiento || null,
-        estado: f.estado || null,
-        numOperacion: f.numOperacion || null,
-        descripcion: f.descripcion || null,
-      };
-      return api.finanzas.createMovimientoGlobal(payload);
+    mutationFn: async () => {
+      // Egreso "gasto/compra" → crea gasto (costo devengado) + resolverClase; si está pagado, además el movimiento de caja linkeado.
+      if (esGastoEgreso) {
+        // Prorrateo · reparte el gasto compartido en N gastos (uno por obra), ligados por la operación
+        if (prorratear) {
+          const rows = reparto.filter((r) => r.proyectoId && (parseFloat(r.monto) || 0) > 0);
+          const opRef = f.numOperacion || `PRORR-${Date.now().toString(36).toUpperCase()}`;
+          for (const row of rows) {
+            const totalRow = parseFloat(row.monto);
+            const baseRow = f.aplicaIgv ? totalRow / 1.18 : totalRow;
+            const igvRow = totalRow - baseRow;
+            const { gasto: gp } = await api.finanzas.createGastoGlobal({
+              fecha: f.fecha, proyectoId: row.proyectoId, proveedorRuc: f.docNumero || null, proveedorRazon: f.contraparte || null,
+              tipoComprobante: f.tipoComprobante, serie: f.serie || null, numero: f.numero || null, moneda: f.moneda, cuentaId: f.cuentaId || null,
+              descripcionItem: `${f.descripcion || f.subtipo || ''} · prorrateo ${opRef}`.trim(), subtotal: baseRow, igv: igvRow, total: totalRow,
+              tipoGasto, inventariable: false, destino: 'proyecto',
+              cuentaContable: cuentaContable ?? null, cuentaContableOrigen: cuentaContable ? (cuentaSugerida ? 'SUGERIDO' : 'USUARIO') : null,
+            });
+            if (estadoPago === 'pagado' && gp) await api.finanzas.createMovimientoGlobal({ ...buildMov(gp.id), proyectoId: row.proyectoId, monto: totalRow, subtotal: baseRow, igv: igvRow, numOperacion: opRef });
+          }
+          return;
+        }
+        const gastoPayload: GastoInput & { proyectoId?: string | null } = {
+          fecha: f.fecha,
+          proyectoId: proyectoId || null,
+          proveedorRuc: f.docNumero || null,
+          proveedorRazon: f.contraparte || null,
+          tipoComprobante: f.tipoComprobante,
+          serie: f.serie || null,
+          numero: f.numero || null,
+          moneda: f.moneda,
+          cuentaId: f.cuentaId || null,
+          descripcionItem: f.descripcion || f.subtipo || null,
+          subtotal: base,
+          igv,
+          total: totalComp,
+          tipoGasto,
+          inventariable,
+          destino: proyectoId ? 'proyecto' : 'corporativo',
+          // WS1 · CD/GG ya no es input; se deriva de la cuenta. Enviamos la cuenta manual si Kelly la eligió.
+          cuentaContable: cuentaContable ?? null,
+          cuentaContableOrigen: cuentaContable ? (cuentaSugerida ? 'SUGERIDO' : 'USUARIO') : null,
+        };
+        const { gasto } = await api.finanzas.createGastoGlobal(gastoPayload);
+        // pendiente = solo gasto (cuenta por pagar); pagado = además movimiento de caja linkeado
+        if (estadoPago === 'pagado' && gasto) await api.finanzas.createMovimientoGlobal(buildMov(gasto.id));
+        return;
+      }
+      return api.finanzas.createMovimientoGlobal(buildMov());
     },
     onSuccess: () => {
       setEmitDone(true);
-      setTimeout(() => { invalidateResumen(qc); qc.invalidateQueries({ queryKey: ['mov-global'] }); qc.invalidateQueries({ queryKey: ['cuentas'] }); onClose(); }, 950);
+      setTimeout(() => {
+        invalidateResumen(qc);
+        qc.invalidateQueries({ queryKey: ['mov-global'] });
+        qc.invalidateQueries({ queryKey: ['gas-global'] });
+        qc.invalidateQueries({ queryKey: ['costos-obra'] });
+        qc.invalidateQueries({ queryKey: ['cuentas'] });
+        onClose();
+      }, 950);
     },
     onError: (e: Error) => { setEmitting(false); setEmitDone(false); setError(e.message); },
   });
 
   const validDoc = isBanc || (f.tipoDoc === 'RUC' ? /^\d{11}$/.test(f.docNumero) : f.tipoDoc === 'DNI' ? /^\d{8}$/.test(f.docNumero) : f.docNumero.length >= 6) || !f.docNumero;
-  const isValid = sub > 0 && f.fecha && (isBanc ? (f.cuentaId && (!esTransfer || (f.cuentaDestinoId && f.cuentaDestinoId !== f.cuentaId))) : (f.contraparte.trim() && validDoc));
+  // en prorrateo: cada fila con obra+monto>0 y la suma debe igualar el total
+  const repartoValido = !prorratear || (() => { const rows = reparto.filter((r) => r.proyectoId && (parseFloat(r.monto) || 0) > 0); const suma = rows.reduce((s, r) => s + parseFloat(r.monto), 0); return rows.length >= 2 && Math.abs(totalComp - suma) < 0.01; })();
+  const isValid = sub > 0 && f.fecha && repartoValido && (isBanc ? (f.cuentaId && (!esTransfer || (f.cuentaDestinoId && f.cuentaDestinoId !== f.cuentaId))) : (f.contraparte.trim() && validDoc));
 
   const onSave = () => {
     setError(null);
@@ -862,6 +921,82 @@ function MovModal({ proyectos, defaultProyecto, onClose }: { proyectos: { id: st
             ))}
           </div>
 
+          {/* ¿Qué tipo de egreso? — solo Egreso. Gasto/compra despliega clasificación CD/GG */}
+          {tipo === 'Egreso' && (
+            <SecBox title="¿Qué tipo de egreso?">
+              <div className="grid grid-cols-2 gap-2">
+                <button type="button" onClick={() => setEsGasto(true)}
+                  className={cn('rounded-md border p-2 text-left text-[11.5px] transition-colors', esGasto ? 'border-rose-600 bg-rose-50 dark:bg-rose-950/40' : 'border-line hover:bg-bg-sunken')}>
+                  <div className="font-semibold">Gasto o compra</div>
+                  <div className="text-[10px] text-ink-4">Costo de obra u oficina · clasifica CD/GG</div>
+                </button>
+                <button type="button" onClick={() => setEsGasto(false)}
+                  className={cn('rounded-md border p-2 text-left text-[11.5px] transition-colors', !esGasto ? 'border-rose-600 bg-rose-50 dark:bg-rose-950/40' : 'border-line hover:bg-bg-sunken')}>
+                  <div className="font-semibold">Movimiento financiero</div>
+                  <div className="text-[10px] text-ink-4">Préstamo, pago de deuda ya registrada, impuesto provisionado</div>
+                </button>
+              </div>
+              {esGasto && (
+                <div className="mt-3 space-y-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <Field label="Tipo de gasto"><select className={inputCls} value={tipoGasto} onChange={(e) => { setTipoGasto(e.target.value); setInventariable(TIPOS_INVENTARIABLES.has(e.target.value)); }}>{TIPOS_GASTO.map((t) => <option key={t}>{t}</option>)}</select></Field>
+                    <Field label="Estado de pago"><div className="flex gap-2">
+                      {(['pagado', 'pendiente'] as const).map((e) => (
+                        <button key={e} type="button" onClick={() => setEstadoPago(e)}
+                          className={cn('flex-1 rounded-md border py-1.5 text-[11.5px] capitalize transition-colors', estadoPago === e ? 'border-primary bg-primary/5 font-semibold' : 'border-line hover:bg-bg-sunken')}>{e}</button>
+                      ))}
+                    </div></Field>
+                  </div>
+                  {/* WS1 · cuenta contable MANUAL (Kelly) + chip CD/GG DERIVADO (no editable) */}
+                  <div>
+                    <div className="text-[10px] text-ink-4 mb-1">Cuenta contable</div>
+                    <div className="flex items-center gap-2">
+                      <CuentaContableSelect value={cuentaContable} onChange={(codigo, row) => { setCuentaContable(codigo); setCuentaRow(row); setCuentaSugerida(false); }} />
+                      {(() => { const chip = claseDerivadaUI(cuentaRow, !!proyectoId); return chip
+                        ? <span className="inline-flex items-center text-[11px] px-2 h-6 rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" title="Clase derivada de la cuenta · no editable">{chip}</span>
+                        : cuentaContable ? <span className="text-[10px] text-ink-4">cuenta de balance (sin clase)</span>
+                        : <span className="text-[10px] text-ink-4">opcional · si no eliges, el sistema la infiere</span>; })()}
+                      {cuentaSugerida && cuentaContable && <span className="text-[10px] text-amber-600" title="Última cuenta usada con este proveedor · confírmala o cámbiala">sugerida</span>}
+                    </div>
+                  </div>
+                  {proyectoId && (
+                    <div>
+                      {costosObraQ.data && (() => { const c = costosObraQ.data; const cdQueda = c.cd.presupuesto - c.cd.ejecutado; return (
+                        <div className="mt-2 rounded-md bg-bg-sunken/60 border border-line p-2 text-[10.5px] space-y-0.5">
+                          <div className="flex items-center justify-between font-semibold text-ink-2"><span>Saldo de esta obra</span><span className="text-ink-4 font-normal">presupuesto − ejecutado</span></div>
+                          <div className="flex justify-between"><span>CD ejecutado {fmtPEN(c.cd.ejecutado)} de {fmtPEN(c.cd.presupuesto)}</span><span className={cn('font-mono font-semibold', cdQueda < 0 ? 'text-rose-600' : 'text-emerald-600')}>queda {fmtPEN(cdQueda)}</span></div>
+                          <div className="flex justify-between text-ink-3"><span>Resultado de obra a hoy</span><span className="font-mono">{fmtPEN(c.resultadoObra)}</span></div>
+                        </div>
+                      ); })()}
+                    </div>
+                  )}
+                  <label className="flex items-center gap-1.5 cursor-pointer text-[11.5px]"><input type="checkbox" checked={prorratear} onChange={(e) => setProrratear(e.target.checked)} className="rounded border-line" /> Repartir entre varias obras (prorrateo)</label>
+                  {prorratear && (
+                    <div className="rounded-md border border-line p-2 space-y-1.5">
+                      {reparto.map((row, i) => (
+                        <div key={i} className="flex items-center gap-1.5">
+                          <select className={cn(inputCls, 'flex-1 min-w-0')} value={row.proyectoId} onChange={(e) => setReparto((rs) => rs.map((x, j) => (j === i ? { ...x, proyectoId: e.target.value } : x)))}>
+                            <option value="">— obra —</option>
+                            {proyectos.map((p) => <option key={p.id} value={p.id}>{p.codigo}</option>)}
+                          </select>
+                          <input className={cn(inputCls, 'w-24 text-right font-mono')} type="number" step="0.01" placeholder="0.00" value={row.monto} onChange={(e) => setReparto((rs) => rs.map((x, j) => (j === i ? { ...x, monto: e.target.value } : x)))} />
+                          {reparto.length > 2 && <button type="button" onClick={() => setReparto((rs) => rs.filter((_, j) => j !== i))} className="text-ink-4 hover:text-rose-600"><X className="h-3.5 w-3.5" /></button>}
+                        </div>
+                      ))}
+                      <div className="flex items-center justify-between text-[10.5px]">
+                        <button type="button" onClick={() => setReparto((rs) => [...rs, { proyectoId: '', monto: '' }])} className="text-primary hover:underline">+ Agregar obra</button>
+                        {(() => { const suma = reparto.reduce((s, r) => s + (parseFloat(r.monto) || 0), 0); const dif = totalComp - suma; return (
+                          <span className={cn('font-mono', Math.abs(dif) < 0.01 ? 'text-emerald-600' : 'text-amber-600')}>Σ {fmtPEN(suma)} de {fmtPEN(totalComp)}{Math.abs(dif) >= 0.01 ? ` · falta ${fmtPEN(dif)}` : ' ✓'}</span>
+                        ); })()}
+                      </div>
+                    </div>
+                  )}
+                  {!prorratear && <label className="flex items-center gap-1.5 cursor-pointer text-[11.5px]"><input type="checkbox" checked={inventariable} onChange={(e) => setInventariable(e.target.checked)} className="rounded border-line" /> Registrar en inventario</label>}
+                </div>
+              )}
+            </SecBox>
+          )}
+
           {isBanc ? (
             <SecBox title="Operación bancaria">
               <div className="grid grid-cols-2 gap-3">
@@ -892,7 +1027,7 @@ function MovModal({ proyectos, defaultProyecto, onClose }: { proyectos: { id: st
               <SecBox title={isIngreso ? 'Cliente' : 'Proveedor'}>
                 <div className="grid grid-cols-[110px_1fr] gap-3">
                   <Field label="Tipo doc"><select className={inputCls} value={f.tipoDoc} onChange={(e) => set({ tipoDoc: e.target.value })}><option>RUC</option><option>DNI</option><option>CE</option></select></Field>
-                  <Field label={`N° ${f.tipoDoc}`} right={f.tipoDoc === 'RUC' ? '11 dígitos' : '8 dígitos'}><input className={cn(inputCls, 'font-mono', f.docNumero && !validDoc && 'border-rose-500')} value={f.docNumero} onChange={(e) => set({ docNumero: e.target.value.replace(/\D/g, '') })} maxLength={f.tipoDoc === 'RUC' ? 11 : 8} placeholder={f.tipoDoc === 'RUC' ? '20XXXXXXXXX' : '12345678'} /></Field>
+                  <Field label={`N° ${f.tipoDoc}`} right={f.tipoDoc === 'RUC' ? '11 dígitos' : '8 dígitos'}><input className={cn(inputCls, 'font-mono', f.docNumero && !validDoc && 'border-rose-500')} value={f.docNumero} onChange={(e) => set({ docNumero: e.target.value.replace(/\D/g, '') })} onBlur={(e) => { if (esGastoEgreso && f.tipoDoc === 'RUC') prefillCuenta(e.target.value); }} maxLength={f.tipoDoc === 'RUC' ? 11 : 8} placeholder={f.tipoDoc === 'RUC' ? '20XXXXXXXXX' : '12345678'} /></Field>
                 </div>
                 <Field label="Nombre / Razón social *">
                   <div className="relative">
@@ -900,7 +1035,7 @@ function MovModal({ proyectos, defaultProyecto, onClose }: { proyectos: { id: st
                     {showAuto && sugerencias.length > 0 && (
                       <div className="absolute z-10 left-0 right-0 top-full mt-1 max-h-44 overflow-y-auto rounded-md border border-line bg-bg-elev shadow-lg">
                         {sugerencias.map((p) => (
-                          <button key={p.id} type="button" onClick={() => { set({ contraparte: p.razonSocial, docNumero: p.ruc ?? '', tipoDoc: p.ruc ? 'RUC' : 'DNI' }); setShowAuto(false); }} className="w-full text-left px-3 py-2 text-[11.5px] hover:bg-bg-sunken border-b border-line/40 last:border-0">
+                          <button key={p.id} type="button" onClick={() => { set({ contraparte: p.razonSocial, docNumero: p.ruc ?? '', tipoDoc: p.ruc ? 'RUC' : 'DNI' }); setShowAuto(false); if (p.ruc) prefillCuenta(p.ruc); }} className="w-full text-left px-3 py-2 text-[11.5px] hover:bg-bg-sunken border-b border-line/40 last:border-0">
                             <div className="font-medium">{p.razonSocial}</div><div className="font-mono text-[10px] text-ink-3">{p.ruc ? `RUC ${p.ruc}` : 'Sin RUC'}</div>
                           </button>
                         ))}
@@ -1141,6 +1276,78 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
 }
 
 // H3.5 · Conciliación bancaria · importar extracto + match ERP ↔ banco
+const CLASE_CONCIL: Record<string, string> = {
+  cheques_pendientes: 'Cheque pendiente', depositos_en_transito: 'Depósito en tránsito', transferencias_pendientes: 'Transferencia pendiente',
+  itf: 'ITF', comisiones: 'Comisión', intereses: 'Interés', debitos_automaticos: 'Débito automático', creditos_no_registrados: 'Crédito no registrado',
+};
+const agingCls = (d: number) => (d <= 7 ? 'text-emerald-600' : d <= 30 ? 'text-amber-600' : 'text-rose-600');
+
+function ResumenConciliacionPanel() {
+  const cuentasQ = useQuery({ queryKey: ['cuentas'], queryFn: () => api.finanzas.listCuentas() });
+  const cuentas = cuentasQ.data?.cuentas ?? [];
+  const [cuenta, setCuenta] = useState('');
+  const [periodo, setPeriodo] = useState('2026-04');
+  useEffect(() => { if (!cuenta && cuentas[0]) setCuenta(cuentas[0].id); }, [cuentas, cuenta]);
+  const q = useQuery({ queryKey: ['concil-resumen', cuenta, periodo], queryFn: () => api.conciliacion.resumen(cuenta, periodo), enabled: !!cuenta && /^\d{4}-\d{2}$/.test(periodo) });
+  const r: ConciliacionResumen | undefined = q.data;
+  const fila = (p: PartidaConcil) => (
+    <tr key={p.id} className="border-t border-line text-[11px]">
+      <td className="px-2 py-1 font-mono text-ink-4">{p.fecha.slice(5)}</td>
+      <td className="px-2 py-1 truncate max-w-[210px]"><span className="text-ink-2">{CLASE_CONCIL[p.clase] ?? p.clase}</span> · {p.desc}</td>
+      <td className="px-2 py-1 text-right font-mono tabular-nums">{fmtPEN(p.monto)}</td>
+      <td className={cn('px-2 py-1 text-right font-mono', agingCls(p.aging))}>{p.aging}d</td>
+    </tr>
+  );
+  return (
+    <div className="rounded-lg border border-line bg-bg-elev p-4 space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-[13px] font-semibold">Resumen de conciliación <span className="text-ink-4 font-normal">· ¿está cuadrado?</span></h3>
+        <div className="flex items-center gap-2">
+          <select value={cuenta} onChange={(e) => setCuenta(e.target.value)} className="h-8 px-2 rounded-md border border-line bg-bg-elev text-[12px] max-w-[200px] truncate">
+            {cuentas.map((c) => <option key={c.id} value={c.id}>{c.descripcion ?? c.codigo}</option>)}
+          </select>
+          <input type="month" value={periodo} onChange={(e) => setPeriodo(e.target.value)} className="h-8 px-2 rounded-md border border-line bg-bg-elev text-[12px]" />
+          <button onClick={() => window.print()} className="h-8 px-2.5 rounded-md border border-line text-[11.5px] text-ink-2 inline-flex items-center gap-1 hover:bg-bg-sunken"><Download className="h-3.5 w-3.5" /> Exportar</button>
+        </div>
+      </div>
+      {!r ? (
+        <div className="text-[12px] text-ink-4 py-6 text-center">{q.isLoading ? 'Calculando…' : 'Elige cuenta y periodo'}</div>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+            <div className="rounded-md border border-line p-2.5"><div className="font-mono text-[9px] uppercase tracking-wider text-ink-4">Saldo banco</div><div className="mt-0.5 text-[14px] font-mono font-bold tabular-nums">{fmtPEN(r.kpis.saldoBanco)}</div></div>
+            <div className="rounded-md border border-line p-2.5"><div className="font-mono text-[9px] uppercase tracking-wider text-ink-4">Saldo libro · {r.cuenta.cuentaContable ?? '—'}</div><div className="mt-0.5 text-[14px] font-mono font-bold tabular-nums">{fmtPEN(r.kpis.saldoLibro)}</div></div>
+            <div className="rounded-md border border-line p-2.5"><div className="font-mono text-[9px] uppercase tracking-wider text-ink-4">Diferencia</div><div className={cn('mt-0.5 text-[14px] font-mono font-bold tabular-nums', r.kpis.estado === 'cuadrado' ? 'text-emerald-600' : 'text-rose-600')}>{fmtPEN(r.kpis.diferencia)}</div></div>
+            <div className="rounded-md border border-line p-2.5"><div className="font-mono text-[9px] uppercase tracking-wider text-ink-4">Estado</div><div className={cn('mt-0.5 text-[14px] font-bold', r.kpis.estado === 'cuadrado' ? 'text-emerald-600' : 'text-rose-600')}>{r.kpis.estado === 'cuadrado' ? '✓ Cuadrado' : '✗ Descuadrado'}</div></div>
+          </div>
+          <div className="text-[11px] text-ink-3">{r.kpis.partidasLibroPendientes} partidas del libro · {r.kpis.movimientosBancoPendientes} del banco pendientes · <b>{r.calidad.pctConciliado}% conciliado</b> ({r.calidad.conciliados}/{r.calidad.total})</div>
+          {(r.saldoExtracto.inconsistente || r.saldoExtracto.estimado) && (
+            <div className="rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/40 p-2 text-[10.5px] text-amber-800 dark:text-amber-300">
+              {r.saldoExtracto.inconsistente && <>Saldo del extracto <b>inconsistente</b>: columna {fmtPEN(r.saldoExtracto.viaColumna ?? 0)} vs calculado {fmtPEN(r.saldoExtracto.viaMovimientos ?? 0)} — el extracto no cuadra consigo mismo. </>}
+              {r.saldoExtracto.estimado && <>Saldo <b>estimado</b> (el extracto no trae saldo inicial). </>}
+            </div>
+          )}
+          <div className="rounded-md bg-bg-sunken/40 p-3 text-[11px] font-mono space-y-0.5">
+            <div className="flex justify-between"><span>Saldo banco (extracto)</span><span className="tabular-nums">{fmtPEN(r.kpis.saldoBanco)}</span></div>
+            <div className="flex justify-between text-ink-3"><span>− Saldo libro (cuenta {r.cuenta.cuentaContable})</span><span className="tabular-nums">{fmtPEN(r.kpis.saldoLibro)}</span></div>
+            <div className="flex justify-between border-t border-line pt-0.5 font-bold"><span>= Diferencia a explicar con partidas</span><span className={cn('tabular-nums', r.kpis.estado === 'cuadrado' ? 'text-emerald-600' : 'text-rose-600')}>{fmtPEN(r.kpis.diferencia)}</span></div>
+          </div>
+          <div className="grid gap-3 lg:grid-cols-2">
+            <div className="rounded-md border border-line overflow-hidden">
+              <div className="bg-bg-sunken px-2 py-1.5 text-[10px] font-mono uppercase text-ink-4">Libro → Banco (en tránsito) · {r.partidas.libroNoBanco.length}</div>
+              <div className="max-h-60 overflow-auto"><table className="w-full"><tbody>{r.partidas.libroNoBanco.slice(0, 50).map(fila)}{r.partidas.libroNoBanco.length === 0 && <tr><td className="px-2 py-3 text-[11px] text-ink-4">Sin partidas</td></tr>}</tbody></table></div>
+            </div>
+            <div className="rounded-md border border-line overflow-hidden">
+              <div className="bg-bg-sunken px-2 py-1.5 text-[10px] font-mono uppercase text-ink-4">Banco → Libro (ITF/comisiones/…) · {r.partidas.bancoNoLibro.length}</div>
+              <div className="max-h-60 overflow-auto"><table className="w-full"><tbody>{r.partidas.bancoNoLibro.slice(0, 50).map(fila)}{r.partidas.bancoNoLibro.length === 0 && <tr><td className="px-2 py-3 text-[11px] text-ink-4">Sin partidas</td></tr>}</tbody></table></div>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function ConciliacionView() {
   const qc = useQueryClient();
   const [sel, setSel] = useState<string | null>(null);
@@ -1164,6 +1371,8 @@ function ConciliacionView() {
 
   return (
     <div className="space-y-4">
+      <ResumenConciliacionPanel />
+
       {/* Importar */}
       <div className="rounded-lg border border-line bg-bg-elev p-4 flex flex-wrap items-end gap-3">
         <div className="flex-1 min-w-[180px]">

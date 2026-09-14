@@ -1,0 +1,75 @@
+﻿=== final fix diff 1842d7a..4512b6c ===
+diff --git a/apps/backend/src/routes/planillaOficina.ts b/apps/backend/src/routes/planillaOficina.ts
+index 54ec93b..b7889e4 100644
+--- a/apps/backend/src/routes/planillaOficina.ts
++++ b/apps/backend/src/routes/planillaOficina.ts
+@@ -172,25 +172,25 @@ router.post('/planilla/:mesId/calcular', requireOficinaEdit, async (req, res) =>
+   if (!['borrador', 'calculada'].includes(mesRow.estado)) {
+     return res.status(422).json({ error: `No se puede calcular en estado '${mesRow.estado}'` });
+   }
+ 
+   // Load active admin empleados
+   const empleados = await db
+     .select()
+     .from(schema.empleados)
+     .where(and(eq(schema.empleados.tipoPlanilla, 'admin'), eq(schema.empleados.activo, true)));
+ 
+   // Load AFP tasas
+   const afpTasasList = await db.select().from(schema.afpTasas);
+-  const afpTasasMap = new Map(afpTasasList.map((t) => [t.afp, t]));
++  const afpTasasMap = new Map(afpTasasList.map((t) => [afpKey(t.afp), t]));
+ 
+   // Build base TasasOficina from config
+   const cfg = await getConfig();
+   const baseTasas = cfgToDto(cfg);
+ 
+   // Build afp snapshot map (all AFPs as fractions), keyed by STRIPPED name (no (F)/(M) suffix)
+   const afpSnapshotMap: Record<string, { pctSeguro: number; pctComision: number }> = {};
+   for (const t of afpTasasList) {
+     afpSnapshotMap[afpKey(t.afp)] = { pctSeguro: frac(t.pctSeguro), pctComision: frac(t.pctComision) };
+   }
+ 
+   // Snapshot: config + afp tasas
+@@ -619,30 +619,42 @@ router.post('/planilla/:mesId/cerrar', requireOficinaEdit, async (req, res) => {
+ 
+   const [mesRow] = await db
+     .select()
+     .from(schema.planillaOficinaMes)
+     .where(eq(schema.planillaOficinaMes.id, mesId!))
+     .limit(1);
+ 
+   if (!mesRow) return res.status(404).json({ error: 'Planilla mes no encontrada' });
+   if (mesRow.estado !== 'calculada') {
+     return res.status(400).json({ error: `Solo se puede cerrar en estado 'calculada'; estado actual: '${mesRow.estado}'` });
+   }
+ 
++  // FIX 1: Validate accounting period BEFORE applying cuotas (mirror reabrir guard)
++  // periodo = mes (already 'YYYY-MM'); last day doesn't change the period.
++  const periodo = mesRow.mes;
++  if (await periodoCerrado(periodo)) {
++    return res.status(423).json({ error: `Periodo contable ${periodo} cerrado; reabrelo primero` });
++  }
++
+   // Load detalle rows
+   const detalleRows = await db
+     .select()
+     .from(schema.planillaOficinaDetalle)
+     .where(eq(schema.planillaOficinaDetalle.planillaMesId, mesId!));
+ 
++  // FIX 3: Guard against empty month (no detalle rows → crearAsiento would throw)
++  if (detalleRows.length === 0) {
++    return res.status(400).json({ error: 'La planilla no tiene detalle; calcula primero' });
++  }
++
+   // Compute last day of mes
+   const [y, m] = mesRow.mes.split('-').map(Number) as [number, number];
+   const lastDay = new Date(y, m, 0).getDate();
+   const fecha = mesRow.mes + '-' + String(lastDay).padStart(2, '0');
+ 
+   // Pre-load derivar context (single load for the whole transaction)
+   const derivarCtx = await cargarDerivarCtx();
+ 
+   // ── Step 2: Apply advance installments (in a transaction) ──
+   await db.transaction(async (tx) => {
+     for (const det of detalleRows) {
+       const cuotaTotal = Math.round(Number(det.adelantoCuota ?? 0) * 100) / 100;

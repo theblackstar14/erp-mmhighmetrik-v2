@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { useMemo, useRef, useState } from 'react';
 import { api, type Valorizacion, type ValorizacionReajuste } from '@/lib/api.js';
+import { CuentaContableSelect } from '@/components/contabilidad/CuentaContableSelect.js';
 import { cn, fmtPEN } from '@/lib/utils.js';
 import { invalidateResumen } from '@/lib/invalidate.js';
 
@@ -58,6 +59,7 @@ export function ValorizacionesTab({ proyectoId }: { proyectoId: string }) {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadOk, setUploadOk] = useState<string | null>(null);
   const [cobro, setCobro] = useState<{ valId: string } | null>(null); // valo a marcar cobrada → pide cuenta destino
+  const [factura, setFactura] = useState<{ valId: string } | null>(null); // valo a marcar facturada → captura comprobante
   const cuentasQ = useQuery({ queryKey: ['cuentas'], queryFn: () => api.finanzas.listCuentas(), staleTime: 5 * 60 * 1000 });
 
   const montoSubtotal = Number(proyQ.data?.proyecto?.montoSubtotal ?? 0);
@@ -81,9 +83,9 @@ export function ValorizacionesTab({ proyectoId }: { proyectoId: string }) {
   });
 
   const cambiarEstado = useMutation({
-    mutationFn: (v: { valId: string; estado: string; cuentaId?: string; fechaCobro?: string }) =>
-      api.proyectos.setValorizacionEstado(proyectoId, v.valId, v.estado, v.cuentaId ? { cuentaId: v.cuentaId, fechaCobro: v.fechaCobro } : undefined),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['valorizaciones', proyectoId] }); invalidateResumen(qc); setCobro(null); },
+    mutationFn: (v: { valId: string; estado: string; cuentaId?: string; fechaCobro?: string; cuentaContable?: string; comprobante?: { tipo?: string; serie?: string; numero?: string; fecha?: string; fechaVenc?: string; detraccion?: number } }) =>
+      api.proyectos.setValorizacionEstado(proyectoId, v.valId, v.estado, (v.cuentaId || v.comprobante || v.cuentaContable) ? { cuentaId: v.cuentaId, fechaCobro: v.fechaCobro, cuentaContable: v.cuentaContable, comprobante: v.comprobante } : undefined),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['valorizaciones', proyectoId] }); invalidateResumen(qc); setCobro(null); setFactura(null); },
   });
 
   const onFile = (f: File | null) => {
@@ -542,7 +544,7 @@ export function ValorizacionesTab({ proyectoId }: { proyectoId: string }) {
                   modo={modo}
                   baseRef={baseRef}
                   pctProgAcum={curvaRow?.pctProg ?? 0}
-                  onChangeEstado={(estado) => estado === 'cobrada' ? setCobro({ valId: v.id }) : cambiarEstado.mutate({ valId: v.id, estado })}
+                  onChangeEstado={(estado) => estado === 'cobrada' ? setCobro({ valId: v.id }) : estado === 'facturada' ? setFactura({ valId: v.id }) : cambiarEstado.mutate({ valId: v.id, estado })}
                 />
               );
             })}
@@ -556,9 +558,81 @@ export function ValorizacionesTab({ proyectoId }: { proyectoId: string }) {
           cuentas={cuentasQ.data?.cuentas ?? []}
           pending={cambiarEstado.isPending}
           onClose={() => setCobro(null)}
-          onConfirm={(cuentaId, fechaCobro) => cambiarEstado.mutate({ valId: cobro.valId, estado: 'cobrada', cuentaId, fechaCobro })}
+          onConfirm={(cuentaId, fechaCobro, cuentaContable) => cambiarEstado.mutate({ valId: cobro.valId, estado: 'cobrada', cuentaId, fechaCobro, cuentaContable })}
         />
       )}
+
+      {factura && (
+        <FacturaValoModal
+          pending={cambiarEstado.isPending}
+          onClose={() => setFactura(null)}
+          onConfirm={(comprobante) => cambiarEstado.mutate({ valId: factura.valId, estado: 'facturada', comprobante })}
+        />
+      )}
+    </div>
+  );
+}
+
+// Mini-modal · al marcar valo facturada captura el comprobante electrónico (Registro de Ventas / RVIE).
+// Dejar en blanco = número mock auto-correlativo; llenar cuando exista la factura real.
+function FacturaValoModal({ pending, onClose, onConfirm }: {
+  pending: boolean;
+  onClose: () => void;
+  onConfirm: (comprobante: { tipo: string; serie: string; numero: string; fecha: string; fechaVenc: string; detraccion: number }) => void;
+}) {
+  const [tipo, setTipo] = useState('factura');
+  const [serie, setSerie] = useState('F001');
+  const [numero, setNumero] = useState('');
+  const [fecha, setFecha] = useState(new Date().toISOString().slice(0, 10));
+  const [fechaVenc, setFechaVenc] = useState('');
+  const [detraccion, setDetraccion] = useState('');
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 animate-backdropIn" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="w-full max-w-sm rounded-xl border border-line bg-bg-elev p-5 shadow-xl animate-modalPop">
+        <h3 className="text-[14px] font-semibold mb-1">Registrar comprobante</h3>
+        <p className="text-[11.5px] text-ink-3 mb-3">Factura emitida por la valorización · alimenta el Registro de Ventas y el SIRE. Deja el número en blanco para asignar uno correlativo automático.</p>
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block">
+              <span className="text-[10.5px] font-mono uppercase tracking-wider text-ink-4">Tipo</span>
+              <select value={tipo} onChange={(e) => setTipo(e.target.value)} className="mt-1 h-8 px-2 rounded-md border border-line bg-bg-elev text-[12px] w-full">
+                <option value="factura">Factura</option>
+                <option value="boleta">Boleta</option>
+              </select>
+            </label>
+            <label className="block">
+              <span className="text-[10.5px] font-mono uppercase tracking-wider text-ink-4">Serie</span>
+              <input value={serie} onChange={(e) => setSerie(e.target.value.toUpperCase())} className="mt-1 h-8 px-2 rounded-md border border-line bg-bg-elev text-[12px] w-full font-mono" />
+            </label>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block">
+              <span className="text-[10.5px] font-mono uppercase tracking-wider text-ink-4">Número</span>
+              <input value={numero} onChange={(e) => setNumero(e.target.value)} placeholder="auto" className="mt-1 h-8 px-2 rounded-md border border-line bg-bg-elev text-[12px] w-full font-mono" />
+            </label>
+            <label className="block">
+              <span className="text-[10.5px] font-mono uppercase tracking-wider text-ink-4">Fecha emisión</span>
+              <input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} className="mt-1 h-8 px-2 rounded-md border border-line bg-bg-elev text-[12px] w-full" />
+            </label>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block">
+              <span className="text-[10.5px] font-mono uppercase tracking-wider text-ink-4">Fecha vencimiento</span>
+              <input type="date" value={fechaVenc} onChange={(e) => setFechaVenc(e.target.value)} className="mt-1 h-8 px-2 rounded-md border border-line bg-bg-elev text-[12px] w-full" />
+            </label>
+            <label className="block">
+              <span className="text-[10.5px] font-mono uppercase tracking-wider text-ink-4">Detracción S/</span>
+              <input type="number" step="0.01" value={detraccion} onChange={(e) => setDetraccion(e.target.value)} placeholder="0.00" className="mt-1 h-8 px-2 rounded-md border border-line bg-bg-elev text-[12px] w-full font-mono tabular-nums" />
+            </label>
+          </div>
+          <div className="flex justify-end gap-2 pt-1">
+            <button onClick={onClose} className="h-8 px-3 rounded-md border border-line text-[12px] hover:bg-bg-sunken">Cancelar</button>
+            <button disabled={pending} onClick={() => onConfirm({ tipo, serie: serie.trim(), numero: numero.trim(), fecha, fechaVenc: fechaVenc || fecha, detraccion: Number(detraccion) || 0 })} className="h-8 px-3 rounded-md bg-indigo-600 text-white text-[12px] font-medium disabled:opacity-50">
+              {pending ? 'Guardando…' : 'Marcar facturada'}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -568,10 +642,11 @@ function CobroValoModal({ cuentas, pending, onClose, onConfirm }: {
   cuentas: { id: string; descripcion: string | null; codigo: string; banco?: string | null }[];
   pending: boolean;
   onClose: () => void;
-  onConfirm: (cuentaId: string, fechaCobro: string) => void;
+  onConfirm: (cuentaId: string, fechaCobro: string, cuentaContable?: string) => void;
 }) {
   const [cuentaId, setCuentaId] = useState('');
   const [fecha, setFecha] = useState(new Date().toISOString().slice(0, 10));
+  const [cuentaIngreso, setCuentaIngreso] = useState<string | null>('7041'); // WS1 · default fuerte · Kelly confirma
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 animate-backdropIn" onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div className="w-full max-w-sm rounded-xl border border-line bg-bg-elev p-5 shadow-xl animate-modalPop">
@@ -589,9 +664,14 @@ function CobroValoModal({ cuentas, pending, onClose, onConfirm }: {
             <span className="text-[10.5px] font-mono uppercase tracking-wider text-ink-4">Fecha de cobro</span>
             <input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} className="mt-1 h-8 px-2 rounded-md border border-line bg-bg-elev text-[12px] w-full" />
           </label>
+          <label className="block">
+            <span className="text-[10.5px] font-mono uppercase tracking-wider text-ink-4">Cuenta de ingreso</span>
+            <div className="mt-1"><CuentaContableSelect value={cuentaIngreso} onChange={(c) => setCuentaIngreso(c)} placeholder="Cuenta de ingreso (70x)…" /></div>
+            <span className="text-[10px] text-ink-4">default 7041 · confírmala o cámbiala</span>
+          </label>
           <div className="flex justify-end gap-2 pt-1">
             <button onClick={onClose} className="h-8 px-3 rounded-md border border-line text-[12px] hover:bg-bg-sunken">Cancelar</button>
-            <button disabled={!cuentaId || pending} onClick={() => onConfirm(cuentaId, fecha)} className="h-8 px-3 rounded-md bg-emerald-600 text-white text-[12px] font-medium disabled:opacity-50">
+            <button disabled={!cuentaId || pending} onClick={() => onConfirm(cuentaId, fecha, cuentaIngreso ?? undefined)} className="h-8 px-3 rounded-md bg-emerald-600 text-white text-[12px] font-medium disabled:opacity-50">
               {pending ? 'Guardando…' : 'Registrar cobro'}
             </button>
           </div>

@@ -64,7 +64,7 @@ export function EconomicoTab({ proyectoId }: { proyectoId: string }) {
       <div className="rounded-xl border border-line bg-bg-elev p-5">
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div>
-            <div className="text-[12px] text-ink-3">Utilidad al cierre <span className="text-ink-4">· proyectada</span></div>
+            <div className="text-[12px] text-ink-3">Utilidad al cierre <span className="text-ink-4">· proyectada a fin de obra (EAC)</span></div>
             <div className={cn('mt-1 text-[32px] font-bold tracking-[-0.02em] font-mono leading-none tabular-nums', sinCostos ? 'text-ink-4' : utilidadEstimada >= 0 ? 'text-ok' : 'text-destructive')}>
               {sinCostos ? '—' : fmtPEN(utilidadEstimada)}
             </div>
@@ -119,10 +119,12 @@ export function EconomicoTab({ proyectoId }: { proyectoId: string }) {
       {/* ── RESULTADO DE OBRA (sin gastos de oficina) ── */}
       {costosQ.data && (
         <div className="rounded-lg border border-line bg-bg-elev p-4">
-          <h3 className="text-[13px] font-semibold mb-2">Resultado de obra (sin gastos de oficina)</h3>
+          <h3 className="text-[13px] font-semibold mb-0.5">Resultado de obra <span className="text-ink-4 font-normal">· real devengado a hoy</span></h3>
+          <p className="text-[10.5px] text-ink-4 mb-2">Es el resultado <b>real ejecutado a la fecha</b>. La "Utilidad al cierre" de arriba es la <b>proyección a fin de obra</b> — no son el mismo número.</p>
           <div className="space-y-1 text-[12px]">
             <div className="flex justify-between"><span className="text-ink-2">Valorización reconocida</span><span className="font-mono tabular-nums">{fmtPEN(costosQ.data.valorizacion)}</span></div>
             <div className="flex justify-between"><span className="text-ink-2">(−) Costo Directo ejecutado</span><span className="font-mono tabular-nums">−{fmtPEN(costosQ.data.cd.ejecutado)}</span></div>
+            <div className="flex justify-between text-[10.5px] text-ink-4 pl-3"><span>· compras/servicios {fmtPEN(costosQ.data.cd.gastos)} · mano de obra (planilla) {fmtPEN(costosQ.data.cd.manoObra)}</span></div>
             <div className="flex justify-between"><span className="text-ink-2">(−) Gasto General de Obra ejecutado</span><span className="font-mono tabular-nums">−{fmtPEN(costosQ.data.ggObra.ejecutado)}</span></div>
             <div className="flex justify-between border-t border-line pt-1.5 mt-1 font-semibold"><span>Resultado de obra</span><span className="font-mono tabular-nums">{fmtPEN(costosQ.data.resultadoObra)}</span></div>
           </div>

@@ -5,7 +5,7 @@
  * Read-only sobre F3/CUTOVER · solo escribe en extractos_bancarios / extracto_lineas.
  */
 import { db, schema } from '@erp/db';
-import { and, desc, eq, gte, inArray, isNull, lte, ne } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNull, lte, ne, sql } from 'drizzle-orm';
 import { Router } from 'express';
 import multer from 'multer';
 import * as XLSX from 'xlsx';
@@ -260,6 +260,91 @@ router.get('/metricas', async (req, res) => {
     pctConciliado: total ? Math.round((conciliado / total) * 100) : 100,
     diferenciaNeta: por('diferencia').reduce((s, l) => s + Number(l.monto), 0),
     agingMaxDias: aging.length ? Math.max(...aging) : 0,
+  });
+});
+
+// ── Panel de RESUMEN de conciliación (Fase 1 · read-only) · saldo banco vs libro (104x) + puente ──
+router.get('/resumen', async (req, res) => {
+  const cuentaId = String(req.query.cuenta ?? '');
+  const periodo = String(req.query.periodo ?? '');
+  if (!cuentaId || !/^\d{4}-\d{2}$/.test(periodo)) return res.status(400).json({ error: 'cuenta y periodo (YYYY-MM) requeridos' });
+  const [cuenta] = await db.select().from(schema.cuentasBancarias).where(eq(schema.cuentasBancarias.id, cuentaId)).limit(1);
+  if (!cuenta) return res.status(404).json({ error: 'Cuenta no encontrada' });
+
+  const [ay, mo] = periodo.split('-').map(Number) as [number, number];
+  const desde = `${periodo}-01`;
+  const hasta = `${periodo}-${String(new Date(ay, mo, 0).getDate()).padStart(2, '0')}`;
+  const n = (x: unknown) => Number(x ?? 0);
+  const r2 = (x: number) => Number(x.toFixed(2));
+  const hoyMs = Date.now();
+  const aging = (f: string) => Math.max(0, Math.round((hoyMs - new Date(`${f}T00:00:00Z`).getTime()) / 86400000));
+
+  // Líneas del extracto de esta cuenta en el periodo
+  const lineas = await db.select({
+      id: schema.extractoLineas.id, fecha: schema.extractoLineas.fecha, desc: schema.extractoLineas.descripcion,
+      monto: schema.extractoLineas.monto, saldo: schema.extractoLineas.saldo, estado: schema.extractoLineas.estado, movimientoId: schema.extractoLineas.movimientoId,
+    }).from(schema.extractoLineas)
+    .innerJoin(schema.extractosBancarios, eq(schema.extractoLineas.extractoId, schema.extractosBancarios.id))
+    .where(and(eq(schema.extractosBancarios.cuentaId, cuentaId), gte(schema.extractoLineas.fecha, desde), lte(schema.extractoLineas.fecha, hasta)))
+    .orderBy(schema.extractoLineas.fecha);
+
+  // Saldo banco · vía A = columna saldo (última con valor) · vía B = saldo inicial + Σ montos signed
+  const conSaldo = lineas.filter((l) => l.saldo != null);
+  const sumMovs = lineas.reduce((s, l) => s + n(l.monto), 0);
+  const viaColumna = conSaldo.length ? n(conSaldo[conSaldo.length - 1]!.saldo) : null;
+  let viaMovimientos: number | null = null, estimado = false;
+  if (conSaldo.length) { const p = conSaldo[0]!; viaMovimientos = r2(n(p.saldo) - n(p.monto) + sumMovs); }
+  else { estimado = true; viaMovimientos = r2(sumMovs); }
+  const saldoBanco = viaColumna ?? viaMovimientos ?? 0;
+  const inconsistente = viaColumna != null && viaMovimientos != null && Math.abs(viaColumna - viaMovimientos) > 0.5;
+
+  // Saldo libro = Σ(debe − haber) de la cuenta 104x de esta cuenta bancaria, hasta fin de periodo
+  const cc = cuenta.cuentaContable;
+  let saldoLibro = 0;
+  if (cc) {
+    const [lib] = await db.select({ v: sql<number>`coalesce(sum(${schema.asientosLineas.debe} - ${schema.asientosLineas.haber}),0)::float8` })
+      .from(schema.asientosLineas).innerJoin(schema.asientos, eq(schema.asientosLineas.asientoId, schema.asientos.id))
+      .where(and(sql`${schema.asientosLineas.cuenta} LIKE ${cc + '%'}`, lte(schema.asientos.fecha, hasta), ne(schema.asientos.status, 'anulado')));
+    saldoLibro = n(lib?.v);
+  }
+
+  const diferencia = r2(saldoBanco - saldoLibro);
+  const estado = Math.abs(diferencia) <= 1.0 ? 'cuadrado' : 'descuadrado';
+
+  // Partidas BANCO → LIBRO (líneas pendientes, clasificadas por glosa)
+  const clasifBanco = (d: string | null, monto: number) => {
+    const s = (d ?? '').toUpperCase();
+    if (/ITF/.test(s)) return 'itf';
+    if (/COMIS|COM\.|COM /.test(s)) return 'comisiones';
+    if (/INTER[EÉ]S/.test(s)) return 'intereses';
+    if (/MANTEN|PORTES|ENVIO|SEGURO/.test(s)) return 'debitos_automaticos';
+    return monto > 0 ? 'creditos_no_registrados' : 'debitos_automaticos';
+  };
+  const bancoNoLibro = lineas.filter((l) => l.estado !== 'conciliado')
+    .map((l) => ({ id: l.id, fecha: l.fecha, desc: l.desc, monto: n(l.monto), clase: clasifBanco(l.desc, n(l.monto)), aging: aging(l.fecha) }));
+
+  // Partidas LIBRO → BANCO (movimientos de la cuenta no conciliados)
+  const movs = await db.select().from(schema.movimientos)
+    .where(and(eq(schema.movimientos.cuentaId, cuentaId), gte(schema.movimientos.fecha, desde), lte(schema.movimientos.fecha, hasta), ne(schema.movimientos.anulado, true)));
+  const concMovIds = new Set(lineas.filter((l) => l.movimientoId).map((l) => l.movimientoId));
+  const clasifLibro = (m: typeof schema.movimientos.$inferSelect) => {
+    if (m.transferenciaId || /TRANSFER/.test((m.naturalezaContable ?? '').toUpperCase())) return 'transferencias_pendientes';
+    if (/CHEQUE/.test(`${m.tipoComprobante ?? ''} ${m.subtipo ?? ''}`.toUpperCase())) return 'cheques_pendientes';
+    return m.tipoMovimiento === 'Ingreso' ? 'depositos_en_transito' : 'cheques_pendientes';
+  };
+  const libroNoBanco = movs.filter((m) => !concMovIds.has(m.id))
+    .map((m) => ({ id: m.id, fecha: m.fecha, desc: m.descripcion ?? m.clienteNombre, monto: m.tipoMovimiento === 'Ingreso' ? n(m.monto) : -n(m.monto), clase: clasifLibro(m), aging: aging(m.fecha) }));
+
+  const total = lineas.length;
+  const conc = lineas.filter((l) => l.estado === 'conciliado').length;
+
+  res.json({
+    cuenta: { id: cuenta.id, codigo: cuenta.codigo, descripcion: cuenta.descripcion, banco: cuenta.banco, cuentaContable: cc },
+    periodo,
+    kpis: { saldoBanco: r2(saldoBanco), saldoLibro: r2(saldoLibro), diferencia, estado, partidasLibroPendientes: libroNoBanco.length, movimientosBancoPendientes: bancoNoLibro.length },
+    saldoExtracto: { viaColumna: viaColumna != null ? r2(viaColumna) : null, viaMovimientos, usado: r2(saldoBanco), estimado, inconsistente },
+    partidas: { libroNoBanco, bancoNoLibro },
+    calidad: { total, conciliados: conc, pendientes: total - conc, pctConciliado: total ? Number(((conc / total) * 100).toFixed(1)) : 100 },
   });
 });
 

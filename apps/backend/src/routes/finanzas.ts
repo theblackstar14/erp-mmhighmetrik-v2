@@ -28,7 +28,8 @@ async function proyectoMap() {
 
 // ─── Cuentas bancarias ───────────────────────────────────────
 router.get('/cuentas-bancarias', async (_req, res) => {
-  const list = await db.select().from(schema.cuentasBancarias).orderBy(asc(schema.cuentasBancarias.descripcion));
+  // solo cuentas activas (las desactivadas no aparecen en selectores ni admin; reversible por DB activo=true)
+  const list = await db.select().from(schema.cuentasBancarias).where(eq(schema.cuentasBancarias.activo, true)).orderBy(asc(schema.cuentasBancarias.descripcion));
   res.json({ cuentas: list });
 });
 const cuentaSchema = z.object({
@@ -90,7 +91,22 @@ const gastoSchema = z.object({
   destino: z.enum(['proyecto', 'corporativo']).optional(),
   clasificacion: z.enum(['CD', 'GG_OBRA', 'GG_CORP']).optional(),
   prorrateable: z.boolean().optional(),
+  // WS1 · cuenta contable MANUAL (Kelly). CD/GG NUNCA es input: se deriva de la cuenta en el motor.
+  cuentaContable: z.string().max(10).optional().nullable(),
+  cuentaContableOrigen: z.enum(['USUARIO', 'SUGERIDO']).optional().nullable(),
 });
+
+// WS1 · valida que la cuenta exista, esté activa y pertenezca a la empresa (o sea compartida).
+// Devuelve error string o null. empresaId operativo = MM(1) por ahora.
+async function validarCuentaContable(codigo: string | null | undefined, empresaId = 1): Promise<string | null> {
+  if (!codigo) return null; // sin cuenta manual = válido (el motor infiere · compat)
+  const [c] = await db.select({ activa: schema.planContable.activa, empresaId: schema.planContable.empresaId })
+    .from(schema.planContable).where(eq(schema.planContable.codigo, codigo)).limit(1);
+  if (!c) return `cuenta contable ${codigo} no existe en el plan`;
+  if (c.activa === false) return `cuenta contable ${codigo} está inactiva`;
+  if (c.empresaId != null && c.empresaId !== empresaId) return `cuenta contable ${codigo} pertenece a otra empresa`;
+  return null;
+}
 
 // FX · gasto → inventario: crea un ítem draft ligado (herramientas/equipos/EPPS). El usuario completa
 // código/serie/foto/ubicación en Inventario (filtro "Por completar"); ahí puede promoverlo a activo.
@@ -136,8 +152,13 @@ function toValues(d: z.infer<typeof gastoSchema>) {
     tipoGasto: d.tipoGasto ?? null,
     observaciones: d.observaciones ?? null,
     prorrateable: d.prorrateable ?? false,
+    // WS1 · cuenta manual + procedencia. Si no viene cuenta, origen queda null (motor infiere).
+    cuentaContable: d.cuentaContable ?? null,
+    cuentaContableOrigen: d.cuentaContable ? (d.cuentaContableOrigen ?? 'USUARIO') : null,
   };
 }
+
+// WS1 · la sugerencia de cuenta por proveedor/tipoGasto vive en GET /contabilidad/sugerir-cuenta (2 niveles).
 
 // GET gastos por proyecto · ?desde=&hasta=&tipo=  + totales por tipoGasto
 router.get('/proyectos/:id/gastos', async (req, res) => {
@@ -162,6 +183,8 @@ router.get('/proyectos/:id/gastos', async (req, res) => {
 router.post('/proyectos/:id/gastos', async (req, res) => {
   const parse = gastoSchema.safeParse(req.body);
   if (!parse.success) return res.status(400).json({ error: parse.error.flatten() });
+  const errCuenta = await validarCuentaContable(parse.data.cuentaContable); // WS1
+  if (errCuenta) return res.status(400).json({ error: errCuenta });
   const values = { proyectoId: req.params.id!, ...toValues(parse.data) };
   // FINDING 2: ruta de proyecto → siempre destino='proyecto' (ignorar lo que diga el cliente)
   const cls = await resolverClase({ proyectoId: values.proyectoId, tipoGasto: values.tipoGasto, destino: 'proyecto', clasificacion: parse.data.clasificacion });
@@ -174,11 +197,21 @@ router.put('/gastos/:id', async (req, res) => {
   const parse = gastoSchema.partial().safeParse(req.body);
   if (!parse.success) return res.status(400).json({ error: parse.error.flatten() });
   const d = parse.data;
+  const errCuenta = await validarCuentaContable(d.cuentaContable); // WS1
+  if (errCuenta) return res.status(400).json({ error: errCuenta });
   const set: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(d)) {
     if (v === undefined) continue;
     if (['subtotal', 'igv', 'exonerado', 'total'].includes(k)) set[k] = dec(v as number);
     else set[k] = v;
+  }
+  // WS1 · si viene cuenta manual, fija su procedencia (USUARIO salvo que el cliente marque SUGERIDO).
+  if (d.cuentaContable !== undefined) set.cuentaContableOrigen = d.cuentaContable ? (d.cuentaContableOrigen ?? 'USUARIO') : null;
+  // WS1 gobierno (Fase 6) · auditar cambio de cuenta contable (quién · antes · después · documento).
+  let cuentaPrev: string | null | undefined;
+  if (d.cuentaContable !== undefined) {
+    const [pg] = await db.select({ cc: schema.gastos.cuentaContable }).from(schema.gastos).where(eq(schema.gastos.id, req.params.id!)).limit(1);
+    cuentaPrev = pg?.cc ?? null;
   }
   // FINDING 1: mantener el invariante de clasificación también al editar (no confiar en el valor crudo del cliente)
   if (d.destino !== undefined || d.clasificacion !== undefined) {
@@ -197,6 +230,10 @@ router.put('/gastos/:id', async (req, res) => {
   }
   const [gasto] = await db.update(schema.gastos).set(set).where(eq(schema.gastos.id, req.params.id!)).returning();
   if (!gasto) return res.status(404).json({ error: 'Gasto no encontrado' });
+  // WS1 gobierno · registra el cambio de cuenta contable (solo si cambió realmente).
+  if (d.cuentaContable !== undefined && cuentaPrev !== gasto.cuentaContable) {
+    await audit(req, { action: 'reclasificar_cuenta', entityType: 'gasto', entityId: gasto.id, before: { cuentaContable: cuentaPrev }, after: { cuentaContable: gasto.cuentaContable, origen: gasto.cuentaContableOrigen } });
+  }
   res.json({ gasto });
 });
 
@@ -238,6 +275,9 @@ const movSchema = z.object({
   ordenCompraId: z.string().uuid().optional().nullable(),
   valorizacionId: z.string().uuid().optional().nullable(),
   tipoCambio: z.number().positive().optional().nullable(), // H3.1 · TC histórico (obligatorio si moneda≠PEN)
+  // WS1 · cuenta contable contra MANUAL (Kelly). CD/GG se deriva en el motor, nunca input.
+  cuentaContable: z.string().max(10).optional().nullable(),
+  cuentaContableOrigen: z.enum(['USUARIO', 'SUGERIDO']).optional().nullable(),
 });
 const dec2 = (n: number | null | undefined) => (n != null ? Number(n).toFixed(2) : '0');
 function movValues(d: z.infer<typeof movSchema>) {
@@ -270,6 +310,9 @@ function movValues(d: z.infer<typeof movSchema>) {
     // H3.1 · TC snapshot + monto base PEN (para sumas/shadow · nunca recalcular retroactivo)
     tipoCambio: dec2(tcDe(d.moneda, d.tipoCambio)),
     montoBase: (d.monto * tcDe(d.moneda, d.tipoCambio)).toFixed(2),
+    // WS1 · cuenta contra manual + procedencia (motor la re-lee y NO la pisa)
+    cuentaContable: d.cuentaContable ?? null,
+    cuentaContableOrigen: d.cuentaContable ? (d.cuentaContableOrigen ?? 'USUARIO') : null,
   };
 }
 // H3.1 · TC efectivo: PEN→1 · ≠PEN→el provisto. monedaBase = PEN.
@@ -292,6 +335,7 @@ router.post('/proyectos/:id/movimientos', async (req, res) => {
   const parse = movSchema.safeParse(req.body);
   if (!parse.success) return res.status(400).json({ error: parse.error.flatten() });
   { const mErr = validarMonedaTC(parse.data.moneda, parse.data.tipoCambio); if (mErr) return res.status(400).json({ error: mErr }); }
+  { const cErr = await validarCuentaContable(parse.data.cuentaContable); if (cErr) return res.status(400).json({ error: cErr }); } // WS1
   if (await bloqueoPeriodo(parse.data.fecha, res)) return;
   const [mov] = await db.insert(schema.movimientos).values({ proyectoId: req.params.id!, ...movValues(parse.data), userId: req.user!.id }).returning();
   await audit(req, { action: 'create', entityType: 'movimiento', entityId: mov!.id, after: { monto: mov!.monto, tipo: mov!.tipoMovimiento, naturaleza: mov!.naturalezaContable, cuentaId: mov!.cuentaId } });
@@ -407,6 +451,8 @@ router.post('/gastos', async (req, res) => {
   const parse = gastoSchemaG.safeParse(req.body);
   if (!parse.success) return res.status(400).json({ error: parse.error.flatten() });
   const { proyectoId, ...rest } = parse.data;
+  const errCuenta = await validarCuentaContable(rest.cuentaContable); // WS1
+  if (errCuenta) return res.status(400).json({ error: errCuenta });
   if (await bloqueoPeriodo(rest.fecha, res)) return;
   const values = { proyectoId: proyectoId ?? null, ...toValues(rest) };
   const cls = await resolverClase({ proyectoId: values.proyectoId, tipoGasto: values.tipoGasto, destino: rest.destino, clasificacion: rest.clasificacion });
@@ -430,6 +476,7 @@ router.post('/movimientos', async (req, res) => {
   if (!parse.success) return res.status(400).json({ error: parse.error.flatten() });
   const { proyectoId, ...rest } = parse.data;
   { const mErr = validarMonedaTC(rest.moneda, rest.tipoCambio); if (mErr) return res.status(400).json({ error: mErr }); }
+  { const cErr = await validarCuentaContable(rest.cuentaContable); if (cErr) return res.status(400).json({ error: cErr }); } // WS1
   if (await bloqueoPeriodo(rest.fecha, res)) return;
   const base = movValues(rest);
   const uid = req.user!.id;
@@ -482,7 +529,7 @@ router.get('/finanzas/resumen', async (req, res) => {
   // Todas las lecturas independientes en paralelo · tesorería vía GROUP BY (no traer TODA movimientos)
   const [movs, cuentas, tesRows, valos, ocs, gars, gastosOf, pm] = await Promise.all([
     db.select({ fecha: schema.movimientos.fecha, tipo: schema.movimientos.tipoMovimiento, monto: schema.movimientos.monto }).from(schema.movimientos).where(pFilter ? eq(schema.movimientos.proyectoId, pFilter) : undefined),
-    db.select().from(schema.cuentasBancarias),
+    db.select().from(schema.cuentasBancarias).where(eq(schema.cuentasBancarias.activo, true)),
     db.select({ cuentaId: schema.movimientos.cuentaId, tipo: schema.movimientos.tipoMovimiento, total: sql<number>`coalesce(sum(${schema.movimientos.monto}),0)::float8`, n: sql<number>`count(*)::int` }).from(schema.movimientos).groupBy(schema.movimientos.cuentaId, schema.movimientos.tipoMovimiento),
     db.select().from(schema.valorizaciones).where(pFilter ? eq(schema.valorizaciones.proyectoId, pFilter) : undefined),
     db.select().from(schema.ordenesCompra).where(pFilter ? eq(schema.ordenesCompra.proyectoId, pFilter) : undefined),
@@ -853,7 +900,7 @@ router.get('/inventario/:id/detalle', async (req, res) => {
 
 // GET saldos por cuenta (global · caja real de toda la empresa)
 router.get('/tesoreria/saldos', async (_req, res) => {
-  const cuentas = await db.select().from(schema.cuentasBancarias);
+  const cuentas = await db.select().from(schema.cuentasBancarias).where(eq(schema.cuentasBancarias.activo, true));
   const movs = await db.select({ cuentaId: schema.movimientos.cuentaId, tipo: schema.movimientos.tipoMovimiento, monto: schema.movimientos.monto }).from(schema.movimientos);
   const saldos = cuentas.map((c) => {
     const ms = movs.filter((m) => m.cuentaId === c.id);

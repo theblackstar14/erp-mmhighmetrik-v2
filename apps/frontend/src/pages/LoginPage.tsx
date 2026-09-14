@@ -190,15 +190,17 @@ export function LoginPage() {
           {/* Footer */}
           <div className="mt-12 flex items-center justify-between text-[11.5px] text-[#8A8F98]">
             <div>
-              ¿Eres nuevo? <button className="text-[#0F1115] underline-offset-2 hover:underline">Solicita acceso</button>
+              ¿Sin acceso? <span className="text-[#0F1115]">Contacta a tu administrador</span>
             </div>
             <div className="font-mono uppercase tracking-wider">v2.0</div>
           </div>
 
-          {/* Dev hint */}
-          <div className="mt-6 rounded-[10px] bg-[#F0F0EE] border border-[#E6E6E3] px-4 py-3 text-[11px] text-[#3B3F46]">
-            <strong>Dev:</strong> admin@mmhighmetrik.com / admin
-          </div>
+          {/* Dev hint · solo en desarrollo · nunca en el build de producción */}
+          {import.meta.env.DEV && (
+            <div className="mt-6 rounded-[10px] bg-[#F0F0EE] border border-[#E6E6E3] px-4 py-3 text-[11px] text-[#3B3F46]">
+              <strong>Dev:</strong> admin@mmhighmetrik.com / admin
+            </div>
+          )}
         </div>
       </div>
     </div>

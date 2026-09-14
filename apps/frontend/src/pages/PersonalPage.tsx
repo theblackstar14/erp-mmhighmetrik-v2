@@ -1,10 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Building2, Calculator, HardHat, LayoutDashboard, Plus, Printer, Search, Settings, Trash2, Users, X } from 'lucide-react';
+import { AlertTriangle, Building2, Calculator, Download, HardHat, LayoutDashboard, Plus, Printer, Search, Settings, Trash2, Users, X } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { useEffect, useMemo, useState } from 'react';
 import { TabFade } from '@/components/ui/Skeleton.js';
 import { type Empleado, type EmpleadoInput, type PlanillaDetalle, type PlanillaLinea, api } from '@/lib/api.js';
 import { cn, fmtDate, fmtPEN } from '@/lib/utils.js';
+import { CuentaContableSelect } from '@/components/contabilidad/CuentaContableSelect.js';
 
 // ─── Constantes CC ───────────────────────────────────────────
 const CATS = ['Operario', 'Oficial', 'Peón', 'Capataz'];
@@ -105,7 +106,7 @@ export function PersonalPage() {
         <TabFade tabKey={tab}>
           {tab === 'dashboard' && <DashboardTab />}
           {tab === 'trabajadores' && <TrabajadoresTab proyectoId={proyectoId} empleados={empleados} loading={empleadosQ.isLoading} />}
-          {tab === 'asistencia' && <AsistenciaTab proyectoId={proyectoId} empleados={empleados} semanaId={semanaId} setSemanaId={setSemanaId} />}
+          {tab === 'asistencia' && <AsistenciaTab proyectoId={proyectoId} proyectos={proyectos} empleados={empleados} semanaId={semanaId} setSemanaId={setSemanaId} />}
           {tab === 'planilla' && <PlanillaView proyectoId={proyectoId} empleados={empleados} semanaId={semanaId} setSemanaId={setSemanaId} />}
           {tab === 'config' && <ConfigTab />}
         </TabFade>
@@ -133,6 +134,10 @@ function DashboardTab() {
   const catLabel = data.porCategoria.map((c) => c.count).join(' / ');
   return (
     <div className="space-y-4">
+      <div className="flex items-center gap-1.5 text-[11px] text-ink-4">
+        <Building2 className="h-3.5 w-3.5" />
+        <span>Consolidado · <b className="text-ink-3">todas las obras</b> · no depende de la obra seleccionada arriba</span>
+      </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         <PKpi lbl="Nómina semana actual" val={fmtPEN(data.nominaSemana)} sub={`Costo total: ${fmtPEN(data.costoTotal)}`} accent="primary" />
         <PKpi lbl="Trabajadores activos" val={String(data.trabajadoresActivos)} sub={data.porCategoria.length ? `Por categoría: ${catLabel}` : undefined} />
@@ -269,7 +274,7 @@ function TrabForm({ proyectoId, empleado, onClose, onSaved }: { proyectoId: stri
         </div>
         <div className="p-4 grid grid-cols-2 gap-2.5">
           <Lbl span2 t="Nombre completo"><input className={cn(inputCls, 'w-full')} value={f.nombre} onChange={(e) => set({ nombre: e.target.value })} /></Lbl>
-          <Lbl t="DNI"><input className={cn(inputCls, 'w-full')} value={f.numDoc ?? ''} onChange={(e) => set({ numDoc: e.target.value })} /></Lbl>
+          <Lbl t="DNI"><input inputMode="numeric" maxLength={8} className={cn(inputCls, 'w-full', f.numDoc && f.numDoc.length !== 8 && 'border-rose-500')} value={f.numDoc ?? ''} onChange={(e) => set({ numDoc: e.target.value.replace(/\D/g, '').slice(0, 8) })} /></Lbl>
           <Lbl t="Categoría"><select className={cn(inputCls, 'w-full')} value={f.categoria ?? ''} onChange={(e) => set({ categoria: e.target.value })}>{CATS.map((c) => <option key={c}>{c}</option>)}</select></Lbl>
           <Lbl t="Sistema pensión"><select className={cn(inputCls, 'w-full')} value={f.sistemaPension ?? ''} onChange={(e) => set({ sistemaPension: e.target.value })}>{afps.map((a) => <option key={a}>{a}</option>)}</select></Lbl>
           <Lbl t="N° hijos (escolar)"><input type="number" min={0} className={cn(inputCls, 'w-full')} value={f.numHijos ?? 0} onChange={(e) => set({ numHijos: Number(e.target.value) })} /></Lbl>
@@ -325,29 +330,37 @@ function SemanaBar({ proyectoId, semanaId, setSemanaId }: { proyectoId: string; 
   );
 }
 
-// ─── Asistencia (tareo · grid v1) ────────────────────────────
-function AsistenciaTab({ proyectoId, empleados, semanaId, setSemanaId }: { proyectoId: string; empleados: Empleado[]; semanaId: string | null; setSemanaId: (id: string | null) => void }) {
+// ─── Asistencia (tareo · grid diario · obra por fila) ────────
+function AsistenciaTab({ proyectoId, proyectos, empleados, semanaId, setSemanaId }: { proyectoId: string; proyectos: { id: string; codigo: string; nombre: string }[]; empleados: Empleado[]; semanaId: string | null; setSemanaId: (id: string | null) => void }) {
   const qc = useQueryClient();
   const semanasQ = useQuery({ queryKey: ['planilla-semanas', proyectoId], queryFn: () => api.planilla.listSemanas(proyectoId) });
   const semana = semanasQ.data?.semanas.find((s) => s.id === semanaId) ?? null;
   const asistQ = useQuery({ queryKey: ['asistencia', semanaId], queryFn: () => api.planilla.getAsistencia(semanaId!), enabled: !!semanaId });
-  // mapa local empId|fecha → tipo
+  // mapas locales: empId|fecha → tipo · empId → obra (imputación del día)
   const [grid, setGrid] = useState<Record<string, string>>({});
+  const [rowObra, setRowObra] = useState<Record<string, string>>({});
   useEffect(() => {
-    const m: Record<string, string> = {};
-    for (const a of asistQ.data?.asistencia ?? []) m[`${a.empleadoId}|${a.fecha}`] = a.tipo;
-    setGrid(m);
+    const m: Record<string, string> = {}; const o: Record<string, string> = {};
+    for (const a of asistQ.data?.asistencia ?? []) { m[`${a.empleadoId}|${a.fecha}`] = a.tipo; if (a.proyectoId) o[a.empleadoId] = a.proyectoId; }
+    setGrid(m); setRowObra(o);
   }, [asistQ.data]);
 
   const dias = useMemo(() => (semana ? rangoFechas(semana.fechaInicio, semana.fechaFin) : []), [semana]);
-  const setCell = useMutation({ mutationFn: (v: { empleadoId: string; fecha: string; tipo: string }) => api.planilla.setAsistencia(semanaId!, { ...v, proyectoId }), onSuccess: () => qc.invalidateQueries({ queryKey: ['asistencia', semanaId] }) });
+  const obraDe = (empId: string) => rowObra[empId] ?? proyectoId;
+  const setCell = useMutation({ mutationFn: (v: { empleadoId: string; fecha: string; tipo: string; proyectoId: string }) => api.planilla.setAsistencia(semanaId!, v), onSuccess: () => qc.invalidateQueries({ queryKey: ['asistencia', semanaId] }) });
   const cycle = (empId: string, fecha: string) => {
     const cur = grid[`${empId}|${fecha}`] ?? '';
     const next = CICLO[(CICLO.indexOf(cur) + 1) % CICLO.length]!;
     setGrid((g) => ({ ...g, [`${empId}|${fecha}`]: next }));
-    setCell.mutate({ empleadoId: empId, fecha, tipo: next });
+    setCell.mutate({ empleadoId: empId, fecha, tipo: next, proyectoId: obraDe(empId) });
   };
-  const marcarTodos = () => { for (const e of empleados) for (const f of dias) if (dowOf(f) !== 'Dom' && !grid[`${e.id}|${f}`]) { setGrid((g) => ({ ...g, [`${e.id}|${f}`]: 'normal' })); setCell.mutate({ empleadoId: e.id, fecha: f, tipo: 'normal' }); } };
+  const cambiarObra = (empId: string, obra: string) => {
+    setRowObra((r) => ({ ...r, [empId]: obra }));
+    // re-imputar los días ya marcados de ese obrero a la nueva obra
+    for (const f of dias) { const t = grid[`${empId}|${f}`]; if (t) setCell.mutate({ empleadoId: empId, fecha: f, tipo: t, proyectoId: obra }); }
+  };
+  const marcarTodos = () => { for (const e of empleados) for (const f of dias) if (dowOf(f) !== 'Dom' && !grid[`${e.id}|${f}`]) { setGrid((g) => ({ ...g, [`${e.id}|${f}`]: 'normal' })); setCell.mutate({ empleadoId: e.id, fecha: f, tipo: 'normal', proyectoId: obraDe(e.id) }); } };
+  const totalDias = empleados.reduce((s, e) => s + dias.filter((f) => DIAS_TRABAJADOS.has(grid[`${e.id}|${f}`] ?? '')).length, 0);
 
   return (
     <div className="space-y-3">
@@ -365,7 +378,8 @@ function AsistenciaTab({ proyectoId, empleados, semanaId, setSemanaId }: { proye
           <div className="rounded-md border border-line bg-bg-elev overflow-x-auto">
             <table className="w-full">
               <thead><tr className="border-b border-line bg-bg-sunken">
-                <th className="px-3 py-2 text-left font-mono text-[10px] uppercase tracking-wider text-ink-4 min-w-[180px]">Trabajador</th>
+                <th className="px-3 py-2 text-left font-mono text-[10px] uppercase tracking-wider text-ink-4 min-w-[170px]">Trabajador</th>
+                <th className="px-2 py-2 text-left font-mono text-[10px] uppercase text-ink-4 min-w-[130px]">Obra del día</th>
                 {dias.map((f) => <th key={f} className="px-2 py-2 text-center font-mono text-[10px] text-ink-4"><div>{dowOf(f)}</div><div className="text-ink-3">{diaOf(f)}</div></th>)}
                 <th className="px-3 py-2 text-center font-mono text-[10px] uppercase text-ink-4">Días</th>
               </tr></thead>
@@ -375,6 +389,7 @@ function AsistenciaTab({ proyectoId, empleados, semanaId, setSemanaId }: { proye
                   return (
                     <tr key={e.id} className="border-b border-line">
                       <td className="px-3 py-1.5"><div className="text-[12px] font-medium">{e.nombre}</div><div className="text-[10px] text-ink-4">{e.categoria}</div></td>
+                      <td className="px-2 py-1.5"><select className={cn(inputCls, 'w-full max-w-[130px]')} value={obraDe(e.id)} onChange={(ev) => cambiarObra(e.id, ev.target.value)}>{proyectos.map((p) => <option key={p.id} value={p.id}>{p.codigo}</option>)}</select></td>
                       {dias.map((f) => {
                         const tipo = grid[`${e.id}|${f}`] ?? '';
                         const cfg = ASIST[tipo];
@@ -385,9 +400,14 @@ function AsistenciaTab({ proyectoId, empleados, semanaId, setSemanaId }: { proye
                   );
                 })}
               </tbody>
+              <tfoot><tr className="border-t border-line bg-bg-sunken/40">
+                <td className="px-3 py-1.5 text-[11px] text-ink-3" colSpan={2}>{empleados.length} obreros</td>
+                {dias.map((f) => <td key={f} />)}
+                <td className="px-3 py-1.5 text-center font-mono text-[12px] font-bold">{totalDias}</td>
+              </tr></tfoot>
             </table>
           </div>
-          <p className="text-[11px] text-ink-4">Click en cada celda para ciclar el estado. Se guarda automáticamente. Alimenta los días de la planilla.</p>
+          <p className="text-[11px] text-ink-4">Click en cada celda para ciclar el estado (se guarda solo). La <b>obra del día</b> imputa los días de ese obrero al costo directo de esa obra — un obrero puede repartirse entre obras.</p>
         </>
       )}
     </div>
@@ -402,6 +422,8 @@ function PlanillaView({ proyectoId, empleados, semanaId, setSemanaId }: { proyec
   const asistQ = useQuery({ queryKey: ['asistencia', semanaId], queryFn: () => api.planilla.getAsistencia(semanaId!), enabled: !!semanaId });
   const [lineas, setLineas] = useState<Record<string, LineaState>>({});
   const [boleta, setBoleta] = useState<PlanillaDetalle | null>(null);
+  const [exportNote, setExportNote] = useState(false);
+  const [cuentaCosto, setCuentaCosto] = useState<string | null>('621'); // WS1 · cuenta de costo (default fuerte 621) · aplica a toda la semana
 
   // días por obrero derivados de asistencia
   const diasAsist = useMemo(() => {
@@ -424,7 +446,7 @@ function PlanillaView({ proyectoId, empleados, semanaId, setSemanaId }: { proyec
   }, [detalleQ.data, empleados, diasAsist]);
 
   const setL = (id: string, patch: Partial<LineaState>) => setLineas((p) => ({ ...p, [id]: { ...p[id]!, ...patch } }));
-  const calcular = useMutation({ mutationFn: () => api.planilla.calcular(semanaId!, Object.values(lineas).filter((l) => l.incluir).map(({ incluir, ...l }) => l)), onSuccess: () => qc.invalidateQueries({ queryKey: ['planilla-detalle', semanaId] }) });
+  const calcular = useMutation({ mutationFn: () => api.planilla.calcular(semanaId!, Object.values(lineas).filter((l) => l.incluir).map(({ incluir, ...l }) => ({ ...l, cuentaContable: cuentaCosto }))), onSuccess: () => qc.invalidateQueries({ queryKey: ['planilla-detalle', semanaId] }) });
   const totales = detalleQ.data?.totales;
   const detalle = detalleQ.data?.detalle ?? [];
 
@@ -440,11 +462,17 @@ function PlanillaView({ proyectoId, empleados, semanaId, setSemanaId }: { proyec
           <div className="rounded-md border border-line bg-bg-elev">
             <div className="flex items-center justify-between border-b border-line px-4 py-2.5">
               <h3 className="text-[13px] font-semibold">Cálculo de la semana <span className="text-ink-4 font-normal">· días desde asistencia</span></h3>
-              <button onClick={() => calcular.mutate()} disabled={calcular.isPending} className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md bg-primary text-primary-foreground text-[12px] font-medium disabled:opacity-50"><Calculator className="h-3.5 w-3.5" /> {calcular.isPending ? 'Calculando…' : 'Calcular planilla'}</button>
+              <div className="flex items-center gap-2">
+                {/* WS1 · cuenta de costo de la planilla (default 621) · Kelly confirma/cambia */}
+                <div className="flex items-center gap-1.5"><span className="text-[10.5px] font-mono uppercase tracking-wider text-ink-4">Costo</span><CuentaContableSelect value={cuentaCosto} onChange={(c) => setCuentaCosto(c)} placeholder="Cuenta de costo (62x)…" /></div>
+                <button onClick={() => setExportNote((v) => !v)} className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-line text-[12px] text-ink-2 hover:bg-bg-sunken"><Download className="h-3.5 w-3.5" /> Exportar semana</button>
+                <button onClick={() => calcular.mutate()} disabled={calcular.isPending} className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md bg-primary text-primary-foreground text-[12px] font-medium disabled:opacity-50"><Calculator className="h-3.5 w-3.5" /> {calcular.isPending ? 'Calculando…' : 'Calcular planilla'}</button>
+              </div>
             </div>
+            {exportNote && <div className="border-b border-line px-4 py-2 text-[11px] text-ink-4">Export Telecrédito (transferencia masiva del banco) — en preparación. Generará por obrero: DNI + banco + N° de cuenta + neto a pagar.</div>}
             <div className="overflow-x-auto">
               <table className="w-full">
-                <thead><tr className="border-b border-line bg-bg-sunken">{['', 'Obrero', 'Cat.', 'AFP/SNP', 'Días', 'Domin.', 'HE60', 'HE100', 'Adelanto'].map((h, i) => <th key={i} className={cn('px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-wider text-ink-4', i >= 4 ? 'text-center' : 'text-left')}>{h}</th>)}</tr></thead>
+                <thead><tr className="border-b border-line bg-bg-sunken">{['', 'Obrero', 'Cat.', 'AFP/SNP', 'Días', 'Domin.', 'H.E. 60%', 'H.E. 100%', 'Adelanto'].map((h, i) => <th key={i} className={cn('px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-wider text-ink-4', i >= 4 ? 'text-center' : 'text-left')}>{h}</th>)}</tr></thead>
                 <tbody>
                   {empleados.map((e) => {
                     const l = lineas[e.id];
@@ -475,6 +503,17 @@ function PlanillaView({ proyectoId, empleados, semanaId, setSemanaId }: { proyec
               <Stat label="Neto a pagar" value={fmtPEN(totales.netoPago)} accent />
               <Stat label="Aportes empleador" value={fmtPEN(totales.esSalud + totales.sctr + totales.sencico)} sub="EsSalud+SCTR+Sencico" />
               <Stat label="Costo total" value={fmtPEN(totales.costoTotal)} primary />
+            </div>
+          )}
+
+          {detalle.length > 0 && (
+            <div className="rounded-md border border-line bg-bg-elev px-4 py-2.5 text-[11px] text-ink-3 flex flex-wrap items-center gap-x-4 gap-y-1">
+              <span className="font-semibold text-ink-2">Conexión contable:</span>
+              <span>asiento 621 + 627x (incl. SCTR/SENCICO)</span>
+              <span className="text-ink-4">·</span>
+              <span>imputado a Costo Directo por obra</span>
+              <span className="text-ink-4">·</span>
+              <span>PLE 5.1 Diario / 6.1 Mayor</span>
             </div>
           )}
 
@@ -574,7 +613,7 @@ function Row({ k, v, neg, small }: { k: string; v: number; neg?: boolean; small?
 
 function Stat({ label, value, sub, accent, danger, primary }: { label: string; value: string; sub?: string; accent?: boolean; danger?: boolean; primary?: boolean }) {
   return (
-    <div className={cn('rounded-md border border-line bg-bg-elev p-2.5 border-t-2', accent && 'border-t-emerald-500', danger && 'border-t-rose-500', primary && 'border-t-primary', !accent && !danger && !primary && 'border-t-line')}>
+    <div className="rounded-md border border-line bg-bg-elev p-2.5">
       <div className="font-mono text-[9px] uppercase tracking-wider text-ink-4 truncate">{label}</div>
       <div className={cn('mt-0.5 text-[14px] font-mono font-bold tracking-[-0.02em]', accent && 'text-emerald-600', danger && 'text-rose-500', primary && 'text-primary')}>{value}</div>
       {sub && <div className="text-[9.5px] text-ink-4 truncate">{sub}</div>}
@@ -599,7 +638,7 @@ function ConfigTab() {
       <Section title="Por categoría · convenio anual" sub="Jornal básico + BUC (sube cuando cambia el convenio FTCCP-CAPECO)">
         <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
           {(paramsQ.data?.params ?? []).map((p) => (
-            <div key={p.id} className="rounded-md border border-line bg-bg-elev p-3 border-t-2" style={{ borderTopColor: CAT_COLOR[p.categoria] ?? '#71717A' }}>
+            <div key={p.id} className="rounded-md border border-line bg-bg-elev p-3">
               <div className="text-[12px] font-bold" style={{ color: CAT_COLOR[p.categoria] }}>{p.categoria}</div>
               <NumRow t="Jornal S/" def={Number(p.jornalBase)} step="0.01" onSave={(v) => updParam.mutate({ cat: p.categoria, data: { jornalBase: v } })} />
               <NumRow t="BUC %" def={Number(p.pctBuc) * 100} step="0.1" onSave={(v) => updParam.mutate({ cat: p.categoria, data: { pctBuc: v / 100 } })} />

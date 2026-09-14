@@ -1,0 +1,205 @@
+﻿=== fix-wave diff 3367ff9..8f18f44 ===
+diff --git a/apps/backend/src/lib/boletaOficinaPdf.ts b/apps/backend/src/lib/boletaOficinaPdf.ts
+index 2b135be..24e096d 100644
+--- a/apps/backend/src/lib/boletaOficinaPdf.ts
++++ b/apps/backend/src/lib/boletaOficinaPdf.ts
+@@ -21,17 +21,16 @@ export type BoletaDetalle = {
+   cuentaBancaria: string | null;
+   diasTrab: number | string | null;
+   horasTrab: number | string | null;
+   fechaIngreso: string | null;
+   fechaCese: string | null;
+   sueldoMensual: string | number;
+   totalHe: string | number;
+   montoDominical: string | number;
+-  montoFeriado: string | number;
+   asigFamiliar: string | number;
+   gratificacion: string | number;
+   vacaciones: string | number;
+   comisiones: string | number;
+   bonificacion: string | number;
+   totalBruto: string | number;
+   onp: string | number;
+   essaludVida: string | number;
+@@ -255,18 +254,18 @@ export function generarBoletaPdf(
+     ];
+ 
+     for (const [label, empl, trab] of descRows) {
+       doc.rect(colRight.x, yR, colRight.w, rowH).strokeColor(C.line).lineWidth(0.4).stroke();
+       doc.moveTo(colRight.x + motivoW, yR).lineTo(colRight.x + motivoW, yR + rowH).stroke();
+       doc.moveTo(colRight.x + motivoW + emplW, yR).lineTo(colRight.x + motivoW + emplW, yR + rowH).stroke();
+       doc.fontSize(7).font('Helvetica').fillColor(C.ink)
+         .text(label, colRight.x + 2, yR + 2, { width: motivoW - 4 })
+-        .text(empl > 0 ? fmt(empl) : '', colRight.x + motivoW + 2, yR + 2, { width: emplW - 4, align: 'right' })
+-        .text(trab > 0 ? fmt(trab) : '', colRight.x + motivoW + emplW + 2, yR + 2, { width: trabW - 4, align: 'right' });
++        .text(fmt(empl), colRight.x + motivoW + 2, yR + 2, { width: emplW - 4, align: 'right' })
++        .text(fmt(trab), colRight.x + motivoW + emplW + 2, yR + 2, { width: trabW - 4, align: 'right' });
+       yR += rowH;
+     }
+ 
+     // Total Aporte row (empleador)
+     doc.rect(colRight.x, yR, colRight.w, rowH).fillAndStroke(C.header, C.line);
+     doc.moveTo(colRight.x + motivoW, yR).lineTo(colRight.x + motivoW, yR + rowH).stroke();
+     doc.moveTo(colRight.x + motivoW + emplW, yR).lineTo(colRight.x + motivoW + emplW, yR + rowH).stroke();
+     doc.fontSize(7).font('Helvetica-Bold').fillColor(C.ink)
+diff --git a/apps/backend/src/routes/planillaOficina.ts b/apps/backend/src/routes/planillaOficina.ts
+index 7c93606..53b2c11 100644
+--- a/apps/backend/src/routes/planillaOficina.ts
++++ b/apps/backend/src/routes/planillaOficina.ts
+@@ -951,17 +951,17 @@ router.post('/planilla/:mesId/cerrar', requireOficinaEdit, async (req, res) => {
+       });
+       boletasSubidas++;
+     } catch (e) {
+       boletaErrores.push(`${detalle.dni ?? detalle.id}: ${(e as Error).message}`);
+       console.warn('boleta NAS fallo', detalle.id, (e as Error).message);
+     }
+   }
+ 
+-  res.json({ mes: updatedMes, asientoId, boletasSubidas });
++  res.json({ mes: updatedMes, asientoId, boletasSubidas, boletasFallidas: boletaErrores.length });
+ });
+ 
+ // ─── POST /api/oficina/planilla/:mesId/reabrir ───────────────
+ router.post('/planilla/:mesId/reabrir', requireOficinaEdit, async (req, res) => {
+   const { mesId } = req.params;
+ 
+   const [mesRow] = await db
+     .select()
+diff --git a/apps/frontend/src/components/oficina/BoletaOficina.tsx b/apps/frontend/src/components/oficina/BoletaOficina.tsx
+index 1c5a8c5..55809d4 100644
+--- a/apps/frontend/src/components/oficina/BoletaOficina.tsx
++++ b/apps/frontend/src/components/oficina/BoletaOficina.tsx
+@@ -87,32 +87,31 @@ function DataField({ label, value }: { label: string; value: string | null | und
+ }
+ 
+ // ─── main component ────────────────────────────────────────────────────────────
+ 
+ export function BoletaOficina({
+   detalle,
+   razonSocial,
+   ruc,
++  direccion,
+   mes,
+   onClose,
+ }: {
+   detalle: PlanillaOficinaDetalle;
+   razonSocial?: string;
+   ruc?: string;
++  direccion?: string;
+   mes?: string;
+   onClose: () => void;
+ }) {
+   const d = detalle;
+   const mesLabel = mesMmAA(mes);
+   const lastDay = lastDayOfMes(mes);
+ 
+-  // Derive direccion from prop (may be extended later; show dash if absent)
+-  const direccion: string | undefined = undefined;
+-
+   return (
+     <div
+       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 animate-backdropIn print:bg-transparent print:static print:p-0"
+       onClick={(e) => e.target === e.currentTarget && onClose()}
+     >
+       <div className="w-full max-w-3xl rounded-xl border border-line bg-white text-black shadow-xl animate-modalPop overflow-y-auto max-h-[90vh] print:shadow-none print:border-0 print:rounded-none print:max-h-none print:overflow-visible">
+ 
+         {/* ── Topbar: close + print ─────────────────────────────────────────── */}
+@@ -142,22 +141,20 @@ export function BoletaOficina({
+ 
+           {/* Company header: left info + right correlativo */}
+           <div className="flex justify-between items-start border border-line p-2 mb-2">
+             <div className="space-y-0.5">
+               <div><span className="font-semibold">Razon Social:</span> {razonSocial ?? 'MM HIGH METRIK SAC'}</div>
+               <div><span className="font-semibold">Direccion:</span> {direccion ?? '—'}</div>
+               <div><span className="font-semibold">R.U.C.:</span> {ruc ?? '—'}</div>
+             </div>
+-            {d.boletaCorrelativo && (
+-              <div className="text-right">
+-                <div className="text-[9.5px] font-mono uppercase text-ink-4">N° Boleta</div>
+-                <div className="text-[14px] font-mono font-semibold">{d.boletaCorrelativo}</div>
+-              </div>
+-            )}
++            <div className="text-right">
++              <div className="text-[9.5px] font-mono uppercase text-ink-4">N° Boleta</div>
++              <div className="text-[14px] font-mono font-semibold">{d.boletaCorrelativo ?? ''}</div>
++            </div>
+           </div>
+ 
+           {/* DATOS DEL TRABAJADOR */}
+           <SectionBand>Datos del Trabajador</SectionBand>
+           <div className="border border-t-0 border-line p-2 mb-2">
+             <div className="grid grid-cols-3 gap-x-4 gap-y-2">
+               <DataField label="Nombre" value={d.nombre} />
+               <DataField label="Cargo" value={d.cargo} />
+diff --git a/apps/frontend/src/components/oficina/PlanillaOficinaTab.tsx b/apps/frontend/src/components/oficina/PlanillaOficinaTab.tsx
+index fdbafac..afed927 100644
+--- a/apps/frontend/src/components/oficina/PlanillaOficinaTab.tsx
++++ b/apps/frontend/src/components/oficina/PlanillaOficinaTab.tsx
+@@ -3,16 +3,17 @@ import { useState } from 'react';
+ import { createPortal } from 'react-dom';
+ import { X } from 'lucide-react';
+ import { type PlanillaOficinaDetalle, ApiError, api } from '@/lib/api.js';
+ import { cn, fmtPEN } from '@/lib/utils.js';
+ import { CuentaContableSelect } from '@/components/contabilidad/CuentaContableSelect.js';
+ import { DocumentoAdjunto } from '@/components/oficina/DocumentoAdjunto.js';
+ import { BoletaOficina } from '@/components/oficina/BoletaOficina.js';
+ import { AdelantosPanel } from '@/components/oficina/AdelantosPanel.js';
++import { useAuthStore } from '@/lib/auth-store.js';
+ 
+ const ESTADO_BADGE: Record<string, { l: string; cls: string }> = {
+   borrador:  { l: 'Borrador',   cls: 'bg-bg-sunken text-ink-3' },
+   calculada: { l: 'Calculada',  cls: 'bg-blue-500/15 text-blue-600' },
+   cerrada:   { l: 'Cerrada',    cls: 'bg-emerald-500/15 text-emerald-600' },
+   pagada:    { l: 'Pagada',     cls: 'bg-emerald-500/25 text-emerald-700' },
+ };
+ 
+@@ -43,16 +44,29 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
+     </div>,
+     document.body,
+   );
+ }
+ 
+ export function PlanillaOficinaTab() {
+   const qc = useQueryClient();
+ 
++  // Empresa activa from auth store + full row (ruc/direccion) from admin endpoint
++  const { empresaActiva, empresas: empresasMembresía } = useAuthStore();
++  const { data: empresasData } = useQuery({
++    queryKey: ['admin-empresas'],
++    queryFn: () => api.admin.empresas.list(),
++    staleTime: 5 * 60 * 1000,
++  });
++  const empresaRow = empresasData?.empresas.find((e) => e.id === empresaActiva?.id);
++  const membresiaRow = empresasMembresía.find((e) => e.id === empresaActiva?.id);
++  const empresaRazonSocial = empresaRow?.razonSocial ?? membresiaRow?.razonSocial ?? undefined;
++  const empresaRuc = empresaRow?.ruc ?? undefined;
++  const empresaDireccion = empresaRow?.direccion ?? undefined;
++
+   // Default to current month YYYY-MM
+   const [mes, setMes] = useState(() => new Date().toISOString().slice(0, 7));
+   const [modal, setModal] = useState<ModalState>(null);
+   const [asientoMsg, setAsientoMsg] = useState<string | null>(null);
+   const [errMsg, setErrMsg] = useState<string | null>(null);
+ 
+   const qKey = ['planilla-oficina', mes] as const;
+ 
+@@ -248,16 +262,19 @@ export function PlanillaOficinaTab() {
+         </div>
+       )}
+ 
+       {/* Modals */}
+       {modal?.kind === 'boleta' && (
+         <BoletaOficina
+           detalle={modal.det}
+           mes={mes}
++          razonSocial={empresaRazonSocial}
++          ruc={empresaRuc}
++          direccion={empresaDireccion}
+           onClose={() => setModal(null)}
+         />
+       )}
+ 
+       {modal?.kind === 'adelantos' && (
+         <Modal
+           title={`Adelantos — ${modal.det.nombre ?? ''}`}
+           onClose={() => setModal(null)}

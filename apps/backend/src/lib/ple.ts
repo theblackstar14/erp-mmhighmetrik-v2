@@ -54,6 +54,7 @@ export type FilaVenta = {
   fecha: string; tipoComprobante: string; serie: string; numero: string;
   clienteRuc: string | null; clienteRazon: string | null;
   baseGravada: number; igv: number; exonerado: number; total: number; tipoCambio: number | null;
+  fechaVencimiento?: string | null; proyectoCodigo?: string | null; detraccion?: number | null;
 };
 export type FilaDiario = {
   cuo: string; correlativoAsiento: string; fecha: string; glosa: string;
@@ -175,6 +176,109 @@ export function mayor60100(periodo: string, filas: FilaDiario[]): string {
   ])).join('\r\n');
 }
 
+// ══════════ SIRE (Sistema Integrado de Registros Electrónicos) ══════════
+// SIRE cubre SOLO Ventas (RVIE) y Compras (RCE). Diario/Mayor NO van al SIRE (siguen por PLE/SLE-PLE).
+// Estructura AMPLIA: RVIE = 40 campos núcleo · RCE = 32 campos. Fecha ISO (AAAA-MM-DD), TC a 3 dec, SIN pipe final.
+// ⚠ BORRADOR: el orden/cantidad EXACTOS y los campos condicionales (>60 según comprobante: placa, DAM/DUA,
+//   póliza, incoterm, medio de pago, etc.) dependen de la RS vigente. VALIDAR contra un archivo real exportado
+//   del portal SIRE antes de importar en producción.
+// GAP DE CAPTURA: los campos marcados «(s/dato)» salen vacíos porque el modelo de datos aún no los guarda
+//   (fecha vencimiento real, CAR, detracción/percepción, comprobante modificado, aduana, contrato/proyecto).
+const m2 = (x: unknown) => Number(x ?? 0).toFixed(2);
+const tc3 = (x: unknown) => Number(x ?? 1).toFixed(3);
+const periodo6 = (periodo: string) => periodo.replace('-', ''); // 2026-07 → 202607
+const iso = (d: string | null | undefined) => (d ? String(d).slice(0, 10) : '');
+
+export function rvieVentas(periodo: string, filas: FilaVenta[]): string {
+  const P = periodo6(periodo);
+  return filas.map((f, i) => {
+    const cuo = String(i + 1);
+    return [
+      P,                                   // 1  Periodo (AAAAMM)
+      cuo,                                 // 2  CUO / código único de operación
+      `M${cuo}`,                           // 3  Número correlativo del asiento
+      iso(f.fecha),                        // 4  Fecha de emisión
+      iso(f.fechaVencimiento),             // 5  Fecha de vencimiento / pago
+      tablaComprobante(f.tipoComprobante), // 6  Tipo de comprobante (Tabla 10)
+      f.serie,                             // 7  Serie
+      f.numero,                            // 8  Número
+      '',                                  // 9  Número final (rango boletas · s/dato)
+      tablaDocIdentidad(f.clienteRuc),     // 10 Tipo doc identidad cliente (Tabla 2)
+      f.clienteRuc ?? '',                  // 11 N° documento cliente
+      f.clienteRazon ?? '',                // 12 Razón social / nombre
+      m2(0),                               // 13 Valor facturado exportación
+      m2(f.baseGravada),                   // 14 Base imponible gravada
+      m2(0),                               // 15 Descuento base imponible
+      m2(f.igv),                           // 16 IGV / IPM
+      m2(0),                               // 17 Descuento IGV
+      m2(f.exonerado),                     // 18 Importe exonerado
+      m2(0),                               // 19 Importe inafecto
+      m2(0),                               // 20 ISC
+      m2(0),                               // 21 Base IVAP
+      m2(0),                               // 22 IVAP
+      m2(0),                               // 23 ICBPER
+      m2(0),                               // 24 Otros tributos
+      m2(f.total),                         // 25 Importe total
+      'PEN',                               // 26 Moneda
+      tc3(f.tipoCambio),                   // 27 Tipo de cambio
+      '',                                  // 28 Fecha comprobante modificado (s/dato)
+      '',                                  // 29 Tipo comprobante modificado (s/dato)
+      '',                                  // 30 Serie comprobante modificado (s/dato)
+      '',                                  // 31 Número comprobante modificado (s/dato)
+      f.proyectoCodigo ?? '',              // 32 Contrato / Proyecto
+      '',                                  // 33 Clasificación de operación (s/dato)
+      '',                                  // 34 Código de anotación CAR (lo asigna SUNAT)
+      '1',                                 // 35 Estado del registro (1 = registrado)
+      '',                                  // 36 Indicador de ajuste (s/dato)
+      iso(f.fecha),                        // 37 Fecha de registro
+      '',                                  // 38 Observaciones
+      Number(f.detraccion ?? 0) > 0 ? '1' : '', // 39 Indicador de detracción
+      '',                                  // 40 Indicador de percepción (s/dato)
+    ].join('|');
+  }).join('\r\n');
+}
+export function rceCompras(periodo: string, filas: FilaCompra[]): string {
+  const P = periodo6(periodo);
+  return filas.map((f, i) => {
+    const cuo = String(i + 1);
+    return [
+      P,                                   // 1  Periodo
+      cuo,                                 // 2  CUO
+      `M${cuo}`,                           // 3  Número correlativo del asiento
+      iso(f.fecha),                        // 4  Fecha de emisión
+      '',                                  // 5  Fecha de vencimiento (s/dato)
+      tablaComprobante(f.tipoComprobante), // 6  Tipo de comprobante
+      f.serie ?? '',                       // 7  Serie
+      '',                                  // 8  Año de la DUA/DSI (s/dato)
+      f.numero ?? '',                      // 9  Número
+      tablaDocIdentidad(f.proveedorRuc),   // 10 Tipo doc identidad proveedor
+      f.proveedorRuc ?? '',                // 11 N° documento proveedor
+      f.proveedorRazon ?? '',              // 12 Razón social
+      m2(f.baseGravada),                   // 13 Base imponible gravada
+      m2(f.igv),                           // 14 IGV
+      m2(0),                               // 15 Base imponible gravada mixta
+      m2(0),                               // 16 IGV mixto
+      m2(0),                               // 17 Base imponible no gravada
+      m2(0),                               // 18 IGV no gravado
+      m2(f.noGravado),                     // 19 Adquisiciones no gravadas
+      m2(0),                               // 20 ISC
+      m2(0),                               // 21 IVAP
+      m2(0),                               // 22 ICBPER
+      m2(0),                               // 23 Otros tributos
+      m2(f.total),                         // 24 Importe total
+      f.moneda ?? 'PEN',                   // 25 Moneda
+      tc3(f.tipoCambio),                   // 26 Tipo de cambio
+      '',                                  // 27 Detracción (constancia · s/dato)
+      '',                                  // 28 Percepción (s/dato)
+      '',                                  // 29 Retención (s/dato)
+      '',                                  // 30 Código de anotación CAR (lo asigna SUNAT)
+      iso(f.fecha),                        // 31 Fecha de registro
+      '1',                                 // 32 Estado
+    ].join('|');
+  }).join('\r\n');
+}
+export const sireNombreArchivo = (periodo: string, tipo: 'RCE' | 'RVIE') => `SIRE_${tipo}_${periodo.replace('-', '')}.txt`;
+
 // ── nombre del archivo PLE ──────────────────────────────────
 // LE + RUC(11) + AAAAMMDD + libro(6) + correlativo(2) + indOperac + indContenido + indMoneda + indLibro + .txt
 export function nombreArchivo(periodo: string, libroCodigo: string, conOperaciones: boolean): string {
@@ -185,10 +289,12 @@ export function nombreArchivo(periodo: string, libroCodigo: string, conOperacion
 }
 
 export const LIBROS = {
-  '5.1': { codigo: '050100', nombre: 'Libro Diario' },
-  '6.1': { codigo: '060100', nombre: 'Libro Mayor' },
-  '8.1': { codigo: '080100', nombre: 'Registro de Compras' },
-  '14.1': { codigo: '140100', nombre: 'Registro de Ventas e Ingresos' },
+  '5.1': { codigo: '050100', nombre: 'Libro Diario', sire: false },
+  '6.1': { codigo: '060100', nombre: 'Libro Mayor', sire: false },
+  '8.1': { codigo: '080100', nombre: 'Registro de Compras', sire: false },
+  '14.1': { codigo: '140100', nombre: 'Registro de Ventas e Ingresos', sire: false },
+  RCE: { codigo: 'RCE', nombre: 'SIRE · Registro de Compras (RCE)', sire: true },
+  RVIE: { codigo: 'RVIE', nombre: 'SIRE · Registro de Ventas (RVIE)', sire: true },
 } as const;
 export type LibroKey = keyof typeof LIBROS;
 
@@ -213,6 +319,16 @@ if (process.argv[1]?.replace(/\\/g, '/').endsWith('lib/ple.ts')) {
   assert(d.split('|').length - 1 === 13, 'diario campos=' + (d.split('|').length - 1));
   const m = mayor60100('2026-01', [{ cuo: '1', correlativoAsiento: 'M1', fecha: '2026-01-15', glosa: '', cuenta: '601201', debe: 100, haber: 0 }]);
   assert(m.split('|').length - 1 === 8, 'mayor campos=' + (m.split('|').length - 1));
+  // SIRE · RVIE 40 campos (fecha ISO · TC 3 dec · sin pipe final · CUO+correlativo)
+  const rv = rvieVentas('2026-07', [{ fecha: '2026-07-01', tipoComprobante: 'Factura', serie: 'F001', numero: '00001234', clienteRuc: '20123456789', clienteRazon: 'CLIENTE UNO S.A.C.', baseGravada: 1000, igv: 180, exonerado: 0, total: 1180, tipoCambio: null }]);
+  assert(rv.split('|').length === 40, 'rvie campos=' + rv.split('|').length);
+  assert(rv.startsWith('202607|1|M1|2026-07-01||01|F001|00001234||6|20123456789|CLIENTE UNO S.A.C.|0.00|1000.00|0.00|180.00|'), 'rvie cabecera: ' + rv.slice(0, 90));
+  assert(rv.includes('|1180.00|PEN|1.000|'), 'rvie total/moneda/tc');
+  // SIRE · RCE 32 campos
+  const rc = rceCompras('2026-07', [{ fecha: '2026-07-03', tipoComprobante: 'Factura', serie: 'F001', numero: '00098765', proveedorRuc: '20600011122', proveedorRazon: 'PROVEEDOR SAC', baseGravada: 800, igv: 144, noGravado: 0, total: 944, moneda: 'PEN', tipoCambio: null }]);
+  assert(rc.split('|').length === 32, 'rce campos=' + rc.split('|').length);
+  assert(rc.startsWith('202607|1|M1|2026-07-03||01|F001||00098765|6|20600011122|PROVEEDOR SAC|800.00|144.00|'), 'rce cabecera: ' + rc.slice(0, 90));
+  assert(rc.includes('|944.00|PEN|1.000|'), 'rce total/moneda/tc');
   // nombre archivo
   const nom = nombreArchivo('2026-01', '080100', true);
   assert(nom === 'LE2061063976420260100080100001111.txt', 'nombre: ' + nom);

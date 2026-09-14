@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { AlertTriangle, Check, Loader2, Plus, Sparkles, X, Zap } from 'lucide-react';
+import { AlertTriangle, Check, Loader2, Plus, Sparkles, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '@/lib/api.js';
@@ -39,53 +39,6 @@ const TASAS_DETRACCION = [
   { v: 12, l: '12% · Intermediación' },
   { v: 1.5, l: '1.5% · Comisión mercantil' },
 ];
-
-// Mock TEST · cerámicas (de v1)
-const TEST_OC_DATA = {
-  fechaEmision: new Date().toISOString().slice(0, 10),
-  moneda: 'PEN' as const,
-  medioPago: 'Transferencia Bancaria',
-  formaPago: 'Al contado',
-  cotizacion: '3007-0000259632',
-  concepto: 'BIEN' as const,
-  sinRuc: false,
-  ruc: '20466776336',
-  proveedorRazonSocial: 'CENTRO CERÁMICO LAS FLORES S.A.C',
-  proveedorDireccion: 'AV. CARLOS IZAGUIRRE 255 URB. PANAMERICANA NORTE, INDEPENDENCIA',
-  lugarEntrega: 'LIMA',
-  codigoProyecto: 'PG0005',
-  lineas: [
-    { descripcion: 'PORCELANATO CELIMA CONCRETO CEMENTO GRIS MATE 60×60 · CAJA 1.44 M2', unidad: 'M2', cantidad: '93.60', precioUnitario: '43.29807' },
-    { descripcion: 'PORCELANATO CELIMA CEMENTO MATE BLANCO 60×60 · CAJA 1.44 M2', unidad: 'M2', cantidad: '60.48', precioUnitario: '40.90145' },
-    { descripcion: 'GRES PORCELANICO CELIMA CATANIA PIEDRA RECTIFICADO 60×60 · CAJA 1.44 M2', unidad: 'M2', cantidad: '56.16', precioUnitario: '39.9031' },
-  ],
-};
-
-// Mock TEST 2 · OC grande Sodimac (de v1)
-const TEST_OC_DATA_BIG = {
-  fechaEmision: new Date().toISOString().slice(0, 10),
-  moneda: 'PEN' as const,
-  medioPago: 'Transferencia Bancaria',
-  formaPago: 'Crédito 30 días',
-  cotizacion: 'COT-2026-SODIMAC-00483',
-  concepto: 'BIEN' as const,
-  sinRuc: false,
-  ruc: '20536557858',
-  proveedorRazonSocial: 'Sodimac Perú S.A.',
-  proveedorDireccion: 'Av. Angamos Este 1805, Surquillo · Lima',
-  lugarEntrega: 'Av. República de Panamá 3591, San Isidro · Obra Belcorp (almacén N1)',
-  codigoProyecto: 'PG0021',
-  lineas: [
-    { descripcion: 'CEMENTO PORTLAND TIPO I · BOLSA 42.5 KG · MARCA UNACEM', unidad: 'BLS', cantidad: '480', precioUnitario: '25.50000' },
-    { descripcion: 'ACERO CORRUGADO ASTM A615 GRADO 60 · 1/2" × 9 M · ACEROS AREQUIPA', unidad: 'UND', cantidad: '240', precioUnitario: '48.90000' },
-    { descripcion: 'ACERO CORRUGADO ASTM A615 GRADO 60 · 3/8" × 9 M · ACEROS AREQUIPA', unidad: 'UND', cantidad: '180', precioUnitario: '28.40000' },
-    { descripcion: 'ALAMBRE NEGRO RECOCIDO N° 16 · ROLLO 40 KG', unidad: 'KG', cantidad: '120', precioUnitario: '5.80000' },
-    { descripcion: 'CLAVOS PARA MADERA 2 1/2" · CAJA 25 KG', unidad: 'CJ', cantidad: '8', precioUnitario: '135.00000' },
-    { descripcion: 'LADRILLO KING KONG 18 HUECOS · 9×14×24 CM · LADRILLERA REX', unidad: 'UND', cantidad: '8400', precioUnitario: '1.28000' },
-    { descripcion: 'TUBO PVC-SAP CLASE 10 · 4" × 5 M · PAVCO', unidad: 'UND', cantidad: '45', precioUnitario: '58.40000' },
-    { descripcion: 'TUBO PVC-SAP CLASE 10 · 2" × 5 M · PAVCO', unidad: 'UND', cantidad: '60', precioUnitario: '22.50000' },
-  ],
-};
 
 export function NuevaOcModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: (ocId: string) => void }) {
   const proveedoresQ = useQuery({
@@ -289,8 +242,6 @@ export function NuevaOcModal({ onClose, onSuccess }: { onClose: () => void; onSu
   const validCotiz = !!cotizacionFile;
   const isValid = validProv && validProyecto && validItems && validCotiz;
 
-  const fillTest = () => setForm({ ...form, ...TEST_OC_DATA });
-  const fillTestBig = () => setForm({ ...form, ...TEST_OC_DATA_BIG });
 
   const addLinea = () => setForm({ ...form, lineas: [...form.lineas, { ...EMPTY_LINEA }] });
   const delLinea = (idx: number) =>
@@ -345,24 +296,6 @@ export function NuevaOcModal({ onClose, onSuccess }: { onClose: () => void; onSu
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={fillTest}
-              className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md border-2 border-dashed border-amber-500 bg-amber-50 dark:bg-amber-950/30 text-[10.5px] font-bold text-amber-700 dark:text-amber-400 hover:bg-amber-100"
-              title="Llenar con datos de prueba · OC pequeña"
-            >
-              <Zap className="h-3 w-3" />
-              TEST
-            </button>
-            <button
-              type="button"
-              onClick={fillTestBig}
-              className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md border-2 border-dashed border-violet-500 bg-violet-50 dark:bg-violet-950/30 text-[10.5px] font-bold text-violet-700 dark:text-violet-400 hover:bg-violet-100"
-              title="Llenar con OC grande · 8+ items"
-            >
-              <Zap className="h-3 w-3" />
-              TEST 2
-            </button>
             <button type="button" onClick={onClose} className="flex h-8 w-8 items-center justify-center rounded text-ink-3 hover:bg-bg-sunken">
               <X className="h-4 w-4" />
             </button>

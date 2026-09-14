@@ -3,7 +3,27 @@
     "allow": [
       "Read(//c/tmp/**)",
       "Bash(python -c \"from docx import Document; d=Document\\(r'C:\\\\Users\\\\gabri\\\\Downloads\\\\CONTRATO DE CONSORCIO \\(1\\).docx'\\); [print\\(p.text\\) for p in d.paragraphs if p.text.strip\\(\\)]\")",
-      "Bash(python -c \"import openpyxl; wb=openpyxl.load_workbook\\(r'C:\\\\Users\\\\gabri\\\\Downloads\\\\PRESUPUESTO DE EJECUCION CREMATORIO \\(3\\).xlsx', data_only=True\\); [print\\('---SHEET:',s.title\\) or [print\\('|'.join\\(str\\(c\\) if c is not None else '' for c in r\\)\\) for r in s.iter_rows\\(values_only=True, max_row=80\\)] for s in wb.worksheets]\")"
+      "Bash(python -c \"import openpyxl; wb=openpyxl.load_workbook\\(r'C:\\\\Users\\\\gabri\\\\Downloads\\\\PRESUPUESTO DE EJECUCION CREMATORIO \\(3\\).xlsx', data_only=True\\); [print\\('---SHEET:',s.title\\) or [print\\('|'.join\\(str\\(c\\) if c is not None else '' for c in r\\)\\) for r in s.iter_rows\\(values_only=True, max_row=80\\)] for s in wb.worksheets]\")",
+      "Bash(npx --yes claude-mem install)",
+      "Bash(claude plugin *)",
+      "Read(//c/Users/gabri/.claude/plugins/marketplaces/**)",
+      "Read(//c/Users/gabri/.claude/plugins/marketplaces/thedotmack/.claude-plugin/**)"
     ]
-  }
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PROJECT_DIR}/.claude/skills/impeccable/scripts/hook.mjs\"",
+            "timeout": 5,
+            "statusMessage": "Checking UI changes"
+          }
+        ]
+      }
+    ]
+  },
+  "description": "Impeccable design detector: runs after Edit/Write/MultiEdit on UI files and surfaces findings as system reminders."
 }

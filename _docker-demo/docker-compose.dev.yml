@@ -1,0 +1,61 @@
+# ERP MM HIGH METRIK · modo DEV (frontend Vite con hot-reload + backend API separados).
+# Alternativa a docker-compose.yml (que sirve el frontend ya compilado, estilo producción).
+# Usar UNO A LA VEZ (comparten la misma BD/volumen). Arranque:
+#     docker compose -f docker-compose.dev.yml up -d --build
+#     frontend → http://localhost:5173   ·   API → http://localhost:3001
+services:
+  db:
+    image: postgres:18-alpine
+    container_name: erp-demo-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: erp
+      POSTGRES_PASSWORD: erp
+      POSTGRES_DB: erp_mmh
+    volumes:
+      - erp-demo-data:/var/lib/postgresql
+      - ./db-init/01-restore.sql:/docker-entrypoint-initdb.d/01-restore.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U erp -d erp_mmh"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  # Backend en modo API pura (NO sirve el frontend). tsx, mismo runtime que dev.
+  backend:
+    build:
+      context: ..
+      dockerfile: _docker-demo/Dockerfile
+    image: erp-demo:latest
+    container_name: erp-demo-backend
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://erp:erp@db:5432/erp_mmh
+      CORS_ORIGIN: http://localhost:5173   # el frontend dev vive en 5173
+      NODE_ENV: production
+      SERVE_STATIC: "0"                     # el frontend lo sirve Vite, no el backend
+      PORT: "3001"
+    ports:
+      - "3001:3001"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # Frontend Vite dev server (hot-reload). Reusa la imagen (trae node_modules + fuente).
+  frontend:
+    image: erp-demo:latest
+    container_name: erp-demo-frontend
+    restart: unless-stopped
+    environment:
+      NODE_ENV: development
+      VITE_API_URL: http://localhost:3001   # el navegador pega al backend en 3001
+    command: ["pnpm", "--filter", "@erp/frontend", "exec", "vite", "--host", "0.0.0.0", "--port", "5173"]
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+
+volumes:
+  erp-demo-data:
+    name: erp-demo-data

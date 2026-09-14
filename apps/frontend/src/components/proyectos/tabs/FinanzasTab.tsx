@@ -1,9 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowDownRight, ArrowUpRight, Landmark, Plus, Receipt, Trash2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import { type GastoInput, type MovimientoInput, api } from '@/lib/api.js';
+import { type GastoInput, type MovimientoInput, type PlanCuentaBusqueda, api } from '@/lib/api.js';
 import { cn, fmtPEN } from '@/lib/utils.js';
 import { invalidateResumen } from '@/lib/invalidate.js';
+import { CuentaContableSelect, claseDerivadaUI } from '@/components/contabilidad/CuentaContableSelect.js';
 
 type Sub = 'gastos' | 'movimientos';
 
@@ -136,12 +137,6 @@ export function GastoForm({ proyectoId, proyectos, cuentas, onDone }: {
   cuentas: { id: string; descripcion: string | null; codigo: string }[];
   onDone: () => void;
 }) {
-  const claseMapQ = useQuery({ queryKey: ['cuentas-tipo'], queryFn: () => api.contabilidad.getCuentasTipo() });
-  const claseDe = (tipo: string): 'CD' | 'GG_OBRA' => {
-    const m = claseMapQ.data?.mapa.find((x) => x.tipoGasto === tipo);
-    return m?.clase === 'GG_OBRA' ? 'GG_OBRA' : 'CD'; // en obra solo CD/GG_OBRA (GG_CORP se trata como GG_OBRA)
-  };
-
   const [obraId, setObraId] = useState<string>(proyectoId ?? '');
 
   // When proyectoId is fixed, destino is always proyecto; otherwise allow toggle
@@ -152,12 +147,22 @@ export function GastoForm({ proyectoId, proyectos, cuentas, onDone }: {
     fecha: new Date().toISOString().slice(0, 10), tipoRegistro: 'Gasto Directo', tipoIgv: 'IGV',
     proveedorRuc: '', proveedorRazon: '', tipoComprobante: 'Factura', serie: '', numero: '',
     moneda: 'PEN', formaPago: 'Transferencia', fuentePago: 'Cuenta Corriente', cuentaId: null,
-    descripcionItem: '', subtotal: 0, igv: 0, exonerado: 0, total: 0, tipoGasto: 'Compra Materiales', observaciones: '', inventariable: false, destino: 'proyecto', clasificacion: 'CD',
+    descripcionItem: '', subtotal: 0, igv: 0, exonerado: 0, total: 0, tipoGasto: 'Compra Materiales', observaciones: '', inventariable: false, destino: 'proyecto', clasificacion: 'CD', cuentaContable: null,
   };
   const [f, setF] = useState<GastoInput>(empty);
   const set = (patch: Partial<GastoInput>) => setF((prev) => ({ ...prev, ...patch }));
-  // true solo si el usuario cambió manualmente la clasificación (→ USUARIO); si no, no se envía y el backend deriva de config (AUTOMATICO)
-  const [clasifTouched, setClasifTouched] = useState(false);
+  // WS1 · cuenta contable MANUAL (Kelly). La clase CD/GG se DERIVA de ella (chip, no editable).
+  const [cuentaRow, setCuentaRow] = useState<PlanCuentaBusqueda | undefined>();
+  const [sugerida, setSugerida] = useState(false); // true = prefill por proveedor (no tocada) → origen SUGERIDO
+  // Fase 5 · sugiere la última cuenta usada con ese proveedor (pista visible, confirmable · nunca verdad).
+  const prefillCuenta = async (ruc: string) => {
+    if (!ruc.trim() || f.cuentaContable) return; // no pisar una cuenta ya elegida
+    const { cuenta } = await api.contabilidad.sugerirCuenta({ proveedorRuc: ruc.trim(), tipoGasto: f.tipoGasto ?? undefined });
+    if (!cuenta) return;
+    const { cuentas } = await api.contabilidad.searchPlan(cuenta);
+    const row = cuentas.find((c) => c.codigo === cuenta);
+    set({ cuentaContable: cuenta }); setCuentaRow(row); setSugerida(true);
+  };
 
   // subtotal → IGV 18% auto + total
   const onSubtotal = (v: number) => {
@@ -166,10 +171,12 @@ export function GastoForm({ proyectoId, proyectos, cuentas, onDone }: {
   };
 
   const resolvedProyectoId = f.destino === 'corporativo' ? null : (proyectoId ?? obraId) || null;
+  const claseChip = claseDerivadaUI(cuentaRow, !!resolvedProyectoId); // CD/GG derivado de la cuenta (solo UI)
   const create = useMutation({
     mutationFn: () => {
       const payload: GastoInput & { proyectoId?: string | null } = { ...f, proyectoId: resolvedProyectoId };
-      if (!clasifTouched) delete payload.clasificacion; // sin override → backend clasifica por config (AUTOMATICO)
+      delete payload.clasificacion; // WS1 · CD/GG ya no es input · backend deriva (legacy por destino, línea por cuenta)
+      payload.cuentaContableOrigen = f.cuentaContable ? (sugerida ? 'SUGERIDO' : 'USUARIO') : null;
       return api.finanzas.createGastoGlobal(payload);
     },
     onSuccess: onDone,
@@ -183,12 +190,12 @@ export function GastoForm({ proyectoId, proyectos, cuentas, onDone }: {
         <div className="w-full">
           <span className="text-[10.5px] font-mono uppercase tracking-wider text-ink-4">Destino del gasto</span>
           <div className="mt-1 grid grid-cols-2 gap-2">
-            <button type="button" onClick={() => { set({ destino: 'proyecto', clasificacion: claseDe(f.tipoGasto ?? '') }); setClasifTouched(false); }}
+            <button type="button" onClick={() => set({ destino: 'proyecto' })}
               className={cn('rounded-md border p-2 text-left text-[11.5px] transition-colors', f.destino === 'proyecto' ? 'border-primary bg-primary/5' : 'border-line hover:bg-bg-sunken')}>
               <div className="font-medium">Proyecto</div>
               <div className="text-[10px] text-ink-4">Gasto imputable a una obra (CD o GG Obra)</div>
             </button>
-            <button type="button" onClick={() => { set({ destino: 'corporativo', clasificacion: 'GG_CORP' }); setClasifTouched(false); }}
+            <button type="button" onClick={() => set({ destino: 'corporativo' })}
               className={cn('rounded-md border p-2 text-left text-[11.5px] transition-colors', f.destino === 'corporativo' ? 'border-primary bg-primary/5' : 'border-line hover:bg-bg-sunken')}>
               <div className="font-medium">Oficina / Administración</div>
               <div className="text-[10px] text-ink-4">Gasto corporativo (GG Corp — backend lo clasifica)</div>
@@ -205,8 +212,8 @@ export function GastoForm({ proyectoId, proyectos, cuentas, onDone }: {
       )}
       <div className="flex flex-wrap items-center gap-2">
         <input className={inputCls} type="date" value={f.fecha} onChange={(e) => set({ fecha: e.target.value })} />
-        <Sel value={f.tipoGasto ?? ''} onChange={(v) => { set({ tipoGasto: v, inventariable: TIPOS_INVENTARIABLES.has(v), clasificacion: claseDe(v) }); setClasifTouched(false); }} opts={TIPOS_GASTO} />
-        <input className={cn(inputCls, 'w-28')} placeholder="RUC" value={f.proveedorRuc ?? ''} onChange={(e) => set({ proveedorRuc: e.target.value })} />
+        <Sel value={f.tipoGasto ?? ''} onChange={(v) => set({ tipoGasto: v, inventariable: TIPOS_INVENTARIABLES.has(v) })} opts={TIPOS_GASTO} />
+        <input className={cn(inputCls, 'w-28')} placeholder="RUC" value={f.proveedorRuc ?? ''} onChange={(e) => set({ proveedorRuc: e.target.value })} onBlur={(e) => prefillCuenta(e.target.value)} />
         <input className={cn(inputCls, 'flex-1 min-w-[140px]')} placeholder="Proveedor / razón social" value={f.proveedorRazon ?? ''} onChange={(e) => set({ proveedorRazon: e.target.value })} />
       </div>
       <div className="flex flex-wrap items-center gap-2">
@@ -227,24 +234,18 @@ export function GastoForm({ proyectoId, proyectos, cuentas, onDone }: {
         <input className={cn(inputCls, 'w-28')} type="number" value={f.subtotal || ''} onChange={(e) => onSubtotal(Number(e.target.value))} />
         <span className="text-[11px] text-ink-3">IGV {fmtPEN(f.igv ?? 0)}</span>
         <span className="text-[12px] font-semibold">Total {fmtPEN(f.total ?? 0)}</span>
-        {/* CD/GG_OBRA selector — only for project gastos */}
-        {f.destino === 'proyecto' && (
-          <div className="col-span-2 w-full">
-            <span className="text-[10.5px] font-mono uppercase tracking-wider text-ink-4">¿A qué parte de la obra corresponde?</span>
-            <div className="mt-1 grid grid-cols-2 gap-2">
-              <button type="button" onClick={() => { set({ clasificacion: 'CD' }); setClasifTouched(true); }}
-                className={cn('rounded-md border p-2 text-left text-[11.5px] transition-colors', f.clasificacion === 'CD' ? 'border-primary bg-primary/5' : 'border-line hover:bg-bg-sunken')}>
-                <div className="font-medium">Costo Directo</div>
-                <div className="text-[10px] text-ink-4">Va a una partida del presupuesto (cemento, fierro, mano de obra)</div>
-              </button>
-              <button type="button" onClick={() => { set({ clasificacion: 'GG_OBRA' }); setClasifTouched(true); }}
-                className={cn('rounded-md border p-2 text-left text-[11.5px] transition-colors', f.clasificacion === 'GG_OBRA' ? 'border-primary bg-primary/5' : 'border-line hover:bg-bg-sunken')}>
-                <div className="font-medium">Gasto General de Obra</div>
-                <div className="text-[10px] text-ink-4">Gasto general de la obra (guardianía, campamento, viáticos)</div>
-              </button>
-            </div>
+        {/* WS1 · cuenta contable MANUAL (Kelly) + chip CD/GG DERIVADO (no editable) */}
+        <div className="col-span-2 w-full">
+          <span className="text-[10.5px] font-mono uppercase tracking-wider text-ink-4">Cuenta contable</span>
+          <div className="mt-1 flex items-center gap-2">
+            <CuentaContableSelect value={f.cuentaContable ?? null} onChange={(codigo, row) => { set({ cuentaContable: codigo }); setCuentaRow(row); setSugerida(false); }} />
+            {claseChip
+              ? <span className="inline-flex items-center gap-1 text-[11px] px-2 h-6 rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" title="Clase derivada de la cuenta · no editable">{claseChip}</span>
+              : f.cuentaContable && <span className="text-[10px] text-ink-4">cuenta de balance (sin clase)</span>}
+            {sugerida && f.cuentaContable && <span className="text-[10px] text-amber-600" title="Última cuenta usada con este proveedor · confírmala o cámbiala">sugerida</span>}
+            {!f.cuentaContable && <span className="text-[10px] text-ink-4">opcional · si no eliges, el sistema la infiere</span>}
           </div>
-        )}
+        </div>
         <label className="ml-auto inline-flex items-center gap-1.5 text-[11px] text-ink-2 cursor-pointer select-none" title="Crea un ítem en Inventario (Por completar) ligado a este gasto">
           <input type="checkbox" checked={!!f.inventariable} onChange={(e) => set({ inventariable: e.target.checked })} /> Registrar en inventario
         </label>

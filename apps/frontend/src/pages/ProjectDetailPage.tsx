@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft, Calendar, Sparkles } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
 import { Suspense, lazy } from 'react';
 import { Link, NavLink, Navigate, Route, Routes, useParams } from 'react-router-dom';
 import { TabPlaceholder } from '@/components/proyectos/tabs/TabPlaceholder.js';
@@ -25,8 +25,7 @@ const TABS = [
   { key: 'contractual', label: 'Contractual' },
   { key: 'equipo', label: 'Equipo' },
   { key: 'documentos', label: 'Documentos' },
-  { key: 'liquidacion', label: 'Liquidación' },
-  { key: 'ia', label: '✦ Análisis IA' },
+  // 'liquidacion' e 'ia' ocultos de la nav hasta implementarse (rutas siguen existiendo, sin dead-end visible)
 ];
 
 export function ProjectDetailPage() {
@@ -65,19 +64,6 @@ export function ProjectDetailPage() {
           </div>
           <h1 className="text-[20px] font-semibold tracking-[-0.02em] leading-tight">{p.nombre}</h1>
           <p className="mt-0.5 text-[12.5px] text-ink-3">{p.ubicacion ?? '—'}</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <button className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-line bg-bg-elev text-[12px] font-medium text-ink-2 hover:bg-bg-sunken">
-            <Calendar className="h-3.5 w-3.5" />
-            Editar contrato
-          </button>
-          <button
-            className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md text-[12px] font-medium text-white"
-            style={{ background: 'linear-gradient(135deg, hsl(var(--primary)), #6B84E8)' }}
-          >
-            <Sparkles className="h-3.5 w-3.5" />
-            Analizar con IA
-          </button>
         </div>
       </header>
 

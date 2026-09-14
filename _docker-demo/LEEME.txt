@@ -41,10 +41,28 @@ PASOS
         clave:    admin
 
 --------------------------------------------------------
+DOS MODOS (elige UNO)
+--------------------------------------------------------
+A) PRODUCCION (recomendado para mostrar) · frontend ya compilado,
+   lo sirve el mismo backend. Un solo puerto (3001).
+        docker compose up -d --build
+        -> http://localhost:3001
+
+B) DEV · frontend Vite con hot-reload, backend API aparte.
+   Dos puertos (frontend 5173, API 3001).
+        docker compose -f docker-compose.dev.yml up -d --build
+        -> http://localhost:5173
+
+   Ambos usan la MISMA base de datos (mismo volumen). Corre solo
+   uno a la vez. Para cambiar de modo: baja el actual (docker
+   compose down) antes de subir el otro.
+
+--------------------------------------------------------
 COMANDOS UTILES  (siempre dentro de _docker-demo)
 --------------------------------------------------------
 Ver que esta corriendo:     docker compose ps
-Ver logs / errores:         docker compose logs -f app
+Ver logs / errores:         docker compose logs -f app     (modo A)
+                            docker compose -f docker-compose.dev.yml logs -f backend  (modo B)
 Apagar (conserva data):     docker compose down
 Apagar y BORRAR la data:    docker compose down -v
 Volver a prender:           docker compose up -d
@@ -53,7 +71,9 @@ Volver a prender:           docker compose up -d
 NOTAS
 --------------------------------------------------------
 - La data ya esta cargada (se restaura sola la 1ra vez desde
-  demo.dump). No hay que importar nada.
+  db-init/01-restore.sql). No hay que importar nada. Incluye
+  la obra PG0001, la planilla de construccion civil, el cutover
+  104x hecho y los ultimos ajustes (SCTR/SENCICO, retencion, etc).
 - La conciliacion de abril y todos los modulos funcionan SIN
   llaves de IA. Las keys GEMINI/ANTHROPIC en .env son OPCIONALES
   (solo para leer PDFs nuevos en vivo).

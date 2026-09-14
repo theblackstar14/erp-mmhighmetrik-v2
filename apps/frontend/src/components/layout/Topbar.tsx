@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Bell, FileUp, Menu, Moon, PanelLeft, Search, Sparkles, Sun, X } from 'lucide-react';
+import { Bell, Menu, Moon, PanelLeft, Search, Sparkles, Sun, X } from 'lucide-react';
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -94,15 +94,6 @@ export function Topbar({ onToggleSidebar, isMobile }: Props) {
         </kbd>
       </div>
 
-      {/* Importar Excel · stub */}
-      <button
-        type="button"
-        onClick={() => alert('Importar Excel · próximamente')}
-        className="hidden lg:flex items-center gap-1.5 h-9 px-3 rounded-md border border-line bg-bg-elev text-[12px] font-medium text-ink-2 hover:bg-bg-sunken transition-colors"
-      >
-        <FileUp className="h-3.5 w-3.5" />
-        Importar Excel
-      </button>
 
       {/* Dark mode toggle */}
       <button

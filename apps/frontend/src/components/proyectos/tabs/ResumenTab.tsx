@@ -24,6 +24,8 @@ export function ResumenTab({ proyecto }: { proyecto: Proyecto }) {
     queryFn: () => api.proyectos.getValorizaciones(proyecto.id),
   });
   const curvaQ = useQuery({ queryKey: ['curva-s', proyecto.id], queryFn: () => api.proyectos.getCurvaS(proyecto.id) });
+  // misma queryKey que EconomicoTab · react-query dedup · fuente única de costo real
+  const costosQ = useQuery({ queryKey: ['costos-obra', proyecto.id], queryFn: () => api.proyectos.getCostosObra(proyecto.id) });
   const hitosQ = useQuery({ queryKey: ['hitos', proyecto.id], queryFn: () => api.contractual.listHitos(proyecto.id) });
   const equipoQ = useQuery({ queryKey: ['equipo', proyecto.id], queryFn: () => api.proyectos.getEquipo(proyecto.id) });
   const notifsQ = useQuery({ queryKey: ['notificaciones'], queryFn: () => api.notificaciones.list() });
@@ -76,6 +78,11 @@ export function ResumenTab({ proyecto }: { proyecto: Proyecto }) {
   const margenSobreCDPct =
     cdContractual > 0 ? (utilProyectadaReal / cdContractual) * 100 : 0;
 
+  // Costo/resultado REAL ejecutado · misma fuente que EconomicoTab (evita contradicción entre tabs)
+  const co = costosQ.data;
+  const costoEjecReal = co ? co.cd.ejecutado + co.ggObra.ejecutado : null;
+  const resultadoReal = co ? co.resultadoObra : null;
+
   const kpis = [
     {
       lbl: 'Contrato',
@@ -90,9 +97,13 @@ export function ResumenTab({ proyecto }: { proyecto: Proyecto }) {
       full: true,
     },
     {
-      lbl: 'Ejecutado Real',
-      val: fmtPEN(totalReal),
-      sub: cdContractual > 0 ? `${((totalReal / cdContractual) * 100).toFixed(1)}% del CD contractual` : '—',
+      lbl: costoEjecReal != null ? 'Costo Ejecutado' : 'Valorizado',
+      val: fmtPEN(costoEjecReal ?? totalReal),
+      sub: costoEjecReal != null
+        ? `CD ${fmtPEN(co!.cd.ejecutado)} + GG obra ${fmtPEN(co!.ggObra.ejecutado)}`
+        : subtotalContratado > 0
+          ? `${((totalReal / subtotalContratado) * 100).toFixed(1)}% del contrato (avance)`
+          : 'Avance económico',
       accent: 'text-primary',
     },
     {
@@ -108,18 +119,16 @@ export function ResumenTab({ proyecto }: { proyecto: Proyecto }) {
       accent: 'text-ok',
     },
     {
-      lbl: 'Utilidad Real Proy.',
-      val: fmtPEN(utilProyectadaReal),
+      lbl: resultadoReal != null ? 'Resultado Real' : 'Utilidad Real Proy.',
+      val: fmtPEN(resultadoReal ?? utilProyectadaReal),
       sub:
-        totalReal > 0
-          ? `Margen ${margenSobreCDPct.toFixed(1)}% · vs costo real`
-          : `Sin ejecución · = presupuestada (${(pctUtilidad * 100).toFixed(0)}%)`,
+        resultadoReal != null
+          ? 'Devengado a hoy · valorizado − costo real'
+          : totalReal > 0
+            ? `Margen ${margenSobreCDPct.toFixed(1)}% · vs costo real`
+            : `Sin ejecución · = presupuestada (${(pctUtilidad * 100).toFixed(0)}%)`,
       accent:
-        utilProyectadaReal < utilNetaContractual * 0.99
-          ? 'text-destructive'
-          : utilProyectadaReal > utilNetaContractual * 1.01
-            ? 'text-ok'
-            : '',
+        (resultadoReal ?? utilProyectadaReal) >= 0 ? 'text-ok' : 'text-destructive',
     },
     { lbl: 'Avance Físico', val: `${avanceFisico.toFixed(1)}%`, progress: avanceFisico },
     { lbl: 'Avance Financiero', val: `${avanceFinanciero.toFixed(1)}%`, progress: avanceFinanciero },
@@ -270,7 +279,6 @@ export function ResumenTab({ proyecto }: { proyecto: Proyecto }) {
                     {a.detalle && <div className="text-[10.5px] text-ink-3 mt-0.5 leading-snug">{a.detalle}</div>}
                   </div>
                 ))}
-                <Link to={`/proyectos/${proyecto.id}/ia`} className="block pt-1 text-center text-[11.5px] text-primary hover:underline">Ver análisis completo →</Link>
               </div>
             )}
           </div>

@@ -1,0 +1,442 @@
+﻿=== commits ===
+3d21f41 feat(oficina): boleta en pantalla con layout exacto (muestra 0.00)
+
+=== diff ===
+diff --git a/apps/frontend/src/components/oficina/BoletaOficina.tsx b/apps/frontend/src/components/oficina/BoletaOficina.tsx
+index 150899b..1c5a8c5 100644
+--- a/apps/frontend/src/components/oficina/BoletaOficina.tsx
++++ b/apps/frontend/src/components/oficina/BoletaOficina.tsx
+@@ -1,29 +1,96 @@
+ import { Printer, X } from 'lucide-react';
+ import { type PlanillaOficinaDetalle } from '@/lib/api.js';
+ import { fmtPEN } from '@/lib/utils.js';
+ 
+-function Row({ label, value }: { label: string; value: string }) {
++// ─── helpers ──────────────────────────────────────────────────────────────────
++
++function n(v: string | null | undefined): number {
++  return Number(v ?? 0);
++}
++
++function amt(v: string | null | undefined): string {
++  return fmtPEN(n(v));
++}
++
++const MONTH_ABBR = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
++
++/** '2026-07' → 'Jul-26' */
++function mesMmAA(mes: string | undefined): string {
++  if (!mes) return '';
++  const parts = mes.split('-');
++  const y = parts[0] ?? '';
++  const m = parts[1] ?? '';
++  const idx = Number(m) - 1;
++  return `${MONTH_ABBR[idx] ?? m}-${y.slice(2)}`;
++}
++
++/** '2026-07' → last day as 'dd/mm/yyyy' */
++function lastDayOfMes(mes: string | undefined): string {
++  if (!mes) return '';
++  const [y, m] = mes.split('-');
++  const d = new Date(Number(y), Number(m), 0); // day=0 → last day of prev month = last day of m
++  const dd = String(d.getDate()).padStart(2, '0');
++  const mm = String(d.getMonth() + 1).padStart(2, '0');
++  const yyyy = d.getFullYear();
++  return `${dd}/${mm}/${yyyy}`;
++}
++
++// ─── sub-components ────────────────────────────────────────────────────────────
++
++function SectionBand({ children }: { children: string }) {
++  return (
++    <div className="bg-bg-sunken border-y border-line px-3 py-0.5 text-[9.5px] font-mono font-semibold uppercase tracking-widest text-ink-3">
++      {children}
++    </div>
++  );
++}
++
++function RemRow({ label, value }: { label: string; value: string }) {
+   return (
+-    <div className="flex justify-between gap-2 py-0.5 border-b border-line/40 last:border-0">
+-      <span className="text-[11px] text-ink-3 truncate">{label}</span>
++    <div className="flex items-center justify-between py-[2px] border-b border-line/30 last:border-0 gap-1">
++      <span className="text-[11px] text-ink-2 truncate">{label}</span>
+       <span className="text-[11px] font-mono tabular-nums text-foreground whitespace-nowrap">{value}</span>
+     </div>
+   );
+ }
+ 
+-function DataRow({ label, value }: { label: string; value: string | null | undefined }) {
+-  if (!value) return null;
++/** Three-column row: label | empleador-amount | trabajador-amount */
++function ApdRow({
++  label,
++  empleador,
++  trabajador,
++}: {
++  label: string;
++  empleador?: string;
++  trabajador?: string;
++}) {
+   return (
+-    <div className="flex gap-2">
+-      <span className="text-[10.5px] text-ink-4 w-24 shrink-0">{label}</span>
+-      <span className="text-[11px] text-foreground">{value}</span>
++    <div className="grid grid-cols-[1fr_auto_auto] items-center gap-x-2 py-[2px] border-b border-line/30 last:border-0">
++      <span className="text-[11px] text-ink-2 truncate">{label}</span>
++      <span className="text-[11px] font-mono tabular-nums text-ink-3 w-[70px] text-right">
++        {empleador ?? ''}
++      </span>
++      <span className="text-[11px] font-mono tabular-nums text-foreground w-[70px] text-right">
++        {trabajador ?? ''}
++      </span>
+     </div>
+   );
+ }
+ 
++function DataField({ label, value }: { label: string; value: string | null | undefined }) {
++  return (
++    <div className="flex flex-col gap-0">
++      <span className="text-[9.5px] text-ink-4 font-mono uppercase tracking-wide">{label}</span>
++      <span className="text-[11px] text-foreground">{value ?? '—'}</span>
++    </div>
++  );
++}
++
++// ─── main component ────────────────────────────────────────────────────────────
++
+ export function BoletaOficina({
+   detalle,
+   razonSocial,
+   ruc,
+   mes,
+   onClose,
+@@ -32,178 +99,170 @@ export function BoletaOficina({
+   razonSocial?: string;
+   ruc?: string;
+   mes?: string;
+   onClose: () => void;
+ }) {
+   const d = detalle;
+-  const n = (v: string | null | undefined) => Number(v ?? 0);
++  const mesLabel = mesMmAA(mes);
++  const lastDay = lastDayOfMes(mes);
++
++  // Derive direccion from prop (may be extended later; show dash if absent)
++  const direccion: string | undefined = undefined;
+ 
+   return (
+     <div
+-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 animate-backdropIn"
++      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 animate-backdropIn print:bg-transparent print:static print:p-0"
+       onClick={(e) => e.target === e.currentTarget && onClose()}
+     >
+-      <div className="w-full max-w-2xl rounded-xl border border-line bg-bg-elev shadow-xl animate-modalPop overflow-y-auto max-h-[90vh]">
+-        {/* Header */}
+-        <div className="flex items-start justify-between p-4 border-b border-line">
+-          <div>
+-            <div className="text-[10.5px] font-mono uppercase tracking-widest text-ink-4 mb-0.5">
+-              Boleta de Pago
+-            </div>
+-            <div className="text-[14px] font-semibold text-foreground">
+-              {razonSocial ?? 'MM HIGH METRIK'}
+-            </div>
+-            {ruc && <div className="text-[11px] text-ink-3">RUC {ruc}</div>}
+-            {mes && <div className="text-[11px] text-ink-3">Período: {mes}</div>}
+-            {d.boletaCorrelativo && (
+-              <div className="text-[11px] text-ink-3">N° {d.boletaCorrelativo}</div>
+-            )}
+-          </div>
++      <div className="w-full max-w-3xl rounded-xl border border-line bg-white text-black shadow-xl animate-modalPop overflow-y-auto max-h-[90vh] print:shadow-none print:border-0 print:rounded-none print:max-h-none print:overflow-visible">
++
++        {/* ── Topbar: close + print ─────────────────────────────────────────── */}
++        <div className="flex items-center justify-end gap-2 p-2 border-b border-line print:hidden">
++          <button
++            onClick={() => window.print()}
++            className="inline-flex items-center gap-1.5 h-7 px-3 rounded-md bg-primary text-primary-foreground text-[11px] font-medium hover:opacity-90 transition-opacity"
++          >
++            <Printer className="w-3.5 h-3.5" />
++            Imprimir
++          </button>
+           <button
+             onClick={onClose}
+             className="h-7 w-7 flex items-center justify-center rounded-md border border-line hover:bg-bg-sunken text-ink-3 hover:text-foreground transition-colors"
+           >
+             <X className="w-4 h-4" />
+           </button>
+         </div>
+ 
+-        {/* Datos del trabajador */}
+-        <div className="p-4 border-b border-line bg-bg-sunken/40">
+-          <div className="text-[10px] font-mono uppercase tracking-wider text-ink-4 mb-2">
+-            Datos del Trabajador
++        {/* ── Boleta content ────────────────────────────────────────────────── */}
++        <div className="p-4 space-y-0 text-[11px]">
++
++          {/* BOLETA DE PAGO header */}
++          <div className="text-center mb-2">
++            <div className="text-[18px] font-bold tracking-wide uppercase">BOLETA DE PAGO</div>
+           </div>
+-          <div className="grid grid-cols-2 gap-x-6 gap-y-1">
+-            <DataRow label="Nombre" value={d.nombre} />
+-            <DataRow label="Cargo" value={d.cargo} />
+-            <DataRow label="DNI" value={d.dni} />
+-            <DataRow label="AFP" value={d.afp} />
+-            <DataRow label="CUSPP" value={d.cuspp} />
+-            <DataRow
+-              label="Días trab."
+-              value={d.diasTrab != null ? String(d.diasTrab) : undefined}
+-            />
+-            <DataRow
+-              label="Horas trab."
+-              value={d.horasTrab != null ? String(d.horasTrab) : undefined}
+-            />
++
++          {/* Company header: left info + right correlativo */}
++          <div className="flex justify-between items-start border border-line p-2 mb-2">
++            <div className="space-y-0.5">
++              <div><span className="font-semibold">Razon Social:</span> {razonSocial ?? 'MM HIGH METRIK SAC'}</div>
++              <div><span className="font-semibold">Direccion:</span> {direccion ?? '—'}</div>
++              <div><span className="font-semibold">R.U.C.:</span> {ruc ?? '—'}</div>
++            </div>
++            {d.boletaCorrelativo && (
++              <div className="text-right">
++                <div className="text-[9.5px] font-mono uppercase text-ink-4">N° Boleta</div>
++                <div className="text-[14px] font-mono font-semibold">{d.boletaCorrelativo}</div>
++              </div>
++            )}
+           </div>
+-        </div>
+ 
+-        {/* Columnas remuneraciones / descuentos */}
+-        <div className="grid grid-cols-2 gap-0 divide-x divide-line">
+-          {/* Remuneraciones */}
+-          <div className="p-4">
+-            <div className="text-[10px] font-mono uppercase tracking-wider text-ink-4 mb-2">
+-              Remuneraciones
++          {/* DATOS DEL TRABAJADOR */}
++          <SectionBand>Datos del Trabajador</SectionBand>
++          <div className="border border-t-0 border-line p-2 mb-2">
++            <div className="grid grid-cols-3 gap-x-4 gap-y-2">
++              <DataField label="Nombre" value={d.nombre} />
++              <DataField label="Cargo" value={d.cargo} />
++              <DataField label="Fecha Ing." value={d.fechaIngreso} />
++              <DataField label="Fecha cese" value={d.fechaCese} />
++              <DataField label="DNI" value={d.dni} />
++              <DataField label="A.F.P." value={d.afp} />
++              <DataField label="CUSPP" value={d.cuspp} />
++              <DataField label="Dias Trab." value={d.diasTrab != null ? String(d.diasTrab) : null} />
++              <DataField label="Horas Trab" value={d.horasTrab != null ? String(d.horasTrab) : null} />
+             </div>
+-            <div className="space-y-0">
+-              <Row label="Mensual" value={fmtPEN(n(d.sueldoMensual))} />
+-              {n(d.totalHe) > 0 && (
+-                <Row label="Horas Extras" value={fmtPEN(n(d.totalHe))} />
+-              )}
+-              {n(d.montoDominical) > 0 && (
+-                <Row label="Dominical" value={fmtPEN(n(d.montoDominical))} />
+-              )}
+-              {n(d.montoFeriado) > 0 && (
+-                <Row label="Feriado" value={fmtPEN(n(d.montoFeriado))} />
+-              )}
+-              {n(d.asigFamiliar) > 0 && (
+-                <Row label="Asig. Familiar" value={fmtPEN(n(d.asigFamiliar))} />
+-              )}
+-              {n(d.gratificacion) > 0 && (
+-                <Row label="Gratificaciones" value={fmtPEN(n(d.gratificacion))} />
+-              )}
+-              {n(d.vacaciones) > 0 && (
+-                <Row label="Vacaciones" value={fmtPEN(n(d.vacaciones))} />
+-              )}
+-              {n(d.comisiones) > 0 && (
+-                <Row label="Comisiones" value={fmtPEN(n(d.comisiones))} />
+-              )}
+-              {n(d.bonificacion) > 0 && (
+-                <Row label="Bonificaciones" value={fmtPEN(n(d.bonificacion))} />
+-              )}
++          </div>
++
++          {/* Two-column: REMUNERACIONES | APORTES Y DESCUENTOS */}
++          <div className="grid grid-cols-2 border border-line divide-x divide-line mb-2">
++
++            {/* LEFT: REMUNERACIONES */}
++            <div>
++              <div className="bg-bg-sunken border-b border-line px-2 py-1 text-[9.5px] font-mono font-semibold uppercase tracking-widest text-ink-3">
++                Remuneraciones
++              </div>
++              <div className="px-2 py-1 border-b border-line/50">
++                <div className="flex justify-between text-[9.5px] font-mono text-ink-3">
++                  <span>Mes de: {mesLabel}</span>
++                  <span>Importe</span>
++                </div>
++              </div>
++              <div className="px-2 py-1 space-y-0">
++                <RemRow label="Mensual"          value={amt(d.sueldoMensual)} />
++                <RemRow label="Dominical"         value={amt(d.montoDominical)} />
++                <RemRow label="Horas Extras"      value={amt(d.totalHe)} />
++                <RemRow label="Destajos"          value={fmtPEN(0)} />
++                <RemRow label="Bonificaciones"    value={amt(d.bonificacion)} />
++                <RemRow label="Gratificaciones"   value={amt(d.gratificacion)} />
++                <RemRow label="Vacaciones"        value={amt(d.vacaciones)} />
++                <RemRow label="Comisiones"        value={amt(d.comisiones)} />
++                <RemRow label="Asig. Familiar"    value={amt(d.asigFamiliar)} />
++                <RemRow label="Ley 26504"         value={fmtPEN(0)} />
++                <RemRow label="Afp 10.23%,3%"     value={fmtPEN(0)} />
++                <RemRow label="Otros"             value={fmtPEN(0)} />
++              </div>
+             </div>
+-            <div className="mt-2 pt-2 border-t border-line flex justify-between">
+-              <span className="text-[11px] font-semibold">Total Bruto</span>
+-              <span className="text-[11px] font-mono font-semibold tabular-nums">
+-                {fmtPEN(n(d.totalBruto))}
+-              </span>
++
++            {/* RIGHT: APORTES Y DESCUENTOS */}
++            <div>
++              <div className="bg-bg-sunken border-b border-line px-2 py-1 text-[9.5px] font-mono font-semibold uppercase tracking-widest text-ink-3">
++                Aportes y Descuentos
++              </div>
++              <div className="px-2 py-1 border-b border-line/50">
++                <div className="grid grid-cols-[1fr_auto_auto] gap-x-2 text-[9.5px] font-mono text-ink-3">
++                  <span>Motivo</span>
++                  <span className="w-[70px] text-right">Empleador</span>
++                  <span className="w-[70px] text-right">Trabajador</span>
++                </div>
++              </div>
++              <div className="px-2 py-1 space-y-0">
++                <ApdRow label="O.N.P."          trabajador={amt(d.onp)} />
++                <ApdRow label="Essalud Vida"    empleador={amt(d.essaludVida)} />
++                <ApdRow label="Impto. Renta"    trabajador={amt(d.imptoRenta5ta)} />
++                <ApdRow label="Retenc. Judic."  trabajador={amt(d.retencionJudicial)} />
++                <ApdRow label="AFP pension"     trabajador={amt(d.afpAporte)} />
++                <ApdRow label="AFP Seguro"      trabajador={amt(d.afpSeguro)} />
++                <ApdRow label="AFP Com.%"       trabajador={amt(d.afpComision)} />
++                <ApdRow label="Adelantos"       trabajador={amt(d.adelantoCuota)} />
++                <ApdRow label="Descuentos"      trabajador={amt(d.otrosDescuentos)} />
++                <ApdRow label="Reg. Salud"      empleador={amt(d.essalud)} />
++              </div>
++              <div className="border-t border-line px-2 py-1">
++                <ApdRow label="Total Aporte S/." empleador={amt(d.totalAporte)} />
++              </div>
+             </div>
+           </div>
+ 
+-          {/* Aportes y descuentos */}
+-          <div className="p-4">
+-            <div className="text-[10px] font-mono uppercase tracking-wider text-ink-4 mb-2">
+-              Aportes y Descuentos
+-            </div>
+-            <div className="text-[9.5px] font-mono uppercase tracking-wider text-ink-4 mb-1 mt-1">
+-              Trabajador
++          {/* Totals row */}
++          <div className="grid grid-cols-2 border border-line divide-x divide-line mb-2">
++            <div className="flex justify-between items-center px-2 py-1">
++              <span className="text-[11px] font-semibold">Total Bruto</span>
++              <span className="text-[11px] font-mono tabular-nums font-semibold">{amt(d.totalBruto)}</span>
+             </div>
+-            <div className="space-y-0">
+-              {n(d.onp) > 0 && <Row label="ONP" value={fmtPEN(n(d.onp))} />}
+-              {n(d.afpAporte) > 0 && (
+-                <Row label="AFP Pensión" value={fmtPEN(n(d.afpAporte))} />
+-              )}
+-              {n(d.afpSeguro) > 0 && (
+-                <Row label="AFP Seguro" value={fmtPEN(n(d.afpSeguro))} />
+-              )}
+-              {n(d.afpComision) > 0 && (
+-                <Row label="AFP Com." value={fmtPEN(n(d.afpComision))} />
+-              )}
+-              {n(d.imptoRenta5ta) > 0 && (
+-                <Row label="Impto. Renta 5ta" value={fmtPEN(n(d.imptoRenta5ta))} />
+-              )}
+-              {n(d.retencionJudicial) > 0 && (
+-                <Row label="Retenc. Judicial" value={fmtPEN(n(d.retencionJudicial))} />
+-              )}
+-              {n(d.adelantoCuota) > 0 && (
+-                <Row label="Adelantos" value={fmtPEN(n(d.adelantoCuota))} />
+-              )}
+-              {n(d.otrosDescuentos) > 0 && (
+-                <Row label="Descuentos" value={fmtPEN(n(d.otrosDescuentos))} />
+-              )}
++            <div className="flex justify-between items-center px-2 py-1">
++              <span className="text-[11px] font-semibold">Total Dscto.</span>
++              <span className="text-[11px] font-mono tabular-nums font-semibold">{amt(d.totalDescuento)}</span>
+             </div>
+-            {n(d.essalud) > 0 && (
+-              <>
+-                <div className="text-[9.5px] font-mono uppercase tracking-wider text-ink-4 mb-1 mt-2">
+-                  Empleador
+-                </div>
+-                <Row label="Reg. Salud / EsSalud" value={fmtPEN(n(d.essalud))} />
+-              </>
+-            )}
+-            <div className="mt-2 pt-2 border-t border-line space-y-1">
+-              <div className="flex justify-between">
+-                <span className="text-[11px] text-ink-3">Total Descuento</span>
+-                <span className="text-[11px] font-mono tabular-nums text-ink-3">
+-                  {fmtPEN(n(d.totalDescuento))}
+-                </span>
++          </div>
++
++          {/* Neto Recibido */}
++          <div className="border border-line px-2 py-1.5 mb-2 flex justify-between items-center">
++            <span className="text-[13px] font-bold">Neto Recibido</span>
++            <span className="text-[14px] font-bold font-mono tabular-nums text-emerald-700">{amt(d.netoPago)}</span>
++          </div>
++
++          {/* Footer */}
++          <div className="mt-4 pt-2 space-y-6">
++            <div className="text-[11px]">Lima, {lastDay}</div>
++            <div className="grid grid-cols-2 gap-8 mt-8">
++              <div className="text-center">
++                <div className="border-t border-black/40 pt-1 text-[11px]">Firma Empleador</div>
+               </div>
+-              <div className="flex justify-between">
+-                <span className="text-[11px] font-semibold">Neto Recibido</span>
+-                <span className="text-[11px] font-mono font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
+-                  {fmtPEN(n(d.netoPago))}
+-                </span>
++              <div className="text-center">
++                <div className="border-t border-black/40 pt-1 text-[11px]">Firma Trabajador</div>
+               </div>
+             </div>
+           </div>
+         </div>
+-
+-        {/* Footer */}
+-        <div className="flex justify-end gap-2 p-4 border-t border-line">
+-          <button
+-            onClick={onClose}
+-            className="h-8 px-3 rounded-md border border-line text-[12px] hover:bg-bg-sunken transition-colors"
+-          >
+-            Cerrar
+-          </button>
+-          <button
+-            onClick={() => window.print()}
+-            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md bg-primary text-primary-foreground text-[12px] font-medium hover:opacity-90 transition-opacity"
+-          >
+-            <Printer className="w-3.5 h-3.5" />
+-            Imprimir
+-          </button>
+-        </div>
+       </div>
+     </div>
+   );
+ }
+diff --git a/apps/frontend/src/lib/api.ts b/apps/frontend/src/lib/api.ts
+index 49826fa..5742275 100644
+--- a/apps/frontend/src/lib/api.ts
++++ b/apps/frontend/src/lib/api.ts
+@@ -2190,12 +2190,13 @@ export type PlanillaOficinaMes = {
+   estado: 'borrador' | 'calculada' | 'cerrada' | 'pagada';
+   asientoId: string | null; cerradoEn: string | null;
+ };
+ export type PlanillaOficinaDetalle = {
+   id: string; planillaMesId: string; empleadoId: string; boletaCorrelativo: string | null;
+   nombre: string | null; cargo: string | null; dni: string | null; afp: string | null; cuspp: string | null; cuentaBancaria: string | null;
++  fechaIngreso: string | null; fechaCese: string | null;
+   diasTrab: number | null; horasTrab: number | null;
+   sueldoMensual: string; valorHora: string; cantHe25: string; montoHe25: string; cantHe35: string; montoHe35: string; totalHe: string;
+   diasDominical: number | null; montoDominical: string; diasFeriado: number | null; montoFeriado: string;
+   asigFamiliar: string; gratificacion: string; vacaciones: string; comisiones: string; bonificacion: string; totalBruto: string;
+   onp: string; afpAporte: string; afpSeguro: string; afpComision: string; imptoRenta5ta: string; retencionJudicial: string;
+   adelantoCuota: string; otrosDescuentos: string; totalDescuento: string;

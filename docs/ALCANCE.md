@@ -74,6 +74,12 @@ Modelo ya parcial en schema: `proyectos.pctParticipacionPropia` (0.5 = 50%, defa
 - Hitos: desde el .mpp del cronograma.
 - Garantías: monto retenido por valo + **KPI de garantía acumulada**.
 
+### 5.4 Reconocimiento de ingresos — **DEVENGADO** (decidido 2026-07-18)
+- El **ingreso** de una valorización se reconoce contablemente cuando se **APRUEBA** (percepción del ingreso / conformidad de supervisión), **no** cuando se factura. Estados que generan el asiento de venta `70/12/40111`: `aprobada · conformidad_supervision · facturada · cobrada`.
+- **Distinción clave**: el asiento de venta es **devengo**; el **PLE Registro de Ventas 14.1** es por **comprobante** → ese sigue tomando solo `facturada/cobrada`. No hay doble conteo de IGV: el asiento se genera una sola vez por valo (dedupe por `origenId`); el PLE lee las valos facturadas directo. Ambos deben conciliar el mismo IGV.
+- El **cobro** (asiento de caja `104x/12`) sigue atado a `cobrada` y al freeze 104x (§6) — el devengo del ingreso no lo toca.
+- **A validar con la contadora**: sub-cuenta exacta del receivable devengado-no-facturado (hoy usa `1212`) y el momento del IGV débito. Marcado para el primer mes real.
+
 ---
 
 ## 6. Estado del modelo financiero 104x (CONGELADO)

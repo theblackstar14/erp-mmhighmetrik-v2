@@ -1035,6 +1035,8 @@ export const empleados = pgTable('empleados', {
   banco: varchar('banco', { length: 40 }),
   numCuenta: varchar('num_cuenta', { length: 40 }),
   tipoPlanilla: varchar('tipo_planilla', { length: 10 }).notNull().default('obrero'), // obrero · admin
+  // Modalidad contractual · 'practicante' (modalidad formativa) no aporta pension ni EsSalud
+  tipoTrabajador: varchar('tipo_trabajador', { length: 12 }).notNull().default('planilla'), // planilla · practicante
   proyectoId: uuid('proyecto_id').references(() => proyectos.id, { onDelete: 'set null' }), // obra asignada (null = oficina)
   sctrVigencia: date('sctr_vigencia'), // vencimiento póliza SCTR
   activo: boolean('activo').notNull().default(true),

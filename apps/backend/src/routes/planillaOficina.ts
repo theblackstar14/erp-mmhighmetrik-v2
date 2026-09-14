@@ -246,6 +246,11 @@ router.post('/planilla/:mesId/calcular', requireOficinaEdit, async (req, res) =>
     .delete(schema.planillaOficinaDetalle)
     .where(eq(schema.planillaOficinaDetalle.planillaMesId, mesId!));
 
+  // Dias calendario del periodo: base del prorrateo y de las horas-mes (dias * 8).
+  const mesNum = Number(mesRow.mes.slice(5, 7));
+  const anioNum = Number(mesRow.mes.slice(0, 4));
+  const diasMes = new Date(Date.UTC(anioNum, mesNum, 0)).getUTCDate();
+
   // Build new detalle rows
   const rows: (typeof schema.planillaOficinaDetalle.$inferInsert)[] = [];
   for (const emp of empleados) {
@@ -275,8 +280,7 @@ router.post('/planilla/:mesId/calcular', requireOficinaEdit, async (req, res) =>
           comisiones: Number(prev.comisiones ?? 0),
           bonificacion: Number(prev.bonificacion ?? 0),
           otrosDescuentos: Number(prev.otrosDescuentos ?? 0),
-          diasTrab: prev.diasTrab ?? 30,
-          horasTrab: prev.horasTrab ?? 240,
+          diasTrab: prev.diasTrab ?? diasMes,
         }
       : {
           retencionJudicial: 0,
@@ -289,19 +293,17 @@ router.post('/planilla/:mesId/calcular', requireOficinaEdit, async (req, res) =>
           comisiones: 0,
           bonificacion: 0,
           otrosDescuentos: 0,
-          diasTrab: 30,
-          horasTrab: 240,
+          diasTrab: diasMes,
         };
 
     const adelantoCuota = adelantoCuotaByEmpleado.get(emp.id) ?? 0;
     const sueldoMensual = Number(emp.sueldoBaseMensual ?? 0);
 
     // Compute AUTO Renta 5ta (v1 approximation: continuous employment from January)
-    const mesNumero = Number(mesRow.mes.slice(5, 7));
-    const acumuladoPercibidoAntes = sueldoMensual * (mesNumero - 1);
+    const acumuladoPercibidoAntes = sueldoMensual * (mesNum - 1);
     const autoRenta5ta = calcularRta5ta({
       sueldoMensual,
-      mesNumero,
+      mesNumero: mesNum,
       acumuladoPercibidoAntes,
       retencionesPrevias: 0,
       uit: Number(cfg.uit),
@@ -329,7 +331,8 @@ router.post('/planilla/:mesId/calcular', requireOficinaEdit, async (req, res) =>
         adelantoCuota,
         otrosDescuentos: manualInputs.otrosDescuentos,
         diasTrab: manualInputs.diasTrab,
-        horasTrab: manualInputs.horasTrab,
+        diasMes,
+        esPracticante: emp.tipoTrabajador === 'practicante',
       },
       tasas,
     );
@@ -347,9 +350,11 @@ router.post('/planilla/:mesId/calcular', requireOficinaEdit, async (req, res) =>
       afp: afpName,
       cuspp: emp.cuspp ?? null,
       cuentaBancaria: emp.numCuenta ?? null,
-      diasTrab: manualInputs.diasTrab,
-      horasTrab: manualInputs.horasTrab,
-      sueldoMensual: String(sueldoMensual),
+      diasTrab: calc.diasTrab,
+      horasTrab: calc.horasTrab,
+      // Base efectivamente devengada del mes (sueldo contractual prorrateado por dias).
+      // El sueldo contractual vive en empleados.sueldo_base_mensual.
+      sueldoMensual: String(calc.sueldoBase),
       valorHora: String(calc.valorHora),
       cantHe25: String(manualInputs.cantHe25),
       montoHe25: String(calc.montoHe25),
@@ -451,8 +456,19 @@ router.patch('/planilla-detalle/:id', requireOficinaEdit, async (req, res) => {
   // Re-derive pension type from snapshot (afp field null → ONP)
   const tipoSP: 'AFP' | 'ONP' = detRow.afp ? 'AFP' : 'ONP';
   const asignacionFamiliar = Number(detRow.asigFamiliar ?? 0) > 0;
-  const sueldoMensual = Number(detRow.sueldoMensual ?? 0);
   const adelantoCuota = Number(detRow.adelantoCuota ?? 0);
+
+  // detRow.sueldoMensual es la base YA prorrateada. El motor prorratea, asi que
+  // hay que alimentarlo con el sueldo contractual del empleado, no con la base.
+  const [empRow] = await db
+    .select({ sueldo: schema.empleados.sueldoBaseMensual, tipoTrabajador: schema.empleados.tipoTrabajador })
+    .from(schema.empleados)
+    .where(eq(schema.empleados.id, detRow.empleadoId))
+    .limit(1);
+  const sueldoMensual = Number(empRow?.sueldo ?? detRow.sueldoMensual ?? 0);
+
+  const diasMes = new Date(Date.UTC(Number(mesRow.mes.slice(0, 4)), Number(mesRow.mes.slice(5, 7)), 0)).getUTCDate();
+  const diasTrab = b.diasTrab !== undefined ? Number(b.diasTrab) : (detRow.diasTrab ?? diasMes);
 
   // Build tasas from mes snapshot
   const snapshot = (mesRow.tasasSnapshot ?? {}) as {
@@ -496,8 +512,9 @@ router.patch('/planilla-detalle/:id', requireOficinaEdit, async (req, res) => {
       retencionJudicial,
       adelantoCuota,
       otrosDescuentos,
-      diasTrab: detRow.diasTrab ?? 30,
-      horasTrab: detRow.horasTrab ?? 240,
+      diasTrab,
+      diasMes,
+      esPracticante: empRow?.tipoTrabajador === 'practicante',
     },
     { ...baseTasas, afp: afpForEngine },
   );
@@ -515,6 +532,11 @@ router.patch('/planilla-detalle/:id', requireOficinaEdit, async (req, res) => {
   const [updated] = await db
     .update(schema.planillaOficinaDetalle)
     .set({
+      diasTrab: calc.diasTrab,
+      horasTrab: calc.horasTrab,
+      sueldoMensual: String(calc.sueldoBase),
+      valorHora: String(calc.valorHora),
+      asigFamiliar: String(calc.asigFamiliar),
       cantHe25: String(cantHe25),
       montoHe25: String(calc.montoHe25),
       cantHe35: String(cantHe35),

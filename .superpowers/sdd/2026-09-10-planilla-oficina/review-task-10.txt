@@ -1,0 +1,252 @@
+﻿=== commits ===
+1842d7a feat(oficina): gate planilla/asistencia a admin+contabilidad (front rol fix + backend)
+
+=== diff ===
+diff --git a/apps/backend/src/routes/planillaOficina.ts b/apps/backend/src/routes/planillaOficina.ts
+index edb7f1b..54ec93b 100644
+--- a/apps/backend/src/routes/planillaOficina.ts
++++ b/apps/backend/src/routes/planillaOficina.ts
+@@ -1,22 +1,44 @@
+ import { db, schema } from '@erp/db';
+ import { and, asc, desc, eq, gt, inArray, ne, sql } from 'drizzle-orm';
++import type { NextFunction, Request, Response } from 'express';
+ import { Router } from 'express';
+ import multer from 'multer';
+ import { calcularDetalleOficina } from '../lib/planillaOficinaCalc.js';
+ import { requireAuth } from '../middleware/auth.js';
+ import { cargarDerivarCtx } from '../lib/clasificacion.js';
+ import { crearAsiento, type LineaIn } from './contabilidad.js';
+ import { periodoCerrado } from '../lib/periodos.js';
+ import { registrarDocumento, docsDetalle } from '../lib/documentoAdjunto.js';
+ 
+ const router = Router();
+ router.use(requireAuth);
+ 
++// ─── requireOficinaEdit ───────────────────────────────────────
++// Allows only users whose RBAC role (via usuario_empresa) is 'admin' or
++// 'contabilidad' in ANY empresa. This gates all mutating planilla endpoints.
++async function requireOficinaEdit(req: Request, res: Response, next: NextFunction) {
++  const userId = req.user?.id;
++  if (!userId) return res.status(401).json({ error: 'No autenticado' });
++
++  const rows = await db
++    .select({ rolNombre: schema.roles.nombre })
++    .from(schema.usuarioEmpresa)
++    .innerJoin(schema.roles, eq(schema.usuarioEmpresa.roleId, schema.roles.id))
++    .where(eq(schema.usuarioEmpresa.userId, userId));
++
++  const allowed = new Set(['admin', 'contabilidad']);
++  const hasAccess = rows.some((r) => allowed.has(r.rolNombre));
++  if (!hasAccess) {
++    return res.status(403).json({ error: 'Permisos insuficientes: se requiere rol admin o contabilidad' });
++  }
++  next();
++}
++
+ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
+ 
+ const DOC_TIPOS_PERMITIDOS = new Set([
+   'boleta_pago', 'comprobante_pago', 'factura', 'rh', 'boleta', 'voucher', 'otro',
+ ]);
+ 
+ // ─── Helper singleton ─────────────────────────────────────────
+ async function getConfig() {
+@@ -54,17 +76,17 @@ function sistemaPensionToTipo(sp: string | null): 'AFP' | 'ONP' {
+ 
+ // ─── GET /api/oficina/config-planilla ────────────────────────
+ router.get('/config-planilla', async (_req, res) => {
+   const cfg = await getConfig();
+   res.json(cfgToDto(cfg));
+ });
+ 
+ // ─── PUT /api/oficina/config-planilla ────────────────────────
+-router.put('/config-planilla', async (req, res) => {
++router.put('/config-planilla', requireOficinaEdit, async (req, res) => {
+   const b = req.body as Record<string, unknown>;
+   const allowed = ['rmv', 'uit', 'topeSeguroAfp', 'horasMesBase', 'pctEssalud', 'pctOnp'] as const;
+ 
+   // Validate: every supplied field must be a finite number
+   for (const key of allowed) {
+     if (b[key] !== undefined && !Number.isFinite(Number(b[key]))) {
+       return res.status(400).json({ error: `Campo '${key}' debe ser un número finito` });
+     }
+@@ -87,17 +109,17 @@ router.put('/config-planilla', async (req, res) => {
+     .where(eq(schema.configPlanilla.id, 'singleton'))
+     .returning();
+ 
+   res.json(cfgToDto(cfg));
+ });
+ 
+ // ─── POST /api/oficina/planilla ──────────────────────────────
+ // body: { mes: 'YYYY-MM' } → upsert planilla_oficina_mes for empresa_id=1
+-router.post('/planilla', async (req, res) => {
++router.post('/planilla', requireOficinaEdit, async (req, res) => {
+   const { mes } = req.body as { mes?: string };
+   if (!mes || !/^\d{4}-\d{2}$/.test(mes)) {
+     return res.status(400).json({ error: 'mes debe tener formato YYYY-MM' });
+   }
+ 
+   // try find existing
+   const [existing] = await db
+     .select()
+@@ -132,17 +154,17 @@ router.get('/planilla', async (req, res) => {
+     .from(schema.planillaOficinaDetalle)
+     .where(eq(schema.planillaOficinaDetalle.planillaMesId, mesRow.id))
+     .orderBy(asc(schema.planillaOficinaDetalle.boletaCorrelativo));
+ 
+   res.json({ mes: mesRow, detalle });
+ });
+ 
+ // ─── POST /api/oficina/planilla/:mesId/calcular ──────────────
+-router.post('/planilla/:mesId/calcular', async (req, res) => {
++router.post('/planilla/:mesId/calcular', requireOficinaEdit, async (req, res) => {
+   const { mesId } = req.params;
+ 
+   const [mesRow] = await db
+     .select()
+     .from(schema.planillaOficinaMes)
+     .where(eq(schema.planillaOficinaMes.id, mesId!))
+     .limit(1);
+ 
+@@ -362,17 +384,17 @@ router.post('/planilla/:mesId/calcular', async (req, res) => {
+     .where(eq(schema.planillaOficinaDetalle.planillaMesId, mesId!))
+     .orderBy(asc(schema.planillaOficinaDetalle.boletaCorrelativo));
+ 
+   res.json({ mes: updatedMes, detalle });
+ });
+ 
+ // ─── PATCH /api/oficina/planilla-detalle/:id ─────────────────
+ // Update manual input fields + re-run engine for that one row.
+-router.patch('/planilla-detalle/:id', async (req, res) => {
++router.patch('/planilla-detalle/:id', requireOficinaEdit, async (req, res) => {
+   const { id } = req.params;
+ 
+   // Load detalle row
+   const [detRow] = await db
+     .select()
+     .from(schema.planillaOficinaDetalle)
+     .where(eq(schema.planillaOficinaDetalle.id, id!))
+     .limit(1);
+@@ -511,17 +533,17 @@ async function saldoAdelanto(adelantoId: string, montoTotal: number): Promise<nu
+     .select({ total: sql<string>`COALESCE(SUM(monto), 0)` })
+     .from(schema.adelantoCuotaAplicada)
+     .where(eq(schema.adelantoCuotaAplicada.adelantoId, adelantoId));
+   const aplicado = Number(row?.total ?? 0);
+   return Math.round((montoTotal - aplicado) * 100) / 100;
+ }
+ 
+ // ─── POST /api/oficina/adelantos ─────────────────────────────
+-router.post('/adelantos', async (req, res) => {
++router.post('/adelantos', requireOficinaEdit, async (req, res) => {
+   const { empleadoId, fecha, montoTotal, numCuotas, motivo } = req.body as Record<string, unknown>;
+ 
+   // Validate
+   if (!empleadoId || typeof empleadoId !== 'string') {
+     return res.status(400).json({ error: 'empleadoId es requerido' });
+   }
+   if (!Number.isFinite(Number(montoTotal)) || Number(montoTotal) <= 0) {
+     return res.status(400).json({ error: 'montoTotal debe ser un número positivo' });
+@@ -587,17 +609,17 @@ router.get('/adelantos', async (req, res) => {
+       return { ...a, montoCuota, saldoPendiente };
+     }),
+   );
+ 
+   res.json({ adelantos });
+ });
+ 
+ // ─── POST /api/oficina/planilla/:mesId/cerrar ────────────────
+-router.post('/planilla/:mesId/cerrar', async (req, res) => {
++router.post('/planilla/:mesId/cerrar', requireOficinaEdit, async (req, res) => {
+   const { mesId } = req.params;
+ 
+   const [mesRow] = await db
+     .select()
+     .from(schema.planillaOficinaMes)
+     .where(eq(schema.planillaOficinaMes.id, mesId!))
+     .limit(1);
+ 
+@@ -848,17 +870,17 @@ router.post('/planilla/:mesId/cerrar', async (req, res) => {
+     })
+     .where(eq(schema.planillaOficinaMes.id, mesId!))
+     .returning();
+ 
+   res.json({ mes: updatedMes, asientoId });
+ });
+ 
+ // ─── POST /api/oficina/planilla/:mesId/reabrir ───────────────
+-router.post('/planilla/:mesId/reabrir', async (req, res) => {
++router.post('/planilla/:mesId/reabrir', requireOficinaEdit, async (req, res) => {
+   const { mesId } = req.params;
+ 
+   const [mesRow] = await db
+     .select()
+     .from(schema.planillaOficinaMes)
+     .where(eq(schema.planillaOficinaMes.id, mesId!))
+     .limit(1);
+ 
+@@ -948,17 +970,17 @@ router.post('/planilla/:mesId/reabrir', async (req, res) => {
+   });
+ 
+   res.json(result);
+ });
+ 
+ // ─── POST /api/oficina/documentos/upload ─────────────────────
+ // Multipart: field 'file' + body fields entidadTipo, entidadId, docTipo.
+ // For planilla_oficina_detalle entities, derives subPath from mes+dni.
+-router.post('/documentos/upload', upload.single('file'), async (req, res) => {
++router.post('/documentos/upload', requireOficinaEdit, upload.single('file'), async (req, res) => {
+   if (!req.file) return res.status(400).json({ error: 'Sin archivo (field name: file)' });
+ 
+   const { entidadTipo, entidadId, docTipo } = req.body as Record<string, string>;
+ 
+   if (!entidadTipo || !entidadId || !docTipo) {
+     return res.status(400).json({ error: 'Faltan campos: entidadTipo, entidadId, docTipo' });
+   }
+   if (!DOC_TIPOS_PERMITIDOS.has(docTipo)) {
+diff --git a/apps/frontend/src/pages/OficinaPage.tsx b/apps/frontend/src/pages/OficinaPage.tsx
+index ef835a2..6ea79c5 100644
+--- a/apps/frontend/src/pages/OficinaPage.tsx
++++ b/apps/frontend/src/pages/OficinaPage.tsx
+@@ -33,19 +33,19 @@ const TABS = [
+   { id: 'personal',    lbl: 'Personal',       icon: Users,        gated: false },
+   { id: 'planilla',    lbl: 'Planilla',       icon: Wallet,       gated: true  },
+   { id: 'asistencia',  lbl: 'Asistencia',     icon: Fingerprint,  gated: true  },
+ ] as const;
+ 
+ export function OficinaPage() {
+   const [tab, setTab] = useState<(typeof TABS)[number]['id']>('rendiciones');
+   const empresaActiva = useAuthStore((s) => s.empresaActiva);
+-  const isAdminOrContadora = empresaActiva?.rol === 'admin' || empresaActiva?.rol === 'contadora';
++  const isAdminOrContab = empresaActiva?.rol === 'admin' || empresaActiva?.rol === 'contabilidad';
+ 
+-  const visibleTabs = TABS.filter((t) => !t.gated || isAdminOrContadora);
++  const visibleTabs = TABS.filter((t) => !t.gated || isAdminOrContab);
+ 
+   return (
+     <div className="space-y-5">
+       <header>
+         <h1 className="text-[22px] font-semibold tracking-[-0.02em]">Oficina</h1>
+         <p className="text-[13px] text-ink-3 mt-0.5">Rendiciones y viáticos · personal administrativo · asistencia</p>
+       </header>
+       <div className="flex gap-1 border-b border-line">
+@@ -54,18 +54,18 @@ export function OficinaPage() {
+             <t.icon className="h-3.5 w-3.5" /> {t.lbl}
+           </button>
+         ))}
+       </div>
+       <TabFade tabKey={tab}>
+         {tab === 'rendiciones' && <RendicionesTab />}
+         {tab === 'profesionales' && <ProfesionalesTab />}
+         {tab === 'personal' && <PersonalAdminTab />}
+-        {tab === 'planilla' && isAdminOrContadora && <PlanillaOficinaTab />}
+-        {tab === 'asistencia' && isAdminOrContadora && <AsistenciaHuella />}
++        {tab === 'planilla' && isAdminOrContab && <PlanillaOficinaTab />}
++        {tab === 'asistencia' && isAdminOrContab && <AsistenciaHuella />}
+       </TabFade>
+     </div>
+   );
+ }
+ 
+ // ─── Rendiciones ─────────────────────────────────────────────
+ function RendicionesTab() {
+   const user = useAuthStore((s) => s.user);
