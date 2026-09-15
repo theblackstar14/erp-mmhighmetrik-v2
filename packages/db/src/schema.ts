@@ -547,6 +547,51 @@ export const planContable = pgTable('plan_contable', {
 });
 export type PlanContable = typeof planContable.$inferSelect;
 
+// ─── Fase 0 finanzas · catálogos globales ────────────────────
+// Catálogos SUNAT (Anexo 8 reglas CPE): 01 tipo doc · 06 doc identidad · 07 afectación IGV ·
+// 09/10 motivos NC/ND · 51 tipo operación · 52 leyendas · 53 cargos/descuentos · 54 detracciones · 59 medios de pago
+export const catalogoSunat = pgTable(
+  'catalogo_sunat',
+  {
+    catalogo: varchar('catalogo', { length: 4 }).notNull(),
+    codigo: varchar('codigo', { length: 10 }).notNull(),
+    descripcion: text('descripcion').notNull(),
+    extra: jsonb('extra').$type<Record<string, string>>().notNull().default({}),
+  },
+  (t) => ({ pk: primaryKey({ columns: [t.catalogo, t.codigo] }) }),
+);
+
+// Tasa de detracción por código con vigencia. monto_minimo: la operación detrae si total PEN > mínimo.
+export const detraccionTasa = pgTable(
+  'detraccion_tasa',
+  {
+    codigo: varchar('codigo', { length: 3 }).notNull(),
+    descripcion: text('descripcion').notNull(),
+    anexo: varchar('anexo', { length: 12 }),
+    porcentaje: decimal('porcentaje', { precision: 5, scale: 2 }),
+    montoMinimo: decimal('monto_minimo', { precision: 12, scale: 2 }).notNull().default('700'),
+    vigenciaDesde: date('vigencia_desde').notNull().default('2000-01-01'),
+    vigenciaHasta: date('vigencia_hasta'),
+    observacion: text('observacion'),
+  },
+  (t) => ({ pk: primaryKey({ columns: [t.codigo, t.vigenciaDesde] }) }),
+);
+export type DetraccionTasa = typeof detraccionTasa.$inferSelect;
+
+// Tipo de cambio cargado a mano (sin API SUNAT). Si no hay TC del día se usa el último publicado.
+export const tipoCambio = pgTable(
+  'tipo_cambio',
+  {
+    fecha: date('fecha').notNull(),
+    moneda: varchar('moneda', { length: 3 }).notNull(),
+    compra: decimal('compra', { precision: 8, scale: 4 }).notNull(),
+    venta: decimal('venta', { precision: 8, scale: 4 }).notNull(),
+    fuente: varchar('fuente', { length: 30 }).notNull().default('manual'),
+    updatedAt: timestamp('updated_at').notNull().defaultNow(),
+  },
+  (t) => ({ pk: primaryKey({ columns: [t.fecha, t.moneda] }) }),
+);
+
 // ─── Asientos contables ──────────────────────────────────────
 export const asientos = pgTable(
   'asientos',
