@@ -1,0 +1,1326 @@
+{
+ "10": {
+  "nombre": "Códigos de tipo de nota de débito electrónica",
+  "filas": [
+   {
+    "codigo": "01",
+    "descripcion": "Intereses por mora",
+    "extra": {}
+   },
+   {
+    "codigo": "02",
+    "descripcion": "Aumento en el valor",
+    "extra": {}
+   },
+   {
+    "codigo": "03",
+    "descripcion": "Penalidades/ otros conceptos",
+    "extra": {}
+   },
+   {
+    "codigo": "11",
+    "descripcion": "Ajustes de operaciones de exportación",
+    "extra": {}
+   },
+   {
+    "codigo": "12",
+    "descripcion": "Ajustes afectos al IVAP",
+    "extra": {}
+   },
+   {
+    "codigo": "13",
+    "descripcion": "Penalidades",
+    "extra": {}
+   }
+  ]
+ },
+ "51": {
+  "nombre": "Código de tipo de operación",
+  "filas": [
+   {
+    "codigo": "0101",
+    "descripcion": "Venta interna no sujeta a Detracción o Percepción",
+    "extra": {
+     "Tipo de Comprobante asociado": "Factura, Boletas"
+    }
+   },
+   {
+    "codigo": "0112",
+    "descripcion": "Venta Interna - Sustenta Gastos Deducibles Persona Natural",
+    "extra": {
+     "Tipo de Comprobante asociado": "Factura"
+    }
+   },
+   {
+    "codigo": "0113",
+    "descripcion": "Venta Interna-NRUS",
+    "extra": {
+     "Tipo de Comprobante asociado": "Boleta"
+    }
+   },
+   {
+    "codigo": "0200",
+    "descripcion": "Exportación de Bienes",
+    "extra": {
+     "Tipo de Comprobante asociado": "Factura, Boletas"
+    }
+   },
+   {
+    "codigo": "0201",
+    "descripcion": "Exportación de Servicios – Prestación servicios realizados íntegramente en el país",
+    "extra": {
+     "Tipo de Comprobante asociado": "Factura, Boletas"
+    }
+   },
+   {
+    "codigo": "0202",
+    "descripcion": "Exportación de Servicios – Prestación de servicios de hospedaje No Domiciliado",
+    "extra": {
+     "Tipo de Comprobante asociado": "Factura"
+    }
+   },
+   {
+    "codigo": "0203",
+    "descripcion": "Exportación de Servicios – Transporte de navieras",
+    "extra": {
+     "Tipo de Comprobante asociado": "Factura, Boletas"
+    }
+   },
+   {
+    "codigo": "0204",
+    "descripcion": "Exportación de Servicios – Servicios a naves y aeronaves de bandera extranjera",
+    "extra": {
+     "Tipo de Comprobante asociado": "Factura, Boletas"
+    }
+   },
+   {
+    "codigo": "0205",
+    "descripcion": "Exportación de Servicios - Servicios que conformen un Paquete Turístico",
+    "extra": {
+     "Tipo de Comprobante asociado": "Factura"
+    }
+   },
+   {
+    "codigo": "0206",
+    "descripcion": "Exportación de Servicios – Servicios complementarios al transporte de carga",
+    "extra": {
+     "Tipo de Comprobante asociado": "Factura, Boletas"
+    }
+   },
+   {
+    "codigo": "0207",
+    "descripcion": "Exportación de Servicios – Suministro de energía eléctrica a favor de sujetos domiciliados en ZED",
+    "extra": {
+     "Tipo de Comprobante asociado": "Factura, Boletas"
+    }
+   },
+   {
+    "codigo": "0208",
+    "descripcion": "Exportación de Servicios – Prestación servicios realizados parcialmente en el extranjero",
+    "extra": {
+     "Tipo de Comprobante asociado": "Factura, Boletas"
+    }
+   },
+   {
+    "codigo": "0301",
+    "descripcion": "Operaciones con Carta de porte aéreo (emitidas en el ámbito nacional)",
+    "extra": {
+     "Tipo de Comprobante asociado": "Factura, Boletas"
+    }
+   },
+   {
+    "codigo": "0302",
+    "descripcion": "Operaciones de Transporte ferroviario de pasajeros",
+    "extra": {
+     "Tipo de Comprobante asociado": "Factura, Boletas"
+    }
+   },
+   {
+    "codigo": "0401",
+    "descripcion": "Ventas no domiciliados que no califican como exportación",
+    "extra": {
+     "Tipo de Comprobante asociado": "Factura, Boletas"
+    }
+   },
+   {
+    "codigo": "0501",
+    "descripcion": "Compra interna",
+    "extra": {
+     "Tipo de Comprobante asociado": "Liquidación de compra"
+    }
+   },
+   {
+    "codigo": "0502",
+    "descripcion": "Anticipos",
+    "extra": {
+     "Tipo de Comprobante asociado": "Liquidación de compra"
+    }
+   },
+   {
+    "codigo": "0503",
+    "descripcion": "Compra de oro",
+    "extra": {
+     "Tipo de Comprobante asociado": "Liquidación de compra"
+    }
+   },
+   {
+    "codigo": "1001",
+    "descripcion": "Operación Sujeta a Detracción",
+    "extra": {
+     "Tipo de Comprobante asociado": "Factura, Boletas"
+    }
+   },
+   {
+    "codigo": "1002",
+    "descripcion": "Operación Sujeta a Detracción- Recursos Hidrobiológicos",
+    "extra": {
+     "Tipo de Comprobante asociado": "Factura, Boletas"
+    }
+   },
+   {
+    "codigo": "1003",
+    "descripcion": "Operación Sujeta a Detracción- Servicios de Transporte Pasajeros",
+    "extra": {
+     "Tipo de Comprobante asociado": "Factura, Boletas"
+    }
+   },
+   {
+    "codigo": "1004",
+    "descripcion": "Operación Sujeta a Detracción- Servicios de Transporte Carga",
+    "extra": {
+     "Tipo de Comprobante asociado": "Factura, Boletas"
+    }
+   },
+   {
+    "codigo": "2001",
+    "descripcion": "Operación Sujeta a Percepción",
+    "extra": {
+     "Tipo de Comprobante asociado": "Factura, Boletas"
+    }
+   },
+   {
+    "codigo": "2002",
+    "descripcion": "Operación sujeta a Retención de Renta de segunda categoría",
+    "extra": {
+     "Tipo de Comprobante asociado": "Factura"
+    }
+   },
+   {
+    "codigo": "2100",
+    "descripcion": "Créditos a empresas",
+    "extra": {
+     "Tipo de Comprobante asociado": "Factura, Boletas"
+    }
+   },
+   {
+    "codigo": "2101",
+    "descripcion": "Créditos de consumo revolvente",
+    "extra": {
+     "Tipo de Comprobante asociado": "Factura, Boletas"
+    }
+   },
+   {
+    "codigo": "2102",
+    "descripcion": "Créditos de consumo no revolvente",
+    "extra": {
+     "Tipo de Comprobante asociado": "Factura, Boletas"
+    }
+   },
+   {
+    "codigo": "2103",
+    "descripcion": "Otras operaciones no gravadas - Empresas del sistema financiero y cooperativas de ahorro y crédito no autorizadas a captar recursos del público",
+    "extra": {
+     "Tipo de Comprobante asociado": "Factura, Boletas"
+    }
+   },
+   {
+    "codigo": "2104",
+    "descripcion": "Otras operaciones no gravadas - Empresas del sistema de seguros",
+    "extra": {
+     "Tipo de Comprobante asociado": "Factura, Boletas"
+    }
+   },
+   {
+    "codigo": "2105",
+    "descripcion": "Comprobante emitido por AFP",
+    "extra": {
+     "Tipo de Comprobante asociado": "Boleta"
+    }
+   },
+   {
+    "codigo": "2106",
+    "descripcion": "Venta Nacional a Turistas - Tax Free",
+    "extra": {
+     "Tipo de Comprobante asociado": "Factura"
+    }
+   }
+  ]
+ },
+ "52": {
+  "nombre": "Códigos de leyendas",
+  "filas": [
+   {
+    "codigo": "1000",
+    "descripcion": "Monto en Letras",
+    "extra": {}
+   },
+   {
+    "codigo": "1002",
+    "descripcion": "Leyenda \"TRANSFERENCIA GRATUITA DE UN BIEN Y/O SERVICIO PRESTADO GRATUITAMENTE\"",
+    "extra": {}
+   },
+   {
+    "codigo": "2000",
+    "descripcion": "Leyenda “COMPROBANTE DE PERCEPCIÓN”",
+    "extra": {}
+   },
+   {
+    "codigo": "2001",
+    "descripcion": "Leyenda “BIENES TRANSFERIDOS EN LA AMAZONÍA REGIÓN SELVA PARA SER CONSUMIDOS EN LA MISMA\"",
+    "extra": {}
+   },
+   {
+    "codigo": "2002",
+    "descripcion": "Leyenda “SERVICIOS PRESTADOS EN LA AMAZONÍA REGIÓN SELVA PARA SER CONSUMIDOS EN LA MISMA”",
+    "extra": {}
+   },
+   {
+    "codigo": "2003",
+    "descripcion": "Leyenda “CONTRATOS DE CONSTRUCCIÓN EJECUTADOS EN LA AMAZONÍA REGIÓN SELVA”",
+    "extra": {}
+   },
+   {
+    "codigo": "2004",
+    "descripcion": "Leyenda “Agencia de Viaje - Paquete turístico”",
+    "extra": {}
+   },
+   {
+    "codigo": "2005",
+    "descripcion": "Leyenda “Venta realizada por emisor itinerante”",
+    "extra": {}
+   },
+   {
+    "codigo": "2006",
+    "descripcion": "Leyenda \"Operación sujeta a detracción\"",
+    "extra": {}
+   },
+   {
+    "codigo": "2007",
+    "descripcion": "Leyenda \"Operación sujeta al IVAP\"",
+    "extra": {}
+   },
+   {
+    "codigo": "2008",
+    "descripcion": "Leyenda: “VENTA EXONERADA DEL IGV-ISC-IPM. PROHIBIDA LA VENTA FUERA DE LA ZONA COMERCIAL DE TACNA”",
+    "extra": {}
+   },
+   {
+    "codigo": "2009",
+    "descripcion": "Leyenda: “PRIMERA VENTA DE MERCANCÍA IDENTIFICABLE ENTRE USUARIOS DE LA ZONA COMERCIAL”",
+    "extra": {}
+   },
+   {
+    "codigo": "2010",
+    "descripcion": "Restitucion Simplificado de Derechos Arancelarios",
+    "extra": {}
+   },
+   {
+    "codigo": "2011",
+    "descripcion": "Leyenda “EXPORTACION DE SERVICIOS - DECRETO LEGISLATIVO Nº 919”",
+    "extra": {}
+   },
+   {
+    "codigo": "2012",
+    "descripcion": "Observaciones relacionadas con el traslado de mercaderías",
+    "extra": {}
+   }
+  ]
+ },
+ "53": {
+  "nombre": "Códigos de cargos, descuentos y otras deducciones",
+  "filas": [
+   {
+    "codigo": "00",
+    "descripcion": "Descuentos que afectan la base imponible del IGV/IVAP",
+    "extra": {
+     "Nível": "Item"
+    }
+   },
+   {
+    "codigo": "01",
+    "descripcion": "Descuentos que no afectan la base imponible del IGV/IVAP",
+    "extra": {
+     "Nível": "Item"
+    }
+   },
+   {
+    "codigo": "02",
+    "descripcion": "Descuentos globales que afectan la base imponible del IGV/IVAP",
+    "extra": {
+     "Nível": "Global"
+    }
+   },
+   {
+    "codigo": "03",
+    "descripcion": "Descuentos globales que no afectan la base imponible del IGV/IVAP",
+    "extra": {
+     "Nível": "Global"
+    }
+   },
+   {
+    "codigo": "04",
+    "descripcion": "Descuentos globales por anticipos gravados que afectan la base imponible del IGV/IVAP",
+    "extra": {
+     "Nível": "Global"
+    }
+   },
+   {
+    "codigo": "05",
+    "descripcion": "Descuentos globales por anticipos exonerados",
+    "extra": {
+     "Nível": "Global"
+    }
+   },
+   {
+    "codigo": "06",
+    "descripcion": "Descuentos globales por anticipos inafectos",
+    "extra": {
+     "Nível": "Global"
+    }
+   },
+   {
+    "codigo": "07",
+    "descripcion": "Factor de compensación - Decreto de urgencia N. 010-2004",
+    "extra": {
+     "Nível": "Item"
+    }
+   },
+   {
+    "codigo": "20",
+    "descripcion": "Anticipo de ISC",
+    "extra": {
+     "Nível": "Global"
+    }
+   },
+   {
+    "codigo": "45",
+    "descripcion": "FISE",
+    "extra": {
+     "Nível": "Global"
+    }
+   },
+   {
+    "codigo": "46",
+    "descripcion": "Recargo al consumo y/o propinas",
+    "extra": {
+     "Nível": "Global"
+    }
+   },
+   {
+    "codigo": "47",
+    "descripcion": "Cargos que afectan la base imponible del IGV/IVAP",
+    "extra": {
+     "Nível": "Item"
+    }
+   },
+   {
+    "codigo": "48",
+    "descripcion": "Cargos que no afectan la base imponible del IGV/IVAP",
+    "extra": {
+     "Nível": "Item"
+    }
+   },
+   {
+    "codigo": "49",
+    "descripcion": "Cargos globales que afectan la base imponible del IGV/IVAP",
+    "extra": {
+     "Nível": "Global"
+    }
+   },
+   {
+    "codigo": "50",
+    "descripcion": "Cargos globales que no afectan la base imponible del IGV/IVAP",
+    "extra": {
+     "Nível": "Global"
+    }
+   },
+   {
+    "codigo": "51",
+    "descripcion": "Percepción venta interna",
+    "extra": {
+     "Nível": "Global"
+    }
+   },
+   {
+    "codigo": "52",
+    "descripcion": "Percepción a la adquisición de combustible",
+    "extra": {
+     "Nível": "Global"
+    }
+   },
+   {
+    "codigo": "53",
+    "descripcion": "Percepción realizada al agente de percepción con tasa especial",
+    "extra": {
+     "Nível": "Global"
+    }
+   },
+   {
+    "codigo": "54",
+    "descripcion": "Factor de aportación - Decreto de urgencia N. 010-2004",
+    "extra": {
+     "Nível": "Item"
+    }
+   },
+   {
+    "codigo": "61",
+    "descripcion": "Retención de renta por anticipos",
+    "extra": {
+     "Nível": "Global"
+    }
+   },
+   {
+    "codigo": "62",
+    "descripcion": "Retención del IGV",
+    "extra": {
+     "Nível": "Global"
+    }
+   },
+   {
+    "codigo": "63",
+    "descripcion": "Rentención de renta de segunda categoría",
+    "extra": {
+     "Nível": "Global"
+    }
+   }
+  ]
+ },
+ "54": {
+  "nombre": "Códigos de bienes y servicios sujetos a detracciones",
+  "filas": [
+   {
+    "codigo": "001",
+    "descripcion": "Azúcar y melaza de caña",
+    "extra": {}
+   },
+   {
+    "codigo": "002",
+    "descripcion": "Arroz",
+    "extra": {}
+   },
+   {
+    "codigo": "003",
+    "descripcion": "Alcohol etílico",
+    "extra": {}
+   },
+   {
+    "codigo": "004",
+    "descripcion": "Recursos hidrobiológicos",
+    "extra": {}
+   },
+   {
+    "codigo": "005",
+    "descripcion": "Maíz amarillo duro",
+    "extra": {}
+   },
+   {
+    "codigo": "007",
+    "descripcion": "Caña de azúcar",
+    "extra": {}
+   },
+   {
+    "codigo": "008",
+    "descripcion": "Madera",
+    "extra": {}
+   },
+   {
+    "codigo": "009",
+    "descripcion": "Arena y piedra.",
+    "extra": {}
+   },
+   {
+    "codigo": "010",
+    "descripcion": "Residuos, subproductos, desechos, recortes y desperdicios",
+    "extra": {}
+   },
+   {
+    "codigo": "011",
+    "descripcion": "Bienes gravados con el IGV, o renuncia a la exoneración",
+    "extra": {}
+   },
+   {
+    "codigo": "012",
+    "descripcion": "Intermediación laboral y tercerización",
+    "extra": {}
+   },
+   {
+    "codigo": "013",
+    "descripcion": "Animales vivos",
+    "extra": {}
+   },
+   {
+    "codigo": "014",
+    "descripcion": "Carnes y despojos comestibles",
+    "extra": {}
+   },
+   {
+    "codigo": "015",
+    "descripcion": "Abonos, cueros y pieles de origen animal",
+    "extra": {}
+   },
+   {
+    "codigo": "016",
+    "descripcion": "Aceite de pescado",
+    "extra": {}
+   },
+   {
+    "codigo": "017",
+    "descripcion": "Harina, polvo y “pellets” de pescado, crustáceos, moluscos y demás invertebrados acuáticos",
+    "extra": {}
+   },
+   {
+    "codigo": "019",
+    "descripcion": "Arrendamiento de bienes muebles",
+    "extra": {}
+   },
+   {
+    "codigo": "020",
+    "descripcion": "Mantenimiento y reparación de bienes muebles",
+    "extra": {}
+   },
+   {
+    "codigo": "021",
+    "descripcion": "Movimiento de carga",
+    "extra": {}
+   },
+   {
+    "codigo": "022",
+    "descripcion": "Otros servicios empresariales",
+    "extra": {}
+   },
+   {
+    "codigo": "023",
+    "descripcion": "Leche",
+    "extra": {}
+   },
+   {
+    "codigo": "024",
+    "descripcion": "Comisión mercantil",
+    "extra": {}
+   },
+   {
+    "codigo": "025",
+    "descripcion": "Fabricación de bienes por encargo",
+    "extra": {}
+   },
+   {
+    "codigo": "026",
+    "descripcion": "Servicio de transporte de personas",
+    "extra": {}
+   },
+   {
+    "codigo": "027",
+    "descripcion": "Servicio de transporte de carga",
+    "extra": {}
+   },
+   {
+    "codigo": "028",
+    "descripcion": "Transporte de pasajeros",
+    "extra": {}
+   },
+   {
+    "codigo": "030",
+    "descripcion": "Contratos de construcción",
+    "extra": {}
+   },
+   {
+    "codigo": "031",
+    "descripcion": "Oro gravado con el IGV",
+    "extra": {}
+   },
+   {
+    "codigo": "032",
+    "descripcion": "Paprika y otros frutos de los generos capsicum o pimienta",
+    "extra": {}
+   },
+   {
+    "codigo": "034",
+    "descripcion": "Minerales metálicos no auríferos",
+    "extra": {}
+   },
+   {
+    "codigo": "035",
+    "descripcion": "Bienes exonerados del IGV",
+    "extra": {}
+   },
+   {
+    "codigo": "036",
+    "descripcion": "Oro y demás minerales metálicos exonerados del IGV",
+    "extra": {}
+   },
+   {
+    "codigo": "037",
+    "descripcion": "Demás servicios gravados con el IGV",
+    "extra": {}
+   },
+   {
+    "codigo": "038",
+    "descripcion": "Espectáculos públicos gravados con el IGV",
+    "extra": {}
+   },
+   {
+    "codigo": "039",
+    "descripcion": "Minerales no metálicos",
+    "extra": {}
+   },
+   {
+    "codigo": "040",
+    "descripcion": "Bien inmueble gravado con IGV",
+    "extra": {}
+   },
+   {
+    "codigo": "041",
+    "descripcion": "Plomo",
+    "extra": {}
+   },
+   {
+    "codigo": "042",
+    "descripcion": "Ladrillos de construcción, bovedillas, cubrevigas y artículos similares, de cerámica",
+    "extra": {}
+   },
+   {
+    "codigo": "043",
+    "descripcion": "Estructuras metálicas para la construcción",
+    "extra": {}
+   },
+   {
+    "codigo": "044",
+    "descripcion": "Servicio de beneficio de minerales metálicos gravado con el IGV",
+    "extra": {}
+   },
+   {
+    "codigo": "045",
+    "descripcion": "Minerales de oro y sus concentrados gravados con el IGV",
+    "extra": {}
+   },
+   {
+    "codigo": "046",
+    "descripcion": "Cobre gravado con el IGV",
+    "extra": {}
+   },
+   {
+    "codigo": "047",
+    "descripcion": "Plata gravada con el IGV",
+    "extra": {}
+   },
+   {
+    "codigo": "099",
+    "descripcion": "Ley 30737",
+    "extra": {}
+   }
+  ]
+ },
+ "59": {
+  "nombre": "Medios de Pago",
+  "filas": [
+   {
+    "codigo": "001",
+    "descripcion": "Depósito en cuenta",
+    "extra": {}
+   },
+   {
+    "codigo": "002",
+    "descripcion": "Giro",
+    "extra": {}
+   },
+   {
+    "codigo": "003",
+    "descripcion": "Transferencia de fondos",
+    "extra": {}
+   },
+   {
+    "codigo": "004",
+    "descripcion": "Orden de pago",
+    "extra": {}
+   },
+   {
+    "codigo": "005",
+    "descripcion": "Tarjeta de débito",
+    "extra": {}
+   },
+   {
+    "codigo": "006",
+    "descripcion": "Tarjeta de crédito emitida en el país por una empresa del sistema financiero",
+    "extra": {}
+   },
+   {
+    "codigo": "007",
+    "descripcion": "Cheques con la cláusula de \"NO NEGOCIABLE\", \"INTRANSFERIBLES\", \"NO A LA ORDEN\" u otra equivalente, a que se refiere el inciso g) del artículo 5° de la ley",
+    "extra": {}
+   },
+   {
+    "codigo": "008",
+    "descripcion": "Efectivo, por operaciones en las que no existe obligación de utilizar medio de pago",
+    "extra": {}
+   },
+   {
+    "codigo": "009",
+    "descripcion": "Efectivo, en los demás casos",
+    "extra": {}
+   },
+   {
+    "codigo": "010",
+    "descripcion": "Medios de pago usados en comercio exterior",
+    "extra": {}
+   },
+   {
+    "codigo": "011",
+    "descripcion": "Documentos emitidos por las EDPYMES y las cooperativas de ahorro y crédito no autorizadas a captar depósitos del público",
+    "extra": {}
+   },
+   {
+    "codigo": "012",
+    "descripcion": "Tarjeta de crédito emitida en el país o en el exterior por una empresa no perteneciente al sistema financiero, cuyo objeto principal sea la emisión y administración de tarjetas de crédito",
+    "extra": {}
+   },
+   {
+    "codigo": "013",
+    "descripcion": "Tarjetas de crédito emitidas en el exterior por empresas bancarias o financieras no domiciliadas",
+    "extra": {}
+   },
+   {
+    "codigo": "101",
+    "descripcion": "Transferencias – Comercio exterior",
+    "extra": {}
+   },
+   {
+    "codigo": "102",
+    "descripcion": "Cheques bancarios - Comercio exterior",
+    "extra": {}
+   },
+   {
+    "codigo": "103",
+    "descripcion": "Orden de pago simple - Comercio exterior",
+    "extra": {}
+   },
+   {
+    "codigo": "104",
+    "descripcion": "Orden de pago documentario - Comercio exterior",
+    "extra": {}
+   },
+   {
+    "codigo": "105",
+    "descripcion": "Remesa simple - Comercio exterior",
+    "extra": {}
+   },
+   {
+    "codigo": "106",
+    "descripcion": "Remesa documentaria - Comercio exterior",
+    "extra": {}
+   },
+   {
+    "codigo": "107",
+    "descripcion": "Carta de crédito simple - Comercio exterior",
+    "extra": {}
+   },
+   {
+    "codigo": "108",
+    "descripcion": "Carta de crédito documentario - Comercio exterior",
+    "extra": {}
+   },
+   {
+    "codigo": "999",
+    "descripcion": "Otros medios de pago",
+    "extra": {}
+   }
+  ]
+ },
+ "01": {
+  "nombre": "Código de tipo de documento",
+  "filas": [
+   {
+    "codigo": "01",
+    "descripcion": "Factura",
+    "extra": {}
+   },
+   {
+    "codigo": "03",
+    "descripcion": "Boleta de venta",
+    "extra": {}
+   },
+   {
+    "codigo": "04",
+    "descripcion": "Liquidación de compra",
+    "extra": {}
+   },
+   {
+    "codigo": "05",
+    "descripcion": "Boletos de Transporte Aéreo que emiten las Compañías de Aviación Comercial por el servicio de transporte aéreo regular de pasajeros, emitido de manera manual, mecanizada o por medios electrónicos (BME)",
+    "extra": {}
+   },
+   {
+    "codigo": "06",
+    "descripcion": "Carta de porte aéreo",
+    "extra": {}
+   },
+   {
+    "codigo": "07",
+    "descripcion": "Nota de crédito",
+    "extra": {}
+   },
+   {
+    "codigo": "08",
+    "descripcion": "Nota de débito",
+    "extra": {}
+   },
+   {
+    "codigo": "09",
+    "descripcion": "Guía de remisión remitente",
+    "extra": {}
+   },
+   {
+    "codigo": "11",
+    "descripcion": "Póliza emitida por las Bolsas de Valores",
+    "extra": {}
+   },
+   {
+    "codigo": "12",
+    "descripcion": "Ticket de máquina registradora",
+    "extra": {}
+   },
+   {
+    "codigo": "13",
+    "descripcion": "Documento emitido por bancos, instituciones financieras, crediticias y de seguros que se encuentren bajo el control de la Superintendencia de Banca y Seguros",
+    "extra": {}
+   },
+   {
+    "codigo": "14",
+    "descripcion": "Recibo servicios públicos",
+    "extra": {}
+   },
+   {
+    "codigo": "15",
+    "descripcion": "Boletos emitidos por el servicio de transporte terrestre regular urbano de pasajeros y el ferroviario público de pasajeros prestado en vía férrea local",
+    "extra": {}
+   },
+   {
+    "codigo": "16",
+    "descripcion": "Boleto de viaje emitido por las empresas de transporte público interprovincial de pasajeros",
+    "extra": {}
+   },
+   {
+    "codigo": "18",
+    "descripcion": "Documentos emitidos por las AFP",
+    "extra": {}
+   },
+   {
+    "codigo": "19",
+    "descripcion": "Boleto por atracciones y espectáculos públicos",
+    "extra": {}
+   },
+   {
+    "codigo": "20",
+    "descripcion": "Comprobante de retención",
+    "extra": {}
+   },
+   {
+    "codigo": "21",
+    "descripcion": "Conocimiento de embarque por el servicio de transporte de carga marítima",
+    "extra": {}
+   },
+   {
+    "codigo": "23",
+    "descripcion": "Pólizas de Adjudicación por remate o adjudicación de bienes",
+    "extra": {}
+   },
+   {
+    "codigo": "24",
+    "descripcion": "Certificado de pago de regalías emitidas por PERUPETRO S.A.",
+    "extra": {}
+   },
+   {
+    "codigo": "25",
+    "descripcion": "Documento de atribución",
+    "extra": {}
+   },
+   {
+    "codigo": "28",
+    "descripcion": "Etiquetas por el pago de la Tarifa Unificada de Uso de Aeropuerto – TUUA",
+    "extra": {}
+   },
+   {
+    "codigo": "29",
+    "descripcion": "Documentos emitidos por la COFOPRI",
+    "extra": {}
+   },
+   {
+    "codigo": "30",
+    "descripcion": "Documentos emitidos por las empresas que desempeñan el rol adquirente en los sistemas de pago mediante tarjetas de crédito y débito, emitidas por bancos e instituciones financieras o crediticias, domiciliados o no en el país.",
+    "extra": {}
+   },
+   {
+    "codigo": "31",
+    "descripcion": "Guía de remisión transportista",
+    "extra": {}
+   },
+   {
+    "codigo": "32",
+    "descripcion": "Documentos emitidos por recaudadoras de la Garantía de Red Principal",
+    "extra": {}
+   },
+   {
+    "codigo": "34",
+    "descripcion": "Documento del Operador",
+    "extra": {}
+   },
+   {
+    "codigo": "35",
+    "descripcion": "Documento del Partícipe",
+    "extra": {}
+   },
+   {
+    "codigo": "36",
+    "descripcion": "Recibo de Distribución de Gas Natural",
+    "extra": {}
+   },
+   {
+    "codigo": "37",
+    "descripcion": "Documentos que emitan los concesionarios del servicio de revisiones técnicas",
+    "extra": {}
+   },
+   {
+    "codigo": "40",
+    "descripcion": "Comprobante de Percepción",
+    "extra": {}
+   },
+   {
+    "codigo": "41",
+    "descripcion": "Comprobante de Percepción – Venta interna ( físico - formato impreso)",
+    "extra": {}
+   },
+   {
+    "codigo": "42",
+    "descripcion": "Documentos emitidos por los adq. en los sistemas de pago por tarj. de crédito emitidas por ellas mismas",
+    "extra": {}
+   },
+   {
+    "codigo": "43",
+    "descripcion": "Boleto de compañías de aviación transporte aéreo no regular",
+    "extra": {}
+   },
+   {
+    "codigo": "45",
+    "descripcion": "Documentos emitidos por centros educativos y culturales, universidades, asociaciones y fundaciones",
+    "extra": {}
+   },
+   {
+    "codigo": "55",
+    "descripcion": "BVME para transporte ferroviario de pasajeros",
+    "extra": {}
+   },
+   {
+    "codigo": "56",
+    "descripcion": "Comprobante de pago SEAE / DAE-SEAE",
+    "extra": {}
+   },
+   {
+    "codigo": "71",
+    "descripcion": "Guía de remisión remitente complementaria",
+    "extra": {}
+   },
+   {
+    "codigo": "72",
+    "descripcion": "Guía de remisión transportista complementaria",
+    "extra": {}
+   },
+   {
+    "codigo": "87",
+    "descripcion": "Nota de crédito especial",
+    "extra": {}
+   },
+   {
+    "codigo": "88",
+    "descripcion": "Nota de débito especial",
+    "extra": {}
+   }
+  ]
+ },
+ "06": {
+  "nombre": "Código de tipo de documento de identidad",
+  "filas": [
+   {
+    "codigo": "0",
+    "descripcion": "DOC.TRIB.NO.DOM.SIN.RUC",
+    "extra": {}
+   },
+   {
+    "codigo": "1",
+    "descripcion": "Documento Nacional de Identidad",
+    "extra": {}
+   },
+   {
+    "codigo": "4",
+    "descripcion": "Carnet de extranjería",
+    "extra": {}
+   },
+   {
+    "codigo": "6",
+    "descripcion": "Registro Unico de Contributentes",
+    "extra": {}
+   },
+   {
+    "codigo": "7",
+    "descripcion": "Pasaporte",
+    "extra": {}
+   },
+   {
+    "codigo": "A",
+    "descripcion": "Cédula Diplomática de identidad",
+    "extra": {}
+   },
+   {
+    "codigo": "B",
+    "descripcion": "DOC.IDENT.PAIS.RESIDENCIA-NO.D",
+    "extra": {}
+   },
+   {
+    "codigo": "C",
+    "descripcion": "Tax Identification Number - TIN – Doc Trib PP.NN",
+    "extra": {}
+   },
+   {
+    "codigo": "D",
+    "descripcion": "Identification Number - IN – Doc Trib PP. JJ",
+    "extra": {}
+   },
+   {
+    "codigo": "E",
+    "descripcion": "TAM- Tarjeta Andina de Migración",
+    "extra": {}
+   },
+   {
+    "codigo": "F",
+    "descripcion": "Permiso Temporal de Permanencia - PTP",
+    "extra": {}
+   },
+   {
+    "codigo": "G",
+    "descripcion": "Salvoconducto",
+    "extra": {}
+   },
+   {
+    "codigo": "H",
+    "descripcion": "Carné Permiso Temp.Perman. - CPP",
+    "extra": {}
+   }
+  ]
+ },
+ "07": {
+  "nombre": "Código de tipo de afectación del IGV",
+  "filas": [
+   {
+    "codigo": "10",
+    "descripcion": "Gravado - Operación Onerosa",
+    "extra": {
+     "Codigo de tributo": "1000"
+    }
+   },
+   {
+    "codigo": "11",
+    "descripcion": "Gravado – Retiro por premio",
+    "extra": {
+     "Codigo de tributo": "9996"
+    }
+   },
+   {
+    "codigo": "12",
+    "descripcion": "Gravado – Retiro por donación",
+    "extra": {
+     "Codigo de tributo": "9996"
+    }
+   },
+   {
+    "codigo": "13",
+    "descripcion": "Gravado – Retiro",
+    "extra": {
+     "Codigo de tributo": "9996"
+    }
+   },
+   {
+    "codigo": "14",
+    "descripcion": "Gravado – Retiro por publicidad",
+    "extra": {
+     "Codigo de tributo": "9996"
+    }
+   },
+   {
+    "codigo": "15",
+    "descripcion": "Gravado – Bonificaciones",
+    "extra": {
+     "Codigo de tributo": "9996"
+    }
+   },
+   {
+    "codigo": "16",
+    "descripcion": "Gravado – Retiro por entrega a trabajadores",
+    "extra": {
+     "Codigo de tributo": "9996"
+    }
+   },
+   {
+    "codigo": "17",
+    "descripcion": "Gravado - IVAP",
+    "extra": {
+     "Codigo de tributo": "1016 o 9996"
+    }
+   },
+   {
+    "codigo": "20",
+    "descripcion": "Exonerado - Operación Onerosa",
+    "extra": {
+     "Codigo de tributo": "9997"
+    }
+   },
+   {
+    "codigo": "21",
+    "descripcion": "Exonerado - Transferencia gratuita",
+    "extra": {
+     "Codigo de tributo": "9996"
+    }
+   },
+   {
+    "codigo": "30",
+    "descripcion": "Inafecto - Operación Onerosa",
+    "extra": {
+     "Codigo de tributo": "9998"
+    }
+   },
+   {
+    "codigo": "31",
+    "descripcion": "Inafecto – Retiro por Bonificación",
+    "extra": {
+     "Codigo de tributo": "9996"
+    }
+   },
+   {
+    "codigo": "32",
+    "descripcion": "Inafecto – Retiro",
+    "extra": {
+     "Codigo de tributo": "9996"
+    }
+   },
+   {
+    "codigo": "33",
+    "descripcion": "Inafecto – Retiro por Muestras Médicas",
+    "extra": {
+     "Codigo de tributo": "9996"
+    }
+   },
+   {
+    "codigo": "34",
+    "descripcion": "Inafecto - Retiro por Convenio Colectivo",
+    "extra": {
+     "Codigo de tributo": "9996"
+    }
+   },
+   {
+    "codigo": "35",
+    "descripcion": "Inafecto – Retiro por premio",
+    "extra": {
+     "Codigo de tributo": "9996"
+    }
+   },
+   {
+    "codigo": "36",
+    "descripcion": "Inafecto - Retiro por publicidad",
+    "extra": {
+     "Codigo de tributo": "9996"
+    }
+   },
+   {
+    "codigo": "37",
+    "descripcion": "Inafecto - Transferencia gratuita",
+    "extra": {
+     "Codigo de tributo": "9996"
+    }
+   },
+   {
+    "codigo": "40",
+    "descripcion": "Exportación de Bienes o Servicios",
+    "extra": {
+     "Codigo de tributo": "9995 o 9996"
+    }
+   }
+  ]
+ },
+ "09": {
+  "nombre": "Códigos de tipo de nota de crédito electrónica",
+  "filas": [
+   {
+    "codigo": "01",
+    "descripcion": "Anulación de la operación",
+    "extra": {}
+   },
+   {
+    "codigo": "02",
+    "descripcion": "Anulación por error en el RUC",
+    "extra": {}
+   },
+   {
+    "codigo": "03",
+    "descripcion": "Corrección por error en la descripción o atención de reclamo respecto de bienes adquiridos o servicios prestados Corrección por error en la descripción y/o código de producto SUNAT",
+    "extra": {}
+   },
+   {
+    "codigo": "04",
+    "descripcion": "Descuento global",
+    "extra": {}
+   },
+   {
+    "codigo": "05",
+    "descripcion": "Descuento por ítem",
+    "extra": {}
+   },
+   {
+    "codigo": "06",
+    "descripcion": "Devolución total",
+    "extra": {}
+   },
+   {
+    "codigo": "07",
+    "descripcion": "Devolución por ítem",
+    "extra": {}
+   },
+   {
+    "codigo": "08",
+    "descripcion": "Bonificación",
+    "extra": {}
+   },
+   {
+    "codigo": "09",
+    "descripcion": "Disminución en el valor",
+    "extra": {}
+   },
+   {
+    "codigo": "10",
+    "descripcion": "Otros Conceptos",
+    "extra": {}
+   },
+   {
+    "codigo": "11",
+    "descripcion": "Ajustes de operaciones de exportación",
+    "extra": {}
+   },
+   {
+    "codigo": "12",
+    "descripcion": "Ajustes afectos al IVAP",
+    "extra": {}
+   },
+   {
+    "codigo": "13",
+    "descripcion": "Corrección o modificación del monto neto pendiente de pago y/o la(s) fechas(s) de vencimiento del pago único o de las cuotas y/o los montos correspondientes a cada cuota, de ser el caso",
+    "extra": {}
+   }
+  ]
+ }
+}
