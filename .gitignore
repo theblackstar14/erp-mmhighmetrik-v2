@@ -47,3 +47,6 @@ coverage/
 
 .tmp/
 .playwright-mcp/
+
+# XML reales de clientes (fixtures locales, nunca al repo)
+apps/backend/scripts/cpe/fixtures/mmh/
