@@ -41,12 +41,17 @@ try {
     await rechaza(aplicar(tx, { origenTipo: 'movimiento', origenId: pago2, fecha: '2099-01-16', aplicaciones: [{ documentoPendienteId: d1!.id, monto: 580 }], tipoEsperado: 'cxc' }), 400, 'tipo equivocado → 400');
     await rechaza(aplicar(tx, { origenTipo: 'movimiento', origenId: pago2, fecha: '2099-01-16', aplicaciones: [{ documentoPendienteId: d1!.id, monto: 580 }], moneda: 'USD' }), 400, 'moneda distinta → 400');
     await rechaza(aplicar(tx, { origenTipo: 'movimiento', origenId: pago2, fecha: '2099-01-16', aplicaciones: [{ documentoPendienteId: randomUUID(), monto: 1 }] }), 404, 'documento inexistente → 404');
+    await rechaza(aplicar(tx, { origenTipo: 'movimiento', origenId: pago2, fecha: '2099-01-16', aplicaciones: [{ documentoPendienteId: d1!.id, monto: 0 }] }), 400, 'monto 0 → 400');
+    await rechaza(aplicar(tx, { origenTipo: 'movimiento', origenId: pago2, fecha: '2099-01-16', aplicaciones: [{ documentoPendienteId: d1!.id, monto: -5 }] }), 400, 'monto negativo → 400');
     await aplicar(tx, { origenTipo: 'movimiento', origenId: pago2, fecha: '2099-01-16', aplicaciones: [{ documentoPendienteId: d1!.id, monto: 580 }] });
     d = await refrescarDocumento(tx, d1!.id);
     assert.deepEqual([d.saldoPendiente, d.estado], ['0.00', 'cancelado']);
     assert.equal(await anularAplicacionesDe(tx, 'movimiento', pago2), 1, 'anula 1 aplicacion');
     d = await refrescarDocumento(tx, d1!.id);
     assert.deepEqual([d.saldoPendiente, d.estado], ['580.00', 'parcial'], 'anular recompone el saldo');
+    assert.equal(await anularAplicacionesDe(tx, 'movimiento', pago2), 0, 'segunda anulacion del mismo origen → no revienta, 0 filas');
+    d = await refrescarDocumento(tx, d1!.id);
+    assert.deepEqual([d.saldoPendiente, d.estado], ['580.00', 'parcial'], 'segunda anulacion no cambia el saldo');
 
     // pago legacy por origen: aplica hasta el saldo
     const pago3 = randomUUID();
@@ -59,8 +64,14 @@ try {
     assert.equal(esNotaCredito('Nota de Crédito'), true);
     assert.equal(esNotaCredito('07'), true);
     assert.equal(esNotaCredito('Factura'), false);
+    assert.equal(esNotaCredito('NOTA CREDITO'), true);
+    assert.equal(esNotaCredito('Nota de Credito'), true);
+    assert.equal(esNotaCredito('NOTA DE CRÉDITO'), true);
+    assert.equal(esNotaCredito('N/C'), true);
+    assert.equal(esNotaCredito('01'), false);
     assert.equal(await crearDocumentoDesdeGasto(tx, await nuevoGasto({ numero: '2', tipoComprobante: 'Nota de Crédito' })), null, 'NC no crea CxP');
     assert.equal(await crearDocumentoDesdeGasto(tx, await nuevoGasto({ numero: '3', tipoRegistro: 'Rendición' })), null, 'rendicion no crea CxP');
+    assert.equal(await crearDocumentoDesdeGasto(tx, await nuevoGasto({ numero: '3b', subtotal: '0.00', igv: '0.00', total: '0.00' })), null, 'total 0 no crea CxP');
     await rechaza(crearDocumentoDesdeGasto(tx, await nuevoGasto({ numero: '4', moneda: 'USD' })), 400, 'USD sin TC → 400');
     const dUsd = await crearDocumentoDesdeGasto(tx, await nuevoGasto({ numero: '5', moneda: 'USD', tipoCambio: '3.7500', subtotal: '100.00', igv: '18.00', total: '118.00' }));
     assert.deepEqual([dUsd?.moneda, dUsd?.montoOriginal, dUsd?.montoPen, dUsd?.tipoCambio], ['USD', '118.00', '442.50', '3.7500']);

@@ -22,7 +22,7 @@ export class DocumentoError extends Error {
 const r2 = (n: number) => Math.round(n * 100) / 100;
 const ref = (d: Pick<Documento, 'docSerie' | 'docNumero'>) => [d.docSerie, d.docNumero].filter(Boolean).join('-') || 's/n';
 
-export const esNotaCredito = (tipoComprobante: string | null | undefined) => /^(07|nota de cr)/i.test((tipoComprobante ?? '').trim());
+export const esNotaCredito = (tipoComprobante: string | null | undefined) => /^(07\b|n\/c\b|nota\s+(de\s+)?cr[eé]dito)/i.test((tipoComprobante ?? '').trim());
 
 export async function refrescarDocumento(q: DbLike, documentoId: string): Promise<Documento> {
   const d = schema.documentoPendiente, a = schema.aplicacionDocumento;
