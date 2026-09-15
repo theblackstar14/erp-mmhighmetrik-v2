@@ -1,0 +1,532 @@
+{
+ "fuente": "SUNAT catalogo 54 (reglas CPE 26.08.2026) + TABLA DE DETRACCIONES.xlsx (Kelly)",
+ "tasas": [
+  {
+   "codigo": "001",
+   "descripcion": "Azúcar y melaza de caña",
+   "anexo": "1",
+   "porcentaje": 10,
+   "montoMinimo": 700,
+   "vigenciaDesde": "2000-01-01",
+   "vigenciaHasta": null,
+   "observacion": null
+  },
+  {
+   "codigo": "002",
+   "descripcion": "Arroz",
+   "anexo": null,
+   "porcentaje": 4,
+   "montoMinimo": 700,
+   "vigenciaDesde": "2000-01-01",
+   "vigenciaHasta": null,
+   "observacion": null
+  },
+  {
+   "codigo": "003",
+   "descripcion": "Alcohol etílico",
+   "anexo": "1",
+   "porcentaje": 4,
+   "montoMinimo": 700,
+   "vigenciaDesde": "2000-01-01",
+   "vigenciaHasta": null,
+   "observacion": null
+  },
+  {
+   "codigo": "004",
+   "descripcion": "Recursos hidrobiológicos",
+   "anexo": "2",
+   "porcentaje": 4,
+   "montoMinimo": 700,
+   "vigenciaDesde": "2000-01-01",
+   "vigenciaHasta": null,
+   "observacion": null
+  },
+  {
+   "codigo": "005",
+   "descripcion": "Maíz amarillo duro",
+   "anexo": "2",
+   "porcentaje": 4,
+   "montoMinimo": 700,
+   "vigenciaDesde": "2000-01-01",
+   "vigenciaHasta": null,
+   "observacion": null
+  },
+  {
+   "codigo": "006",
+   "descripcion": "Algodón",
+   "anexo": null,
+   "porcentaje": null,
+   "montoMinimo": 700,
+   "vigenciaDesde": "2000-01-01",
+   "vigenciaHasta": "2014-12-31",
+   "observacion": "no figura en catalogo 54 SUNAT"
+  },
+  {
+   "codigo": "007",
+   "descripcion": "Caña de azúcar",
+   "anexo": "2",
+   "porcentaje": 10,
+   "montoMinimo": 700,
+   "vigenciaDesde": "2000-01-01",
+   "vigenciaHasta": null,
+   "observacion": null
+  },
+  {
+   "codigo": "008",
+   "descripcion": "Madera",
+   "anexo": "2",
+   "porcentaje": 4,
+   "montoMinimo": 700,
+   "vigenciaDesde": "2000-01-01",
+   "vigenciaHasta": null,
+   "observacion": null
+  },
+  {
+   "codigo": "009",
+   "descripcion": "Arena y piedra.",
+   "anexo": "2",
+   "porcentaje": 10,
+   "montoMinimo": 700,
+   "vigenciaDesde": "2000-01-01",
+   "vigenciaHasta": null,
+   "observacion": null
+  },
+  {
+   "codigo": "010",
+   "descripcion": "Residuos, subproductos, desechos, recortes y desperdicios",
+   "anexo": "2",
+   "porcentaje": 15,
+   "montoMinimo": 700,
+   "vigenciaDesde": "2000-01-01",
+   "vigenciaHasta": null,
+   "observacion": null
+  },
+  {
+   "codigo": "011",
+   "descripcion": "Bienes gravados con el IGV, o renuncia a la exoneración",
+   "anexo": null,
+   "porcentaje": 10,
+   "montoMinimo": 700,
+   "vigenciaDesde": "2000-01-01",
+   "vigenciaHasta": null,
+   "observacion": null
+  },
+  {
+   "codigo": "012",
+   "descripcion": "Intermediación laboral y tercerización",
+   "anexo": "3",
+   "porcentaje": 12,
+   "montoMinimo": 700,
+   "vigenciaDesde": "2000-01-01",
+   "vigenciaHasta": null,
+   "observacion": null
+  },
+  {
+   "codigo": "013",
+   "descripcion": "Animales vivos",
+   "anexo": null,
+   "porcentaje": null,
+   "montoMinimo": 700,
+   "vigenciaDesde": "2000-01-01",
+   "vigenciaHasta": "2005-01-08",
+   "observacion": null
+  },
+  {
+   "codigo": "014",
+   "descripcion": "Carnes y despojos comestibles",
+   "anexo": "2",
+   "porcentaje": 4,
+   "montoMinimo": 700,
+   "vigenciaDesde": "2000-01-01",
+   "vigenciaHasta": null,
+   "observacion": null
+  },
+  {
+   "codigo": "015",
+   "descripcion": "Abonos, cueros y pieles de origen animal",
+   "anexo": null,
+   "porcentaje": null,
+   "montoMinimo": 700,
+   "vigenciaDesde": "2000-01-01",
+   "vigenciaHasta": "2005-01-08",
+   "observacion": null
+  },
+  {
+   "codigo": "016",
+   "descripcion": "Aceite de pescado",
+   "anexo": "2",
+   "porcentaje": 10,
+   "montoMinimo": 700,
+   "vigenciaDesde": "2000-01-01",
+   "vigenciaHasta": null,
+   "observacion": null
+  },
+  {
+   "codigo": "017",
+   "descripcion": "Harina, polvo y “pellets” de pescado, crustáceos, moluscos y demás invertebrados acuáticos",
+   "anexo": "2",
+   "porcentaje": 4,
+   "montoMinimo": 700,
+   "vigenciaDesde": "2000-01-01",
+   "vigenciaHasta": null,
+   "observacion": null
+  },
+  {
+   "codigo": "018",
+   "descripcion": "Embarcaciones pesqueras",
+   "anexo": null,
+   "porcentaje": 4,
+   "montoMinimo": 700,
+   "vigenciaDesde": "2000-01-01",
+   "vigenciaHasta": "2014-12-31",
+   "observacion": "no figura en catalogo 54 SUNAT"
+  },
+  {
+   "codigo": "019",
+   "descripcion": "Arrendamiento de bienes muebles",
+   "anexo": "3",
+   "porcentaje": 10,
+   "montoMinimo": 700,
+   "vigenciaDesde": "2000-01-01",
+   "vigenciaHasta": null,
+   "observacion": null
+  },
+  {
+   "codigo": "020",
+   "descripcion": "Mantenimiento y reparación de bienes muebles",
+   "anexo": "3",
+   "porcentaje": 12,
+   "montoMinimo": 700,
+   "vigenciaDesde": "2000-01-01",
+   "vigenciaHasta": null,
+   "observacion": null
+  },
+  {
+   "codigo": "021",
+   "descripcion": "Movimiento de carga",
+   "anexo": "3",
+   "porcentaje": 10,
+   "montoMinimo": 700,
+   "vigenciaDesde": "2000-01-01",
+   "vigenciaHasta": null,
+   "observacion": null
+  },
+  {
+   "codigo": "022",
+   "descripcion": "Otros servicios empresariales",
+   "anexo": "3",
+   "porcentaje": 12,
+   "montoMinimo": 700,
+   "vigenciaDesde": "2000-01-01",
+   "vigenciaHasta": null,
+   "observacion": null
+  },
+  {
+   "codigo": "023",
+   "descripcion": "Leche",
+   "anexo": "2",
+   "porcentaje": 4,
+   "montoMinimo": 700,
+   "vigenciaDesde": "2000-01-01",
+   "vigenciaHasta": null,
+   "observacion": null
+  },
+  {
+   "codigo": "024",
+   "descripcion": "Comisión mercantil",
+   "anexo": "3",
+   "porcentaje": 10,
+   "montoMinimo": 700,
+   "vigenciaDesde": "2000-01-01",
+   "vigenciaHasta": null,
+   "observacion": null
+  },
+  {
+   "codigo": "025",
+   "descripcion": "Fabricación de bienes por encargo",
+   "anexo": "3",
+   "porcentaje": 10,
+   "montoMinimo": 700,
+   "vigenciaDesde": "2000-01-01",
+   "vigenciaHasta": null,
+   "observacion": null
+  },
+  {
+   "codigo": "026",
+   "descripcion": "Servicio de transporte de personas",
+   "anexo": "3",
+   "porcentaje": 10,
+   "montoMinimo": 700,
+   "vigenciaDesde": "2000-01-01",
+   "vigenciaHasta": null,
+   "observacion": null
+  },
+  {
+   "codigo": "027",
+   "descripcion": "Servicio de transporte de carga",
+   "anexo": "transporte",
+   "porcentaje": 4,
+   "montoMinimo": 400,
+   "vigenciaDesde": "2000-01-01",
+   "vigenciaHasta": null,
+   "observacion": "minimo 400 por evidencia F013-107901 (S/ 645 detrajo); a confirmar con Kelly"
+  },
+  {
+   "codigo": "028",
+   "descripcion": "Transporte de pasajeros",
+   "anexo": null,
+   "porcentaje": null,
+   "montoMinimo": 700,
+   "vigenciaDesde": "2000-01-01",
+   "vigenciaHasta": null,
+   "observacion": null
+  },
+  {
+   "codigo": "029",
+   "descripcion": "Algodón en rama sin desmontar",
+   "anexo": null,
+   "porcentaje": null,
+   "montoMinimo": 700,
+   "vigenciaDesde": "2000-01-01",
+   "vigenciaHasta": "2014-12-31",
+   "observacion": "no figura en catalogo 54 SUNAT"
+  },
+  {
+   "codigo": "030",
+   "descripcion": "Contratos de construcción",
+   "anexo": "3",
+   "porcentaje": 4,
+   "montoMinimo": 700,
+   "vigenciaDesde": "2000-01-01",
+   "vigenciaHasta": null,
+   "observacion": null
+  },
+  {
+   "codigo": "031",
+   "descripcion": "Oro gravado con el IGV",
+   "anexo": "2",
+   "porcentaje": 10,
+   "montoMinimo": 700,
+   "vigenciaDesde": "2000-01-01",
+   "vigenciaHasta": null,
+   "observacion": null
+  },
+  {
+   "codigo": "032",
+   "descripcion": "Paprika y otros frutos de los generos capsicum o pimienta",
+   "anexo": "2",
+   "porcentaje": 10,
+   "montoMinimo": 700,
+   "vigenciaDesde": "2000-01-01",
+   "vigenciaHasta": null,
+   "observacion": null
+  },
+  {
+   "codigo": "033",
+   "descripcion": "Espárragos",
+   "anexo": null,
+   "porcentaje": null,
+   "montoMinimo": 700,
+   "vigenciaDesde": "2000-01-01",
+   "vigenciaHasta": "2014-12-31",
+   "observacion": "no figura en catalogo 54 SUNAT"
+  },
+  {
+   "codigo": "034",
+   "descripcion": "Minerales metálicos no auríferos",
+   "anexo": "1",
+   "porcentaje": 10,
+   "montoMinimo": 700,
+   "vigenciaDesde": "2000-01-01",
+   "vigenciaHasta": null,
+   "observacion": null
+  },
+  {
+   "codigo": "035",
+   "descripcion": "Bienes exonerados del IGV",
+   "anexo": "2",
+   "porcentaje": 1.5,
+   "montoMinimo": 700,
+   "vigenciaDesde": "2000-01-01",
+   "vigenciaHasta": null,
+   "observacion": null
+  },
+  {
+   "codigo": "036",
+   "descripcion": "Oro y demás minerales metálicos exonerados del IGV",
+   "anexo": "2",
+   "porcentaje": 1.5,
+   "montoMinimo": 700,
+   "vigenciaDesde": "2000-01-01",
+   "vigenciaHasta": null,
+   "observacion": null
+  },
+  {
+   "codigo": "037",
+   "descripcion": "Demás servicios gravados con el IGV",
+   "anexo": "3",
+   "porcentaje": 12,
+   "montoMinimo": 700,
+   "vigenciaDesde": "2000-01-01",
+   "vigenciaHasta": null,
+   "observacion": null
+  },
+  {
+   "codigo": "038",
+   "descripcion": "Espectáculos públicos gravados con el IGV",
+   "anexo": null,
+   "porcentaje": null,
+   "montoMinimo": 700,
+   "vigenciaDesde": "2000-01-01",
+   "vigenciaHasta": "2014-12-31",
+   "observacion": null
+  },
+  {
+   "codigo": "039",
+   "descripcion": "Minerales no metálicos",
+   "anexo": "2",
+   "porcentaje": 10,
+   "montoMinimo": 700,
+   "vigenciaDesde": "2000-01-01",
+   "vigenciaHasta": null,
+   "observacion": null
+  },
+  {
+   "codigo": "040",
+   "descripcion": "Bien inmueble gravado con IGV",
+   "anexo": null,
+   "porcentaje": 4,
+   "montoMinimo": 700,
+   "vigenciaDesde": "2000-01-01",
+   "vigenciaHasta": null,
+   "observacion": null
+  },
+  {
+   "codigo": "041",
+   "descripcion": "Plomo",
+   "anexo": "2",
+   "porcentaje": 15,
+   "montoMinimo": 700,
+   "vigenciaDesde": "2000-01-01",
+   "vigenciaHasta": null,
+   "observacion": null
+  },
+  {
+   "codigo": "042",
+   "descripcion": "Ladrillos de construcción, bovedillas, cubrevigas y artículos similares, de cerámica",
+   "anexo": null,
+   "porcentaje": null,
+   "montoMinimo": 700,
+   "vigenciaDesde": "2000-01-01",
+   "vigenciaHasta": "2000-01-01",
+   "observacion": "No vigente segun tabla de Kelly"
+  },
+  {
+   "codigo": "043",
+   "descripcion": "Estructuras metálicas para la construcción",
+   "anexo": null,
+   "porcentaje": null,
+   "montoMinimo": 700,
+   "vigenciaDesde": "2000-01-01",
+   "vigenciaHasta": "2000-01-01",
+   "observacion": "No vigente segun tabla de Kelly"
+  },
+  {
+   "codigo": "044",
+   "descripcion": "Servicio de beneficio de minerales metálicos gravado con el IGV",
+   "anexo": null,
+   "porcentaje": null,
+   "montoMinimo": 700,
+   "vigenciaDesde": "2000-01-01",
+   "vigenciaHasta": "2000-01-01",
+   "observacion": "No vigente segun tabla de Kelly"
+  },
+  {
+   "codigo": "045",
+   "descripcion": "Minerales de oro y sus concentrados gravados con el IGV",
+   "anexo": "1",
+   "porcentaje": 1.5,
+   "montoMinimo": 700,
+   "vigenciaDesde": "2000-01-01",
+   "vigenciaHasta": null,
+   "observacion": null
+  },
+  {
+   "codigo": "046",
+   "descripcion": "Cobre gravado con el IGV",
+   "anexo": null,
+   "porcentaje": null,
+   "montoMinimo": 700,
+   "vigenciaDesde": "2000-01-01",
+   "vigenciaHasta": null,
+   "observacion": "sin % en tabla de Kelly"
+  },
+  {
+   "codigo": "047",
+   "descripcion": "Plata gravada con el IGV",
+   "anexo": null,
+   "porcentaje": null,
+   "montoMinimo": 700,
+   "vigenciaDesde": "2000-01-01",
+   "vigenciaHasta": null,
+   "observacion": "sin % en tabla de Kelly"
+  },
+  {
+   "codigo": "099",
+   "descripcion": "Ley 30737",
+   "anexo": null,
+   "porcentaje": 8,
+   "montoMinimo": 700,
+   "vigenciaDesde": "2000-01-01",
+   "vigenciaHasta": null,
+   "observacion": null
+  }
+ ],
+ "conflictos": [
+  {
+   "codigo": "003",
+   "tipo": "porcentaje",
+   "detalle": "principal 4% vs anexo 1 10%"
+  },
+  {
+   "codigo": "045",
+   "tipo": "porcentaje",
+   "detalle": "principal 1.5% vs anexo 1 10%"
+  },
+  {
+   "codigo": "034",
+   "tipo": "anexo_duplicado",
+   "detalle": "anexo 1 y 2"
+  },
+  {
+   "codigo": "006",
+   "tipo": "solo_kelly",
+   "detalle": "Algodón"
+  },
+  {
+   "codigo": "018",
+   "tipo": "solo_kelly",
+   "detalle": "Embarcaciones pesqueras"
+  },
+  {
+   "codigo": "029",
+   "tipo": "solo_kelly",
+   "detalle": "Algodón en rama sin desmontar"
+  },
+  {
+   "codigo": "033",
+   "tipo": "solo_kelly",
+   "detalle": "Espárragos"
+  },
+  {
+   "codigo": "046",
+   "tipo": "solo_sunat",
+   "detalle": "Cobre gravado con el IGV"
+  },
+  {
+   "codigo": "047",
+   "tipo": "solo_sunat",
+   "detalle": "Plata gravada con el IGV"
+  }
+ ]
+}
