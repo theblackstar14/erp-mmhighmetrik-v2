@@ -544,6 +544,17 @@ Respuesta: ______________
 **K.7 ¿Hay transferencias de herramientas entre obras? ¿Quién las autoriza?**
 Respuesta: ______________
 
+**K.8 [BLOQUEA] ¿Desde qué monto una herramienta o equipo va a activo fijo (33) y no a existencias o gasto?**
+Cambia el asiento y arranca depreciación. La referencia tributaria es un cuarto de UIT.
+- [ ] El sistema propone según el monto de la línea y Kelly confirma
+- [ ] Kelly lo decide línea por línea, sin propuesta
+- [ ] Otro criterio: ______________
+
+**K.9 [DISEÑO] ¿Cómo se codifica lo que entra a inventario?**
+Propuesta: prefijo por categoría más correlativo (HER-0042), editable. Una herramienta con código individual por unidad; los consumibles como un solo ítem con cantidad.
+- [ ] De acuerdo
+- [ ] Ya tienen una codificación que hay que respetar: ______________
+
 ---
 
 ## Bloque L. Contabilidad
