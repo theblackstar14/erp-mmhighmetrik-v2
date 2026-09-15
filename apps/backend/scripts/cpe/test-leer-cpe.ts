@@ -67,7 +67,30 @@ for (const rel of rechazos) {
   assert.throws(() => leer(rel), (e) => e instanceof CpeError, `${rel} debe rechazarse con CpeError`);
 }
 assert.throws(() => leerCpe(Buffer.from('<Invoice><sin cerrar>')), (e) => e instanceof CpeError && e.code === 'XML_INVALIDO', 'XML roto');
-console.log(`  ✓ ${rechazos.length} rechazados + XML roto`);
+
+// ── IssueDate ausente/invalida: no debe colgar /leer, debe rechazarse como XML_INVALIDO ──
+const SIN_ISSUE_DATE = `<?xml version="1.0" encoding="UTF-8"?>
+<Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2" xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2" xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2">
+  <cbc:UBLVersionID>2.1</cbc:UBLVersionID>
+  <cbc:ID>F001-1</cbc:ID>
+  <cbc:InvoiceTypeCode listID="0101">01</cbc:InvoiceTypeCode>
+  <cbc:DocumentCurrencyCode>PEN</cbc:DocumentCurrencyCode>
+  <cac:AccountingSupplierParty>
+    <cac:Party>
+      <cac:PartyIdentification><cbc:ID schemeID="6">20606433094</cbc:ID></cac:PartyIdentification>
+      <cac:PartyLegalEntity><cbc:RegistrationName>PROVEEDOR SAC</cbc:RegistrationName></cac:PartyLegalEntity>
+    </cac:Party>
+  </cac:AccountingSupplierParty>
+  <cac:AccountingCustomerParty>
+    <cac:Party>
+      <cac:PartyIdentification><cbc:ID schemeID="6">20610639764</cbc:ID></cac:PartyIdentification>
+      <cac:PartyLegalEntity><cbc:RegistrationName>CLIENTE SAC</cbc:RegistrationName></cac:PartyLegalEntity>
+    </cac:Party>
+  </cac:AccountingCustomerParty>
+  <cac:LegalMonetaryTotal><cbc:PayableAmount>118.00</cbc:PayableAmount></cac:LegalMonetaryTotal>
+</Invoice>`;
+assert.throws(() => leerCpe(Buffer.from(SIN_ISSUE_DATE)), (e) => e instanceof CpeError && e.code === 'XML_INVALIDO', 'IssueDate ausente debe rechazarse (no colgar la ruta)');
+console.log(`  ✓ ${rechazos.length} rechazados + XML roto + IssueDate ausente`);
 
 // ── reales MMH (solo si están en la máquina) ──
 const mmh = path.join(DIR, 'mmh');

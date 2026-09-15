@@ -85,9 +85,14 @@ export function leerCpe(buf: Buffer): CpeLeido {
   const numeroCrudo = guion > 0 ? id.slice(guion + 1).trim() : '';
   const numero = /^\d+$/.test(numeroCrudo) ? String(Number.parseInt(numeroCrudo, 10)) : numeroCrudo;
 
+  const fechaEmision = txt(doc.IssueDate) ?? '';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(fechaEmision)) throw new CpeError('XML_INVALIDO', `Fecha de emisión (IssueDate) ausente o inválida: "${fechaEmision}"`);
+
   const sup = first(doc.AccountingSupplierParty)?.Party ?? {};
   const cus = first(doc.AccountingCustomerParty)?.Party ?? {};
   const idCliente = first(cus.PartyIdentification)?.ID;
+  const rucEmisor = txt(first(sup.PartyIdentification)?.ID) ?? '';
+  if (!rucEmisor) throw new CpeError('XML_INVALIDO', 'Falta el RUC del emisor (AccountingSupplierParty)');
 
   const total = first(doc.LegalMonetaryTotal ?? doc.RequestedMonetaryTotal) ?? {};
   const igv = arr(doc.TaxTotal).flatMap((tt) => arr(tt.TaxSubtotal))
@@ -111,11 +116,11 @@ export function leerCpe(buf: Buffer): CpeLeido {
 
   return {
     tipo, serie, numero,
-    fechaEmision: txt(doc.IssueDate) ?? '',
+    fechaEmision,
     fechaVencimiento: txt(doc.DueDate) ?? cuotas[0]?.vence ?? null,
     moneda: txt(doc.DocumentCurrencyCode) ?? 'PEN',
     tipoOperacion: attr(doc.InvoiceTypeCode, 'listID'),
-    emisor: { ruc: txt(first(sup.PartyIdentification)?.ID) ?? '', razonSocial: txt(first(sup.PartyLegalEntity)?.RegistrationName) },
+    emisor: { ruc: rucEmisor, razonSocial: txt(first(sup.PartyLegalEntity)?.RegistrationName) },
     cliente: { tipoDoc: attr(idCliente, 'schemeID'), numero: txt(idCliente), razonSocial: txt(first(cus.PartyLegalEntity)?.RegistrationName) },
     totales: {
       valorVenta: num(total.LineExtensionAmount), igv: Math.round(igv * 100) / 100, descuentos: num(total.AllowanceTotalAmount),
