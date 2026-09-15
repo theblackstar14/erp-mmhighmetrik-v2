@@ -3,7 +3,7 @@
  * Decide compra/venta con el RUC de la empresa activa y valida la detracción declarada.
  */
 import { db, schema } from '@erp/db';
-import { and, desc, eq, gte, isNull, lte, or } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { Router } from 'express';
 import multer from 'multer';
 import { requireAuth } from '../middleware/auth.js';
@@ -11,6 +11,7 @@ import { requirePermiso } from '../lib/permisos.js';
 import { CpeError, leerCpe, type CpeLeido } from '../lib/cpe/leerCpe.js';
 import { calcularDetraccion, compararDetraccion } from '../lib/detraccionCalc.js';
 import { buscarTipoCambio } from '../lib/tipoCambio.js';
+import { buscarTasaDetraccion } from '../lib/detraccionTasa.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -19,12 +20,8 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 *
 async function validarDetraccion(doc: CpeLeido) {
   if (!doc.detraccion) return null;
   const declarada = doc.detraccion;
-  const t = schema.detraccionTasa;
-  const [tasa] = await db.select().from(t)
-    .where(and(eq(t.codigo, declarada.codigo), lte(t.vigenciaDesde, doc.fechaEmision), or(isNull(t.vigenciaHasta), gte(t.vigenciaHasta, doc.fechaEmision))))
-    .orderBy(desc(t.vigenciaDesde))
-    .limit(1);
-  if (!tasa || tasa.porcentaje == null) return { declarada, error: `Código de detracción ${declarada.codigo} no vigente o sin % al ${doc.fechaEmision}` };
+  const tasa = await buscarTasaDetraccion(declarada.codigo, doc.fechaEmision);
+  if (!tasa) return { declarada, error: `Código de detracción ${declarada.codigo} no vigente o sin % al ${doc.fechaEmision}` };
   let tipoCambio: number | null = null;
   if (doc.moneda !== 'PEN') {
     const tc = await buscarTipoCambio(doc.fechaEmision, doc.moneda);
@@ -32,7 +29,7 @@ async function validarDetraccion(doc: CpeLeido) {
     // IGV/SPOT convierten moneda extranjera con el TC promedio ponderado venta (SBS) para ambas partes; a confirmar con Kelly.
     tipoCambio = tc.venta;
   }
-  const calculada = calcularDetraccion({ total: doc.totales.total, moneda: doc.moneda, tipoCambio, tasa: { codigo: tasa.codigo, porcentaje: Number(tasa.porcentaje), montoMinimo: Number(tasa.montoMinimo) } });
+  const calculada = calcularDetraccion({ total: doc.totales.total, moneda: doc.moneda, tipoCambio, tasa });
   return { declarada, calculada, ...compararDetraccion(calculada, declarada) };
 }
 
