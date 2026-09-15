@@ -35,7 +35,9 @@ const texto = [
   '105', 'Otros equivalentes de efectivo',
   '4691 \tSubsidios gubernamentales',
   '4692',
-  'Donaciones',
+  '4699',
+  'Donaciones condicionadas',
+  'Otras cuentas por pagar',
   '=== PAGINA 30', '26',
   '1051 \tOtros equivalentes de efectivo',
   '=== PAGINA 72', '68',
@@ -49,7 +51,7 @@ const by = Object.fromEntries(r.map((c) => [c.codigo, c]));
 
 assert.deepEqual(
   r.map((c) => c.codigo),
-  ['10', '101', '1041', '40', '4011', '40111', '6032', '80', '881', '01', '011', '105', '4691', '4692', '1051'],
+  ['10', '101', '1041', '40', '4011', '40111', '6032', '80', '881', '01', '011', '105', '4691', '4692', '4699', '1051'],
   'orden y set de codigos (nada antes de ELEMENTO 1 ni despues de PARTE III)',
 );
 assert.deepEqual(by['10'], { codigo: '10', descripcion: 'EFECTIVO Y EQUIVALENTES DE EFECTIVO', tipo: 'Activo', nivel: 1, parentCodigo: null, clasificable: false });
@@ -65,8 +67,10 @@ assert.deepEqual(by['011'], { codigo: '011', descripcion: 'Bienes en préstamo, 
 
 // Regresión: código en línea propia (bug de datos perdidos, fix round 1).
 assert.deepEqual(by['105'], { codigo: '105', descripcion: 'Otros equivalentes de efectivo', tipo: 'Activo', nivel: 2, parentCodigo: '10', clasificable: false }, 'codigo de 3 digitos en linea propia mid-pagina');
-assert.deepEqual(by['4691'], { codigo: '4691', descripcion: 'Subsidios gubernamentales', tipo: 'Pasivo', nivel: 3, parentCodigo: '469', clasificable: false }, '4691 no se come el 4692 siguiente');
-assert.deepEqual(by['4692'], { codigo: '4692', descripcion: 'Donaciones', tipo: 'Pasivo', nivel: 3, parentCodigo: '469', clasificable: false }, '4692 en linea propia con descripcion en la siguiente linea');
+// Regresión: secuencia real del PDF, dos codigos en linea propia consecutivos (cola FIFO, fix round 2).
+assert.deepEqual(by['4691'], { codigo: '4691', descripcion: 'Subsidios gubernamentales', tipo: 'Pasivo', nivel: 3, parentCodigo: '469', clasificable: false }, '4691 no se come el 4692/4699 siguientes');
+assert.deepEqual(by['4692'], { codigo: '4692', descripcion: 'Donaciones condicionadas', tipo: 'Pasivo', nivel: 3, parentCodigo: '469', clasificable: false }, '4692 (primero de la cola) toma la primera descripcion');
+assert.deepEqual(by['4699'], { codigo: '4699', descripcion: 'Otras cuentas por pagar', tipo: 'Pasivo', nivel: 3, parentCodigo: '469', clasificable: false }, '4699 (segundo de la cola) toma la segunda descripcion, no se mezcla con la de 4692');
 assert.equal(by['26'], undefined, '26 justo despues de "=== PAGINA 30" es numero de pagina, no cuenta');
 assert.deepEqual(by['1051'], { codigo: '1051', descripcion: 'Otros equivalentes de efectivo', tipo: 'Activo', nivel: 3, parentCodigo: '105', clasificable: false }, 'cuenta normal justo despues del numero de pagina');
 

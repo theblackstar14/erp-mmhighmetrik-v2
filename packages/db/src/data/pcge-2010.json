@@ -7914,8 +7914,16 @@
    "clasificable": false
   },
   {
+   "codigo": "4692",
+   "descripcion": "Donaciones condicionadas",
+   "tipo": "Pasivo",
+   "nivel": 3,
+   "parentCodigo": "469",
+   "clasificable": false
+  },
+  {
    "codigo": "4699",
-   "descripcion": "Donaciones condicionadas Otras cuentas por pagar",
+   "descripcion": "Otras cuentas por pagar",
    "tipo": "Pasivo",
    "nivel": 3,
    "parentCodigo": "469",

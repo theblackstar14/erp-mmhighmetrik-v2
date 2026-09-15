@@ -20,7 +20,8 @@ function construir(codigo: string, descripcion: string): CuentaPcge {
 }
 
 // Cuántos códigos en línea propia (p.ej. "4692") quedaron sin descripción (llegó otro código o un
-// título de ELEMENTO antes que su línea de texto) y por lo tanto se descartaron. gen-pcge.ts lo imprime.
+// título de ELEMENTO antes de que a todos les tocara su línea de texto) y por lo tanto se descartaron.
+// gen-pcge.ts lo imprime.
 export let ultimoSinDescripcion = 0;
 
 export function extraerCuentasPcge(texto: string): CuentaPcge[] {
@@ -28,7 +29,7 @@ export function extraerCuentasPcge(texto: string): CuentaPcge[] {
   const vistos = new Set<string>();
   let dentro = false;
   let prev: CuentaPcge | null = null;
-  let pendingCode: string | null = null;
+  let pendientes: string[] = []; // cola FIFO de códigos en línea propia esperando su descripción
   let justAfterPagina = false;
   let sinDescripcion = 0;
 
@@ -44,8 +45,7 @@ export function extraerCuentasPcge(texto: string): CuentaPcge[] {
     if (esPaginaSiguiente && NUMERO_PAGINA_SUELTO.test(linea)) continue; // número de página suelto justo después del marcador
 
     if (/^ELEMENTO /i.test(linea)) { // títulos de elemento (y su línea partida) no son cuentas
-      if (pendingCode) sinDescripcion++; // código pendiente sin descripción: se descarta
-      pendingCode = null;
+      if (pendientes.length) { sinDescripcion += pendientes.length; pendientes = []; } // cola sin resolver: se descarta entera
       prev = null;
       continue;
     }
@@ -53,8 +53,7 @@ export function extraerCuentasPcge(texto: string): CuentaPcge[] {
 
     const m = CUENTA.exec(linea);
     if (m) {
-      if (pendingCode) sinDescripcion++; // otro código llegó antes de la descripción del pendiente: se descarta
-      pendingCode = null;
+      if (pendientes.length) { sinDescripcion += pendientes.length; pendientes = []; } // otro código llegó antes de resolver la cola: se descarta entera
       const codigo = m[1];
       if (vistos.has(codigo)) { prev = null; continue; }
       const cuenta = construir(codigo, m[2]);
@@ -64,16 +63,14 @@ export function extraerCuentasPcge(texto: string): CuentaPcge[] {
       continue;
     }
 
-    if (CODIGO_SOLO.test(linea)) { // código en línea propia, su descripción viene en la siguiente línea
-      if (pendingCode) sinDescripcion++; // el pendiente anterior nunca tuvo descripción: se descarta
-      pendingCode = linea;
+    if (CODIGO_SOLO.test(linea)) { // código en línea propia: se encola, su descripción viene después (en orden)
+      pendientes.push(linea);
       prev = null;
       continue;
     }
 
-    if (pendingCode) { // esta línea de texto es la descripción del código pendiente
-      const codigo = pendingCode;
-      pendingCode = null;
+    if (pendientes.length) { // esta línea de texto es la descripción del código más antiguo de la cola
+      const codigo = pendientes.shift()!;
       if (vistos.has(codigo)) { prev = null; continue; }
       const cuenta = construir(codigo, linea);
       out.push(cuenta);
@@ -87,7 +84,7 @@ export function extraerCuentasPcge(texto: string): CuentaPcge[] {
       prev = null;
     }
   }
-  if (pendingCode) sinDescripcion++; // quedó colgado al terminar (o al llegar a PARTE III)
+  if (pendientes.length) sinDescripcion += pendientes.length; // quedó colgada al terminar (o al llegar a PARTE III)
   ultimoSinDescripcion = sinDescripcion;
   return out;
 }
