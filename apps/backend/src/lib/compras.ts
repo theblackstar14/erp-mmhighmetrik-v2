@@ -9,7 +9,7 @@ import { z } from 'zod';
 import { calcularDetraccion } from './detraccionCalc.js';
 import { buscarTasaDetraccion } from './detraccionTasa.js';
 import { buscarTipoCambio } from './tipoCambio.js';
-import { type DbLike, DocumentoError, aplicar, crearDocumentoDesdeGasto, esNotaCredito } from './documentosPendientes.js';
+import { type DbLike, DocumentoError, aplicar, crearDocumentoDesdeGasto, esNotaCredito, refrescarDocumento } from './documentosPendientes.js';
 
 const IGV = 0.18;
 const r2 = (n: number) => Math.round(n * 100) / 100;
@@ -109,6 +109,11 @@ export async function registrarCompra(q: DbLike, input: { values: typeof schema.
     await aplicar(q, { origenTipo: 'nota', origenId: g.id, fecha: g.fecha, userId: input.userId, aplicaciones: [{ documentoPendienteId: orig.id, monto: Number(g.total) }], tipoEsperado: 'cxp', moneda: g.moneda });
   } else {
     documento = await crearDocumentoDesdeGasto(q, g, empresaId);
+    // Fase 1 · la retención se entera a SUNAT, no al proveedor: reduce la CxP; su asiento (4017x) llega en Fase 2
+    if (documento && extras.retencion?.monto && extras.retencion.monto > 0) {
+      await aplicar(q, { origenTipo: 'nota', origenId: g.id, fecha: g.fecha, userId: input.userId, aplicaciones: [{ documentoPendienteId: documento.id, monto: extras.retencion.monto }], tipoEsperado: 'cxp', moneda: g.moneda });
+      documento = await refrescarDocumento(q, documento.id);
+    }
   }
 
   let detraccion: typeof schema.detraccionDocumento.$inferSelect | null = null;
@@ -125,13 +130,16 @@ export async function registrarCompra(q: DbLike, input: { values: typeof schema.
     }).returning())[0] ?? null;
   }
 
-  const aInventario = lineas.filter((l) => l.aInventario);
-  const comun = { fecha: g.fecha, proveedorRuc: g.proveedorRuc, proveedorRazon: g.proveedorRazon, tipoComprobante: g.tipoComprobante, serie: g.serie, numero: g.numero, categoria: g.tipoGasto, estado: 'Por completar', gastoId: g.id };
-  if (aInventario.length) {
-    await q.insert(schema.inventarioItems).values(aInventario.map((l) => ({ ...comun, proyectoId: l.proyectoId ?? g.proyectoId ?? null, cantidad: String(l.cantidad), descripcionItem: l.descripcion, valorUnitario: String(l.valorUnitario) })));
-  } else if (input.inventariable) {
-    // sin líneas: borrador único como antes (el usuario completa cantidad/código en Inventario)
-    await q.insert(schema.inventarioItems).values({ ...comun, proyectoId: g.proyectoId ?? null, cantidad: '1', descripcionItem: g.descripcionItem ?? g.tipoGasto ?? 'Ítem', valorUnitario: g.total ?? '0' });
+  // Fase 1 fix1 · una NC no compra nada: no crea items de inventario (ni por línea ni el draft legado)
+  if (!esNota) {
+    const aInventario = lineas.filter((l) => l.aInventario);
+    const comun = { fecha: g.fecha, proveedorRuc: g.proveedorRuc, proveedorRazon: g.proveedorRazon, tipoComprobante: g.tipoComprobante, serie: g.serie, numero: g.numero, categoria: g.tipoGasto, estado: 'Por completar', gastoId: g.id };
+    if (aInventario.length) {
+      await q.insert(schema.inventarioItems).values(aInventario.map((l) => ({ ...comun, proyectoId: l.proyectoId ?? g.proyectoId ?? null, cantidad: String(l.cantidad), descripcionItem: l.descripcion, valorUnitario: String(l.valorUnitario) })));
+    } else if (input.inventariable) {
+      // sin líneas: borrador único como antes (el usuario completa cantidad/código en Inventario)
+      await q.insert(schema.inventarioItems).values({ ...comun, proyectoId: g.proyectoId ?? null, cantidad: '1', descripcionItem: g.descripcionItem ?? g.tipoGasto ?? 'Ítem', valorUnitario: g.total ?? '0' });
+    }
   }
 
   return { gasto: g, lineas: lineas.length, documento, detraccion };

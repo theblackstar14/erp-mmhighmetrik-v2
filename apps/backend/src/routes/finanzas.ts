@@ -204,11 +204,14 @@ router.put('/gastos/:id', async (req, res) => {
   const parse = gastoSchema.partial().safeParse(req.body);
   if (!parse.success) return res.status(400).json({ error: parse.error.flatten() });
   const d = parse.data;
-  // Fase 1 · si la compra ya tiene cuenta por pagar, editar los datos del documento la deja desincronizada (D13)
+  // Fase 1 · si la compra ya tiene cuenta por pagar (o ES una NC con su aplicación activa contra otra factura),
+  // editar los datos del documento la deja desincronizada (D13 + fix1 · nota de crédito también)
   if (['total', 'subtotal', 'igv', 'exonerado', 'moneda', 'serie', 'numero', 'proveedorRuc', 'tipoComprobante'].some((k) => k in d)) {
     const [docExistente] = await db.select({ id: schema.documentoPendiente.id }).from(schema.documentoPendiente)
       .where(and(eq(schema.documentoPendiente.docOrigenTipo, 'gasto'), eq(schema.documentoPendiente.docOrigenId, req.params.id!))).limit(1);
-    if (docExistente) return res.status(409).json({ error: 'La compra tiene cuenta por pagar · anula y registra de nuevo' });
+    const [aplicNota] = await db.select({ id: schema.aplicacionDocumento.id }).from(schema.aplicacionDocumento)
+      .where(and(eq(schema.aplicacionDocumento.origenTipo, 'nota'), eq(schema.aplicacionDocumento.origenId, req.params.id!), eq(schema.aplicacionDocumento.estado, 'activa'))).limit(1);
+    if (docExistente || aplicNota) return res.status(409).json({ error: 'La compra tiene cuenta por pagar · anula y registra de nuevo' });
   }
   const errCuenta = await validarCuentaContable(d.cuentaContable); // WS1
   if (errCuenta) return res.status(400).json({ error: errCuenta });
@@ -250,27 +253,40 @@ router.put('/gastos/:id', async (req, res) => {
   res.json({ gasto });
 });
 
-router.delete('/gastos/:id', async (req, res) => {
+router.delete('/gastos/:id', async (req, res, next) => {
   const id = req.params.id!;
-  const [g] = await db.select({ lockedAt: schema.gastos.lockedAt }).from(schema.gastos).where(eq(schema.gastos.id, id));
-  if (g?.lockedAt) return res.status(423).json({ error: 'Gasto congelado por cierre de periodo · reabrir el periodo primero' }); // H2.1
-  const d = schema.documentoPendiente, a = schema.aplicacionDocumento;
-  const [doc] = await db.select({ id: d.id }).from(d).where(and(eq(d.docOrigenTipo, 'gasto'), eq(d.docOrigenId, id)));
-  if (doc) {
-    const [activa] = await db.select({ id: a.id }).from(a).where(and(eq(a.documentoPendienteId, doc.id), eq(a.estado, 'activa'))).limit(1);
-    if (activa) return res.status(409).json({ error: 'La compra tiene pagos o notas de crédito aplicados · anúlalos primero' });
+  try {
+    const [g] = await db.select({ lockedAt: schema.gastos.lockedAt }).from(schema.gastos).where(eq(schema.gastos.id, id));
+    if (g?.lockedAt) return res.status(423).json({ error: 'Gasto congelado por cierre de periodo · reabrir el periodo primero' }); // H2.1
+    await db.transaction(async (tx) => {
+      const d = schema.documentoPendiente, a = schema.aplicacionDocumento;
+      // fix1 · lock de fila: un pago aplicado entre el check y el borrado no se pierde (D12)
+      const [doc] = await tx.select().from(d).where(and(eq(d.docOrigenTipo, 'gasto'), eq(d.docOrigenId, id))).limit(1).for('update');
+      if (doc) {
+        const activas = await tx.select({ id: a.id, origenTipo: a.origenTipo, origenId: a.origenId }).from(a)
+          .where(and(eq(a.documentoPendienteId, doc.id), eq(a.estado, 'activa')));
+        // fix1 · la propia retención (origenTipo='nota' · origenId=este mismo gasto) nace al registrar esta compra:
+        // se borra junto con su documento más abajo, no bloquea el borrado. Solo bloquea una aplicación EXTERNA
+        // (un pago vía movimiento, o una nota de crédito de OTRO gasto) que primero hay que anular.
+        const externa = activas.some((x) => !(x.origenTipo === 'nota' && x.origenId === id));
+        if (externa) throw new DocumentoError(409, 'La compra tiene pagos o notas de crédito aplicados · anúlalos primero');
+      }
+      await anularAplicacionesDe(tx, 'nota', id); // si es NC, devuelve el saldo a la factura referida; si tenía retención propia, la anula
+      if (doc) {
+        await tx.delete(a).where(eq(a.documentoPendienteId, doc.id));
+        await tx.delete(d).where(eq(d.id, doc.id));
+      }
+      await tx.delete(schema.detraccionDocumento).where(and(eq(schema.detraccionDocumento.docOrigenTipo, 'gasto'), eq(schema.detraccionDocumento.docOrigenId, id)));
+      // fix1 · borra solo los items "Por completar" creados por esta compra (drafts); otros items ya promovidos quedan (FK set null)
+      await tx.delete(schema.inventarioItems).where(and(eq(schema.inventarioItems.gastoId, id), eq(schema.inventarioItems.estado, 'Por completar')));
+      await tx.delete(schema.gastos).where(eq(schema.gastos.id, id));
+    });
+    await audit(req, { action: 'delete', entityType: 'gasto', entityId: id });
+    res.json({ ok: true });
+  } catch (e) {
+    if (e instanceof DocumentoError) return res.status(e.status).json({ error: e.message });
+    return next(e);
   }
-  await db.transaction(async (tx) => {
-    await anularAplicacionesDe(tx, 'nota', id); // si es NC, devuelve el saldo a la factura referida
-    if (doc) {
-      await tx.delete(a).where(eq(a.documentoPendienteId, doc.id));
-      await tx.delete(d).where(eq(d.id, doc.id));
-    }
-    await tx.delete(schema.detraccionDocumento).where(and(eq(schema.detraccionDocumento.docOrigenTipo, 'gasto'), eq(schema.detraccionDocumento.docOrigenId, id)));
-    await tx.delete(schema.gastos).where(eq(schema.gastos.id, id));
-  });
-  await audit(req, { action: 'delete', entityType: 'gasto', entityId: id });
-  res.json({ ok: true });
 });
 
 // ─── Movimientos (Flujo de Cuentas) · FIN-2 ──────────────────

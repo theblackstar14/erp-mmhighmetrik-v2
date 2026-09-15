@@ -78,13 +78,27 @@ try {
   assert.equal((await compra({ numero: '7', retencion: { tipo: 'igv3', monto: 35.4 } })).status, 400);
   const E = await compra({ numero: '8', tipoComprobante: 'Recibo por Honorarios', subtotal: 1500, igv: 0, total: 1500, retencion: { tipo: 'renta4ta', monto: 120 } });
   assert.deepEqual([E.status, E.json.gasto.retencion, E.json.gasto.retencionTipo], [200, '120.00', 'renta4ta']);
+  assert.deepEqual([E.json.documento.saldoPendiente, E.json.documento.estado], ['1380.00', 'parcial'], 'la retencion reduce la CxP (se entera a SUNAT, no al proveedor)');
   console.log('  ✓ E retencion');
+
+  // E2 · fix1 · una compra con retencion propia (sin pagos externos) SI se puede borrar; no deja CxP ni aplicaciones huerfanas
+  assert.equal((await call('DELETE', `/api/gastos/${E.json.gasto.id}`)).status, 200, 'la retencion propia no bloquea el borrado');
+  const [docE, aplicE] = await Promise.all([
+    db.select().from(schema.documentoPendiente).where(inArray(schema.documentoPendiente.docOrigenId, [E.json.gasto.id])),
+    db.select().from(schema.aplicacionDocumento).where(inArray(schema.aplicacionDocumento.origenId, [E.json.gasto.id])),
+  ]);
+  assert.deepEqual([docE.length, aplicE.length], [0, 0], 'borrar la compra borra su CxP y su aplicacion de retencion propia');
+  console.log('  ✓ E2 borrado con retencion propia');
 
   // F · nota de credito reduce la factura referida; validaciones
   const F = await compra({ numero: '10' });
-  const NC = await compra({ numero: '11', serie: 'FC99', tipoComprobante: 'Nota de Crédito', subtotal: 152.54, igv: 27.46, total: 180, docModifica: { serie: 'F999', numero: '10' }, motivoNota: '07' });
+  const NC = await compra({ numero: '11', serie: 'FC99', tipoComprobante: 'Nota de Crédito', subtotal: 152.54, igv: 27.46, total: 180, docModifica: { serie: 'F999', numero: '10' }, motivoNota: '07', inventariable: true });
   assert.equal(NC.status, 200, JSON.stringify(NC.json));
   assert.equal(NC.json.documento, null, 'la NC no crea CxP propia');
+  const invNC = await db.select().from(schema.inventarioItems).where(inArray(schema.inventarioItems.gastoId, [NC.json.gasto.id]));
+  assert.equal(invNC.length, 0, 'una NC no crea items de inventario aunque venga inventariable');
+  const ncPut = await call('PUT', `/api/gastos/${NC.json.gasto.id}`, { total: 999 });
+  assert.equal(ncPut.status, 409, JSON.stringify(ncPut.json));
   const detF = await call('GET', `/api/gastos/${F.json.gasto.id}/detalle`);
   assert.deepEqual([detF.json.documento.saldoPendiente, detF.json.documento.estado, detF.json.aplicaciones[0].origenTipo], ['1000.00', 'parcial', 'nota']);
   assert.equal((await compra({ numero: '12', tipoComprobante: 'Nota de Crédito', total: 10 })).status, 400, 'NC sin factura referida');
@@ -103,6 +117,17 @@ try {
   assert.equal((await call('DELETE', `/api/gastos/${F.json.gasto.id}`)).status, 200);
   const quedan = await db.select().from(schema.documentoPendiente).where(inArray(schema.documentoPendiente.docOrigenId, [F.json.gasto.id]));
   assert.equal(quedan.length, 0, 'borrar la compra borra su CxP');
+
+  // I2 · fix1 · borrar una compra con items de inventario "Por completar" los borra tambien
+  const H = await compra({ numero: '20', subtotal: 0, igv: 0, total: 0, lineas: [
+    { descripcion: 'Taladro', cantidad: 1, valorUnitario: 200, aInventario: true },
+  ] });
+  assert.equal(H.status, 200, JSON.stringify(H.json));
+  const invH1 = await db.select().from(schema.inventarioItems).where(inArray(schema.inventarioItems.gastoId, [H.json.gasto.id]));
+  assert.equal(invH1.length, 1, 'la compra crea su item de inventario');
+  assert.equal((await call('DELETE', `/api/gastos/${H.json.gasto.id}`)).status, 200);
+  const invH2 = await db.select().from(schema.inventarioItems).where(inArray(schema.inventarioItems.gastoId, [H.json.gasto.id]));
+  assert.equal(invH2.length, 0, 'borrar la compra borra sus items de inventario "Por completar"');
   console.log('  ✓ I borrado');
 
   // J · PUT protegida: si la compra tiene CxP, editar sus datos de documento se rechaza (D13)
