@@ -44,6 +44,8 @@
 
 Pantallas nuevas del mockup (Fase 4) · importadores XML/SIRE/Excel y adjuntos con hash (Fase 3) · reglas de validación ampliadas, percepción aplicada, diferencia de cambio (Fase 2) · reportes de antigüedad y PLE con TC (Fase 5) · backfill histórico · edición de líneas de una compra ya posteada.
 
+La CxC de una valorización queda `parcial` por retención de garantía, amortización de adelanto y detracción hasta la Fase 2 (notas/aplicaciones de retención y amortización; el depósito de detracción del cliente se aplica como ingreso de la cuenta BN).
+
 ## Archivos
 
 | Archivo | Responsabilidad |
@@ -55,7 +57,7 @@ Pantallas nuevas del mockup (Fase 4) · importadores XML/SIRE/Excel y adjuntos c
 | `apps/backend/src/lib/compras.ts` | `registrarCompra(tx, input)`: gasto + líneas + documento + detracción + nota de crédito + inventario |
 | `apps/backend/src/routes/finanzas.ts` | Rutas de gastos/movimientos usan las libs; `GET /documentos-pendientes`, `GET /gastos/:id/detalle` |
 | `apps/backend/src/routes/contabilidad.ts` | Motor: líneas agrupadas, NC invertida, contra por aplicaciones, enlaces de asiento |
-| `apps/backend/src/routes/logistica.ts`, `routes/oficina.ts` | Pago de OC aplica; rendición no crea CxP |
+| `apps/backend/src/routes/logistica.ts` | Pago de OC aplica; rendición no crea CxP |
 | `apps/backend/src/lib/ventas.ts`, `routes/proyectos.ts` | Factura de valorización real + CxC + detracción; cobro aplica |
 | `apps/frontend/src/lib/api.ts`, `pages/FinanzasPage.tsx`, `components/proyectos/tabs/ValorizacionesTab.tsx` | Bug L869 y número real de factura |
 
@@ -102,6 +104,9 @@ for (const c of ['fecha_vencimiento', 'tipo_cambio', 'retencion', 'retencion_tip
 assert.equal(tiene('aplicacion_documento', 'asiento_id')?.is_nullable, 'YES', 'aplicacion_documento.asiento_id nullable');
 for (const c of ['origen_tipo', 'origen_id']) assert.ok(tiene('aplicacion_documento', c), `aplicacion_documento.${c}`);
 assert.ok(tiene('cuentas_bancarias', 'tipo'), 'cuentas_bancarias.tipo');
+// D1 · 'Recibo por Honorarios' son 21 caracteres: doc_tipo debe quedar en 40, no en 20
+const docTipoLen = (await db.execute(sql`select character_maximum_length as len from information_schema.columns where table_name = 'documento_pendiente' and column_name = 'doc_tipo'`)) as unknown as { len: number }[];
+assert.equal(docTipoLen[0]?.len, 40, 'documento_pendiente.doc_tipo ancho a 40');
 
 const [bn] = await db.select().from(schema.cuentasBancarias).where(eq(schema.cuentasBancarias.codigo, '00003354431'));
 assert.deepEqual([bn?.tipo, bn?.cuentaContable, bn?.activo], ['detracciones', '1071', true], 'cuenta BN de detracciones');
@@ -189,6 +194,9 @@ CREATE TABLE IF NOT EXISTS detraccion_documento (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS detrdoc_origen_uq ON detraccion_documento (doc_origen_tipo, doc_origen_id);
 
+-- D1: 'Recibo por Honorarios' son 21 caracteres; doc_tipo en 20 truncaba con error 22001.
+ALTER TABLE documento_pendiente ALTER COLUMN doc_tipo TYPE varchar(40);
+
 ALTER TABLE aplicacion_documento ALTER COLUMN asiento_id DROP NOT NULL;
 ALTER TABLE aplicacion_documento ADD COLUMN IF NOT EXISTS origen_tipo varchar(12);
 ALTER TABLE aplicacion_documento ADD COLUMN IF NOT EXISTS origen_id   uuid;
@@ -231,6 +239,15 @@ por:
     uq: uniqueIndex('docpend_uq').on(t.empresaId, t.tipo, t.terceroRuc, t.docTipo, t.docSerie, t.docNumero), // Fase 1 · + tercero (misma serie en 2 proveedores)
 ```
 
+(a2) `documentoPendiente` (D1), reemplazar:
+```ts
+    docTipo: varchar('doc_tipo', { length: 20 }),
+```
+por:
+```ts
+    docTipo: varchar('doc_tipo', { length: 40 }), // Fase 1 · 'Recibo por Honorarios' son 21 caracteres
+```
+
 (b) `aplicacionDocumento`, reemplazar:
 ```ts
     asientoId: uuid('asiento_id').notNull().references(() => asientos.id, { onDelete: 'cascade' }),
@@ -251,7 +268,7 @@ y después de `origenRef: varchar('origen_ref', { length: 80 }),` agregar:
   tipo: varchar('tipo', { length: 15 }).notNull().default('banco'), // Fase 1 · banco | caja | detracciones (CHECK)
 ```
 
-(d) `gastos`, después de `observaciones: text('observaciones'),` agregar:
+(d) `gastos` (schema.ts:820, justo antes de `lockedAt`), después de `observaciones: text('observaciones'),` agregar:
 ```ts
     // Fase 1 · documento: vencimiento (CxP), TC (USD), retención/percepción, referencia de nota de crédito
     fechaVencimiento: date('fecha_vencimiento'),
@@ -569,7 +586,7 @@ export async function aplicar(q: DbLike, o: { origenTipo: 'movimiento' | 'nota';
   }
   const ids = [...porDoc.keys()];
   if (!ids.length) return;
-  const docs = await q.select().from(schema.documentoPendiente).where(inArray(schema.documentoPendiente.id, ids));
+  const docs = await q.select().from(schema.documentoPendiente).where(inArray(schema.documentoPendiente.id, ids)).for('update'); // D12 · lock de fila: 2 pagos concurrentes no pasan ambos
   for (const id of ids) {
     const doc = docs.find((x) => x.id === id);
     if (!doc) throw new DocumentoError(404, `Documento pendiente ${id} no existe`);
@@ -600,7 +617,7 @@ export async function anularAplicacionesDe(q: DbLike, origenTipo: 'movimiento' |
 /** Pago ligado a un documento de origen (gastoId / valorizacionId): aplica hasta el saldo. null si no hay documento o saldo. */
 export async function aplicarPagoAOrigen(q: DbLike, o: { docOrigenTipo: 'gasto' | 'valorizacion'; docOrigenId: string; movimientoId: string; monto: number; fecha: string; userId?: string | null }) {
   const d = schema.documentoPendiente;
-  const [doc] = await q.select().from(d).where(and(eq(d.docOrigenTipo, o.docOrigenTipo), eq(d.docOrigenId, o.docOrigenId))).limit(1);
+  const [doc] = await q.select().from(d).where(and(eq(d.docOrigenTipo, o.docOrigenTipo), eq(d.docOrigenId, o.docOrigenId))).limit(1).for('update'); // D12
   if (!doc) return null;
   const actual = await refrescarDocumento(q, doc.id);
   const aplicable = r2(Math.min(o.monto, Number(actual.saldoPendiente)));
@@ -769,6 +786,14 @@ try {
   assert.equal(quedan.length, 0, 'borrar la compra borra su CxP');
   console.log('  ✓ I borrado');
 
+  // J · PUT protegida: si la compra tiene CxP, editar sus datos de documento se rechaza (D13)
+  const J1 = await call('PUT', `/api/gastos/${A.json.gasto.id}`, { total: 1200 });
+  assert.equal(J1.status, 409, JSON.stringify(J1.json));
+  assert.match(J1.json.error, /cuenta por pagar/i);
+  const J2 = await call('PUT', `/api/gastos/${A.json.gasto.id}`, { observaciones: 'nota de prueba' });
+  assert.equal(J2.status, 200, JSON.stringify(J2.json));
+  console.log('  ✓ J PUT protegida');
+
   console.log('compras VERDE');
 } finally {
   if (creados.length) {
@@ -914,11 +939,12 @@ export async function registrarCompra(q: DbLike, input: { values: typeof schema.
     if (!tasa) throw new DocumentoError(400, `Código de detracción ${extras.detraccion.codigo} no vigente o sin % al ${g.fecha}`);
     const calc = calcularDetraccion({ total: Number(g.total), moneda: g.moneda, tipoCambio: tc, tasa });
     const declarado = extras.detraccion.montoDeclarado;
-    [detraccion] = await q.insert(schema.detraccionDocumento).values({
+    // D2 · noUncheckedIndexedAccess: returning()[0] es `X | undefined`, no se puede asignar por destructuring a `X | null`
+    detraccion = (await q.insert(schema.detraccionDocumento).values({
       docOrigenTipo: 'gasto', docOrigenId: g.id, empresaId, codigo: tasa.codigo, porcentaje: tasa.porcentaje.toFixed(2),
       basePen: calc.basePen.toFixed(2), monto: calc.monto.toFixed(2), montoDeclarado: declarado != null ? declarado.toFixed(2) : null,
       estado: calc.aplica ? 'pendiente' : 'no_aplica',
-    }).returning();
+    }).returning())[0] ?? null;
   }
 
   const aInventario = lineas.filter((l) => l.aInventario);
@@ -972,7 +998,7 @@ function responderErrorCompra(e: unknown, res: import('express').Response) {
 
 (d) Reemplazar el handler `router.post('/proyectos/:id/gastos', ...)` completo por:
 ```ts
-router.post('/proyectos/:id/gastos', async (req, res) => {
+router.post('/proyectos/:id/gastos', async (req, res, next) => {
   const parse = gastoCompraSchema.safeParse(req.body);
   if (!parse.success) return res.status(400).json({ error: parse.error.flatten() });
   const { extras, resto } = separarExtras(parse.data);
@@ -985,14 +1011,14 @@ router.post('/proyectos/:id/gastos', async (req, res) => {
     const r = await db.transaction((tx) => registrarCompra(tx, { values: { ...values, ...cls }, extras, inventariable: resto.inventariable, userId: req.user!.id }));
     res.json({ gasto: r.gasto, documento: r.documento, detraccion: r.detraccion });
   } catch (e) {
-    if (!responderErrorCompra(e, res)) throw e;
+    if (!responderErrorCompra(e, res)) return next(e); // D5 · Express 4 no atrapa el throw async: el request se cuelga sin next
   }
 });
 ```
 
 (e) Reemplazar el handler `router.post('/gastos', ...)` completo por:
 ```ts
-router.post('/gastos', async (req, res) => {
+router.post('/gastos', async (req, res, next) => {
   const parse = gastoCompraSchema.extend({ proyectoId: z.string().uuid().optional().nullable() }).safeParse(req.body);
   if (!parse.success) return res.status(400).json({ error: parse.error.flatten() });
   const { proyectoId, ...data } = parse.data;
@@ -1007,7 +1033,7 @@ router.post('/gastos', async (req, res) => {
     await audit(req, { action: 'create', entityType: 'gasto', entityId: r.gasto.id, after: { total: r.gasto.total, tipo: r.gasto.tipoGasto, proveedor: r.gasto.proveedorRazon, lineas: r.lineas, documento: r.documento?.id ?? null } });
     res.json({ gasto: r.gasto, documento: r.documento, detraccion: r.detraccion });
   } catch (e) {
-    if (!responderErrorCompra(e, res)) throw e;
+    if (!responderErrorCompra(e, res)) return next(e); // D5 · Express 4 no atrapa el throw async: el request se cuelga sin next
   }
 });
 ```
@@ -1076,12 +1102,69 @@ router.delete('/gastos/:id', async (req, res) => {
 });
 ```
 
+(i) D13 · `PUT /gastos/:id` (finanzas.ts:196-238) queda sin tocar y puede editar total/serie/RUC de una compra que ya tiene CxP, dejando `documento_pendiente` desincronizado. En `router.put('/gastos/:id', ...)`, reemplazar:
+```ts
+  const d = parse.data;
+  const errCuenta = await validarCuentaContable(d.cuentaContable); // WS1
+  if (errCuenta) return res.status(400).json({ error: errCuenta });
+```
+por:
+```ts
+  const d = parse.data;
+  // Fase 1 · si la compra ya tiene cuenta por pagar, editar los datos del documento la deja desincronizada (D13)
+  if (['total', 'subtotal', 'igv', 'exonerado', 'moneda', 'serie', 'numero', 'proveedorRuc', 'tipoComprobante'].some((k) => k in d)) {
+    const [docExistente] = await db.select({ id: schema.documentoPendiente.id }).from(schema.documentoPendiente)
+      .where(and(eq(schema.documentoPendiente.docOrigenTipo, 'gasto'), eq(schema.documentoPendiente.docOrigenId, req.params.id!))).limit(1);
+    if (docExistente) return res.status(409).json({ error: 'La compra tiene cuenta por pagar · anula y registra de nuevo' });
+  }
+  const errCuenta = await validarCuentaContable(d.cuentaContable); // WS1
+  if (errCuenta) return res.status(400).json({ error: errCuenta });
+```
+
 - [ ] **Step 5: Run the test to verify it passes**
 
 Run: `node apps/backend/node_modules/tsx/dist/cli.mjs apps/backend/scripts/finanzas/test-compras.ts`
 Expected: `✓ A simple` … `✓ I borrado`, `compras VERDE`.
 
-- [ ] **Step 6: Regression + type check**
+- [ ] **Step 6: D4 · limpiar la CxP huérfana que ahora dejan los tests de WS1**
+
+`POST /api/gastos` ahora también crea `documento_pendiente` (no hay FK de `documento_pendiente` a `gastos`). `ws1/test-ws1-motor.ts` y `ws1/test-ws1-endpoints.ts` crean gastos por esa ruta pero solo borran `gastos` en su `finally`, dejando CxP abiertas huérfanas en cada corrida.
+
+En `apps/backend/scripts/ws1/test-ws1-motor.ts`, dentro del `finally`, reemplazar:
+```ts
+    for (const gid of creados) {
+      await db.delete(schema.asientos).where(and(eq(schema.asientos.origen, 'gasto'), eq(schema.asientos.origenId, gid))).catch(() => {});
+      await db.delete(schema.gastos).where(eq(schema.gastos.id, gid)).catch(() => {});
+    }
+```
+por:
+```ts
+    for (const gid of creados) {
+      await db.delete(schema.asientos).where(and(eq(schema.asientos.origen, 'gasto'), eq(schema.asientos.origenId, gid))).catch(() => {});
+      await db.delete(schema.documentoPendiente).where(and(eq(schema.documentoPendiente.docOrigenTipo, 'gasto'), eq(schema.documentoPendiente.docOrigenId, gid))).catch(() => {}); // D4
+      await db.delete(schema.gastos).where(eq(schema.gastos.id, gid)).catch(() => {});
+    }
+```
+
+En `apps/backend/scripts/ws1/test-ws1-endpoints.ts`, el import de `drizzle-orm` pasa de:
+```ts
+import { eq } from 'drizzle-orm';
+```
+a:
+```ts
+import { and, eq } from 'drizzle-orm';
+```
+y dentro del `finally`, reemplazar:
+```ts
+    if (gastoId) await db.delete(schema.gastos).where(eq(schema.gastos.id, gastoId)).catch(() => {});
+```
+por:
+```ts
+    if (gastoId) await db.delete(schema.documentoPendiente).where(and(eq(schema.documentoPendiente.docOrigenTipo, 'gasto'), eq(schema.documentoPendiente.docOrigenId, gastoId))).catch(() => {}); // D4
+    if (gastoId) await db.delete(schema.gastos).where(eq(schema.gastos.id, gastoId)).catch(() => {});
+```
+
+- [ ] **Step 7: Regression + type check**
 
 Run:
 ```bash
@@ -1089,12 +1172,12 @@ export "$(grep '^DATABASE_URL=' .env)"
 for t in finanzas/test-documentos-pendientes ws1/test-ws1-motor ws1/test-ws1-endpoints ws1/regression cpe/test-cpe-endpoint; do node apps/backend/node_modules/tsx/dist/cli.mjs apps/backend/scripts/$t.ts > /dev/null 2>&1 && echo "OK   $t" || echo "FAIL $t"; done
 pnpm --filter @erp/backend exec tsc --noEmit 2>&1 | grep -E "error TS" | sort > .tmp/tsc-t3.txt; comm -13 .tmp/tsc-base-fase1.txt .tmp/tsc-t3.txt
 ```
-Expected: 5 `OK` y el `comm` sin salida. `ws1/test-ws1-motor` crea gastos por `POST /api/gastos`: si ahora falla por `409` de factura duplicada entre sus casos (mismo proveedor sin serie/número no choca), revisar que su limpieza borre también `documento_pendiente` con `docOrigenId` de sus gastos y agregar esa limpieza en ese test.
+Expected: 5 `OK` y el `comm` sin salida. `ws1/test-ws1-motor` crea gastos por `POST /api/gastos`: si ahora falla por `409` de factura duplicada entre sus casos (mismo proveedor sin serie/número no choca), revisar que su limpieza borre también `documento_pendiente` con `docOrigenId` de sus gastos.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add apps/backend/src/lib/compras.ts apps/backend/src/routes/finanzas.ts apps/backend/scripts/finanzas/test-compras.ts
+git add apps/backend/src/lib/compras.ts apps/backend/src/routes/finanzas.ts apps/backend/scripts/finanzas/test-compras.ts apps/backend/scripts/ws1/test-ws1-motor.ts apps/backend/scripts/ws1/test-ws1-endpoints.ts
 git commit -m "feat(finanzas): registrar compra con lineas, CxP, detraccion, nota de credito e inventario por linea
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
@@ -1276,6 +1359,15 @@ async function insertarMovimientoConAplicaciones(values: typeof schema.movimient
 }
 ```
 
+(d0) D5 · reemplazar la firma del handler:
+```ts
+router.post('/proyectos/:id/movimientos', async (req, res) => {
+```
+por:
+```ts
+router.post('/proyectos/:id/movimientos', async (req, res, next) => {
+```
+
 (d) En `router.post('/proyectos/:id/movimientos', ...)`, reemplazar:
 ```ts
   const [mov] = await db.insert(schema.movimientos).values({ proyectoId: req.params.id!, ...movValues(parse.data), userId: req.user!.id }).returning();
@@ -1288,10 +1380,19 @@ por:
     mov = await insertarMovimientoConAplicaciones({ proyectoId: req.params.id!, ...movValues(parse.data), userId: req.user!.id }, parse.data, req.user!.id);
   } catch (e) {
     if (e instanceof DocumentoError) return res.status(e.status).json({ error: e.message });
-    throw e;
+    return next(e); // D5 · Express 4 no atrapa el throw async
   }
 ```
 (las líneas siguientes usan `mov!` y siguen válidas).
+
+(e0) D5 · reemplazar la firma del handler:
+```ts
+router.post('/movimientos', async (req, res) => {
+```
+por:
+```ts
+router.post('/movimientos', async (req, res, next) => {
+```
 
 (e) En `router.post('/movimientos', ...)`: justo después de `if (await bloqueoPeriodo(rest.fecha, res)) return;` agregar:
 ```ts
@@ -1308,7 +1409,7 @@ por:
     mov = await insertarMovimientoConAplicaciones({ proyectoId: proyectoId ?? null, ...base, userId: uid }, parse.data, uid);
   } catch (e) {
     if (e instanceof DocumentoError) return res.status(e.status).json({ error: e.message });
-    throw e;
+    return next(e); // D5 · Express 4 no atrapa el throw async
   }
 ```
 
@@ -1380,6 +1481,26 @@ por:
       }
 ```
 
+(d) D5 · `aplicarPagoAOrigen` puede lanzar `DocumentoError` (por ejemplo si la CxP ya está cancelada) dentro de este handler; hoy cualquier error cae en el 502 genérico. En `router.post('/ordenes-compra/:id/pagar', ...)`, reemplazar:
+```ts
+    await audit(req, { action: 'pago_oc', entityType: 'orden_compra', entityId: oc.id, after: { numero: oc.numero, total: oc.total, cuentaId, fechaPago: fechaPagoEff } });
+    res.json({ oc: result.updated, gastoId: result.gastoId, comprobantePath });
+  } catch (e) {
+    res.status(502).json({ error: (e as Error).message });
+  }
+});
+```
+por:
+```ts
+    await audit(req, { action: 'pago_oc', entityType: 'orden_compra', entityId: oc.id, after: { numero: oc.numero, total: oc.total, cuentaId, fechaPago: fechaPagoEff } });
+    res.json({ oc: result.updated, gastoId: result.gastoId, comprobantePath });
+  } catch (e) {
+    if (e instanceof DocumentoError) return res.status(e.status).json({ error: e.message }); // D5 · no todo error de esta ruta es un 502 de archivo/NAS
+    res.status(502).json({ error: (e as Error).message });
+  }
+});
+```
+
 - [ ] **Step 5: Run the test to verify it passes**
 
 Run: `node apps/backend/node_modules/tsx/dist/cli.mjs apps/backend/scripts/finanzas/test-pagos.ts`
@@ -1433,7 +1554,7 @@ import '../../src/env.js'; // carga .env (erp_mmh_test) antes de que @erp/db abr
 import assert from 'node:assert/strict';
 import express from 'express';
 import { db, schema } from '@erp/db';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { authMiddleware } from '../../src/middleware/auth.js';
 import { lucia } from '../../src/auth.js';
 import finanzasRoutes from '../../src/routes/finanzas.js';
@@ -1481,6 +1602,14 @@ try {
   assert.equal(P.status, 200, JSON.stringify(P.json));
   movs.push(P.json.movimiento.id);
 
+  // K · D3: pago legacy por gastoId MAYOR que el saldo (580) no debe descuadrar el asiento; el residual (320) va a anticipos
+  const K = await call('POST', '/api/gastos', { fecha: '2099-04-07', destino: 'corporativo', tipoGasto: 'Compra Materiales', proveedorRuc: RUC, proveedorRazon: 'PROV MOTOR', tipoComprobante: 'Factura', serie: 'F996', numero: '1', subtotal: 491.53, igv: 88.47, total: 580 });
+  assert.equal(K.status, 200, JSON.stringify(K.json));
+  gastos.push(K.json.gasto.id);
+  const PK = await call('POST', '/api/movimientos', { fecha: '2099-04-11', tipoMovimiento: 'Egreso', cuentaId: bcp!.id, moneda: 'PEN', monto: 900, descripcion: 'TEST-FASE1-MOTOR-LEGACY', gastoId: K.json.gasto.id });
+  assert.equal(PK.status, 200, JSON.stringify(PK.json));
+  movs.push(PK.json.movimiento.id);
+
   const G1 = await call('POST', '/api/contabilidad/generar', { periodo: PERIODO });
   assert.equal(G1.status, 200, JSON.stringify(G1.json));
   assert.deepEqual(G1.json.detalle.errores, [], 'sin errores de motor');
@@ -1501,6 +1630,18 @@ try {
   assert.deepEqual(aplic.map((a) => a.asientoId), [lp!.asiento.id], 'aplicación enlazada al asiento del pago');
   console.log('  ✓ pago aplicado');
 
+  // K · D3: el residual (320 = 900 - 580) no descuadra el asiento; va de debe a la cuenta de anticipo
+  const CTA_ANTICIPO_PROVEEDOR = '42121'; // D3 · debe coincidir con el valor confirmado en la Task 5 Step 4 (a-1)
+  const [ak] = await db.select().from(schema.asientos).where(and(eq(schema.asientos.origen, 'movimiento'), eq(schema.asientos.origenId, PK.json.movimiento.id)));
+  assert.ok(ak, 'el pago legacy de 900 sobre un saldo de 580 SI postea (D3)');
+  const lsk = await db.select().from(schema.asientosLineas).where(eq(schema.asientosLineas.asientoId, ak!.id));
+  const totalDebeK = lsk.reduce((s, l) => s + Number(l.debe), 0);
+  const totalHaberK = lsk.reduce((s, l) => s + Number(l.haber), 0);
+  assert.ok(Math.abs(totalDebeK - totalHaberK) < 0.01, `asiento cuadrado: debe ${totalDebeK} haber ${totalHaberK}`);
+  const anticipoLinea = lsk.find((l) => l.cuenta === CTA_ANTICIPO_PROVEEDOR);
+  assert.equal(Number(anticipoLinea?.debe ?? 0), 320, 'residual 320 (900 - 580) va de debe a la cuenta de anticipo (D3)');
+  console.log('  ✓ K pago legacy mayor al saldo no descuadra (D3)');
+
   const G2 = await call('POST', '/api/contabilidad/generar', { periodo: PERIODO });
   assert.equal(G2.json.generados, 0, 'segunda corrida no duplica');
   console.log('motor-cxp VERDE');
@@ -1513,6 +1654,8 @@ try {
   if (movs.length) await db.delete(schema.movimientos).where(inArray(schema.movimientos.id, movs));
   if (docs.length) await db.delete(schema.documentoPendiente).where(inArray(schema.documentoPendiente.id, docs.map((d) => d.id)));
   if (gastos.length) await db.delete(schema.gastos).where(inArray(schema.gastos.id, gastos));
+  // D11 · '/generar' abre el periodo 2099-04 (periodos_contables); nada mas vive ahi, asi que se borra
+  await db.delete(schema.periodosContables).where(and(eq(schema.periodosContables.anio, 2099), eq(schema.periodosContables.mes, 4), isNull(schema.periodosContables.proyectoId)));
   await lucia.invalidateSession(session.id);
   server.close();
 }
@@ -1595,16 +1738,30 @@ hasta el cierre del `try { ... }` de ese loop (la línea `      resultado.gastos
       // Fase 1 · sub-mayor ↔ mayor: la CxP apunta al asiento que la provisionó
       await db.update(schema.documentoPendiente).set({ asientoOrigenId: asiento.id, updatedAt: new Date() })
         .where(and(eq(schema.documentoPendiente.docOrigenTipo, 'gasto'), eq(schema.documentoPendiente.docOrigenId, g.id)));
+      // D16 · la NC tambien mueve 4212: enlazar su aplicacion (origenTipo='nota') al asiento que la postea
+      if (esNotaCredito(g.tipoComprobante)) {
+        await db.update(schema.aplicacionDocumento).set({ asientoId: asiento.id })
+          .where(and(eq(schema.aplicacionDocumento.origenTipo, 'nota'), eq(schema.aplicacionDocumento.origenId, g.id), eq(schema.aplicacionDocumento.estado, 'activa'), isNull(schema.aplicacionDocumento.asientoId)));
+      }
       resultado.gastos++;
 ```
 (el `} catch (e) { resultado.errores.push(...) }` y el cierre del loop quedan como están).
 
 - [ ] **Step 4: Motor — bloque de movimientos**
 
-(a) Justo después de la definición de `cuentas104` (antes de `for (const m of movs) {`) agregar:
+(a-1) D3 · confirmar las cuentas de anticipo (cuando el pago/cobro no se aplica del todo a un documento) y de diferencia de cambio (cuando sí se aplica del todo pero en otra moneda/TC). Correr:
+```powershell
+$env:PGPASSWORD='MiClave123'; & 'C:\Program Files\PostgreSQL\18\bin\psql.exe' -U postgres -d erp_mmh_test -c "SELECT codigo FROM plan_contable WHERE codigo LIKE '422%' OR codigo LIKE '122%' OR codigo IN ('676','776') ORDER BY codigo;"
+```
+Expected: al menos una fila `422...` (anticipos a proveedores), una `122...` (anticipos de clientes) y las cuentas `676` y `776` (diferencia de cambio, pérdida/ganancia). Si `676`/`776` no existen, detenerse y escalar (D3 asume que ya están en el PCGE cargado). Usar la divisionaria MÁS PROFUNDA (el código más largo) de `422` y de `122` como `CTA_ANTICIPO_PROVEEDOR` / `CTA_ANTICIPO_CLIENTE` en el paso (a) siguiente — reemplazar los valores de ejemplo `'42121'` / `'12211'` por los códigos reales que devuelva esta consulta.
+
+(a) Justo después de la definición de `cuentas104` (contabilidad.ts:989-991, antes de `for (const m of movs) {`) agregar:
 ```ts
-  // Fase 1 · aplicaciones activas de cada movimiento → cuenta control y monto en PEN (TC del documento)
-  const aplicPorMov = new Map<string, { cuenta: string; monto: number }[]>();
+  // Fase 1 · cuentas de anticipo cuando el residual no se aplico a ningun documento (D3). Confirmadas en el paso (a-1).
+  const CTA_ANTICIPO_PROVEEDOR = '42121'; // TODO (a-1): reemplazar por la divisionaria mas profunda de 422 en erp_mmh_test
+  const CTA_ANTICIPO_CLIENTE = '12211'; // TODO (a-1): reemplazar por la divisionaria mas profunda de 122 en erp_mmh_test
+  // Fase 1 · aplicaciones activas de cada movimiento → cuenta control, monto en PEN (TC del documento) y monto en la moneda del documento
+  const aplicPorMov = new Map<string, { cuenta: string; monto: number; montoDoc: number }[]>();
   if (movs.length) {
     const a = schema.aplicacionDocumento, dp = schema.documentoPendiente;
     const filas = await db.select({ origenId: a.origenId, monto: a.montoAplicado, tc: dp.tipoCambio, cuenta: dp.cuentaControl })
@@ -1612,7 +1769,7 @@ hasta el cierre del `try { ... }` de ese loop (la línea `      resultado.gastos
       .where(and(eq(a.origenTipo, 'movimiento'), eq(a.estado, 'activa'), inArray(a.origenId, movs.map((m) => m.id))));
     for (const f of filas) {
       if (!f.origenId) continue;
-      aplicPorMov.set(f.origenId, [...(aplicPorMov.get(f.origenId) ?? []), { cuenta: f.cuenta, monto: Number(f.monto) * (Number(f.tc) > 0 ? Number(f.tc) : 1) }]);
+      aplicPorMov.set(f.origenId, [...(aplicPorMov.get(f.origenId) ?? []), { cuenta: f.cuenta, monto: Number(f.monto) * (Number(f.tc) > 0 ? Number(f.tc) : 1), montoDoc: Number(f.monto) }]);
     }
   }
 ```
@@ -1630,6 +1787,22 @@ por:
       for (const ap of aplicPorMov.get(m.id)!) porCuenta.set(ap.cuenta, (porCuenta.get(ap.cuenta) ?? 0) + ap.monto);
       const controles: LineaIn[] = [...porCuenta.entries()].map(([cuenta, monto]) =>
         m.tipoMovimiento === 'Ingreso' ? { cuenta, descripcion: 'Cobro aplicado', debe: 0, haber: monto } : { cuenta, descripcion: 'Pago aplicado', debe: monto, haber: 0 });
+      // D3 · el banco (total) y la suma de aplicaciones (PEN) no siempre calzan: pago > saldo (legacy), cobro < saldo (CxC parcial),
+      // o USD a un TC distinto del documento. El residual va a diferencia de cambio (si sí se aplicó todo en su propia moneda) o a una
+      // cuenta de anticipo (si de verdad quedó sin aplicar).
+      const aplicadoPen = [...porCuenta.values()].reduce((s, v) => s + v, 0);
+      const resto = Math.round((total - aplicadoPen) * 100) / 100;
+      if (Math.abs(resto) > 0.01) {
+        const aplicadoDoc = aplicPorMov.get(m.id)!.reduce((s, ap) => s + ap.montoDoc, 0);
+        const esFx = Math.abs(aplicadoDoc - Number(m.monto)) <= 0.01;
+        const ing = m.tipoMovimiento === 'Ingreso';
+        const cuentaResto = esFx
+          ? ((ing ? resto > 0 : resto < 0) ? '776' : '676')
+          : (m.cuentaContable && !['4212', '1212'].includes(m.cuentaContable) ? m.cuentaContable : (ing ? CTA_ANTICIPO_CLIENTE : CTA_ANTICIPO_PROVEEDOR));
+        const descripcionResto = esFx ? 'Diferencia de cambio' : 'No aplicado a documentos';
+        if (!ing) controles.push(resto > 0 ? { cuenta: cuentaResto, descripcion: descripcionResto, debe: resto, haber: 0 } : { cuenta: cuentaResto, descripcion: descripcionResto, debe: 0, haber: Math.abs(resto) });
+        else controles.push(resto > 0 ? { cuenta: cuentaResto, descripcion: descripcionResto, debe: 0, haber: resto } : { cuenta: cuentaResto, descripcion: descripcionResto, debe: Math.abs(resto), haber: 0 });
+      }
       lineas = m.tipoMovimiento === 'Ingreso'
         ? [{ cuenta: banco, descripcion: m.descripcion, debe: total, haber: 0 }, ...controles]
         : [...controles, { cuenta: banco, descripcion: m.descripcion, debe: 0, haber: total }];
@@ -1682,7 +1855,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 **Files:**
 - Create: `apps/backend/src/lib/ventas.ts`
-- Modify: `apps/backend/src/routes/proyectos.ts` (handler `PATCH /:id/valorizaciones/:valId/estado`)
+- Modify: `apps/backend/src/routes/proyectos.ts` (handler `PATCH /:id/valorizaciones/:valId/estado`, D5: agrega `next` a su firma)
 - Test: `apps/backend/scripts/finanzas/test-ventas.ts`
 
 **Interfaces:**
@@ -1851,6 +2024,15 @@ import { crearDocumentoVenta } from '../lib/ventas.js';
 import { DocumentoError, aplicarPagoAOrigen } from '../lib/documentosPendientes.js';
 ```
 
+(a0) D5 · reemplazar la firma del handler:
+```ts
+router.patch('/:id/valorizaciones/:valId/estado', async (req, res) => {
+```
+por:
+```ts
+router.patch('/:id/valorizaciones/:valId/estado', async (req, res, next) => {
+```
+
 (b) Reemplazar el bloque desde el comentario `// Al marcar FACTURADA se captura el comprobante electrónico (serie/número reales · o mock auto-correlativo si no se envían).` hasta el cierre del `if (estado === 'facturada') { ... }` por:
 ```ts
   // Al marcar FACTURADA se captura el comprobante electrónico REAL (Fase 1: sin número mock).
@@ -1920,7 +2102,7 @@ por:
   });
   } catch (e) {
     if (e instanceof DocumentoError) return res.status(e.status).json({ error: e.message });
-    throw e;
+    return next(e); // D5 · Express 4 no atrapa el throw async
   }
   if (!val) return res.status(404).json({ error: 'Valorización no encontrada' });
 ```
@@ -1960,7 +2142,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Consumes: Task 3 (`POST /api/gastos` acepta `fechaVencimiento`, `detraccion{codigo,montoDeclarado?}`, `retencion{tipo,monto}`; 409 factura duplicada; 400 retención IGV sin agente), Task 4 (movimiento con `gastoId` aplica solo a la CxP), Task 6 (`comprobante.detraccionCodigo`; 400 sin serie/número), Fase 0 (`GET /api/catalogos/detracciones?fecha=` → `{ fecha, tasas: { codigo, descripcion, anexo, porcentaje, montoMinimo }[] }`).
 - Produces: `api.catalogos.detracciones(fecha?: string)`; tipo `DetraccionTasa`. Nada del backend depende de esta task.
 
-**Nota de diseño (prorrateo):** el prorrateo actual crea N gastos con la misma serie-número. Con la CxP de Task 3 el segundo gasto recibe `409 factura duplicada`. En esta fase **solo la primera fila lleva serie y número**; las demás van sin serie/número y con la referencia en la descripción. Cada fila crea su propia CxP por su monto (Σ = total de la factura). El prorrateo pasa a líneas con obra por línea en la Fase 4, cuando `costos-obra` lea `gasto_lineas`.
+**Nota de diseño (prorrateo):** el prorrateo actual crea N gastos con la misma serie-número. Con la CxP de Task 3 el segundo gasto recibe `409 factura duplicada`. En esta fase **solo la primera fila lleva serie y número**; las demás van sin serie/número y con la referencia en la descripción. Cada fila crea su propia CxP por su monto (Σ = total de la factura). El prorrateo pasa a líneas con obra por línea en la Fase 4, cuando `costos-obra` lea `gasto_lineas`. D17 · el prorrateo tampoco envía detracción ni retención en ninguna fila (igual que hoy): se corrige en la Fase 4 cuando el prorrateo pase a líneas por obra.
 
 No hay framework de tests de frontend: la verificación es `tsc` + prueba manual guiada (Step 5).
 
@@ -2027,6 +2209,15 @@ por:
     aplicaDetraccion: false, detraccionCodigo: '030',
 ```
 
+(c2) D14 · el 3% IGV siempre lo rechaza el backend (`empresa.config` es `{}` hoy, sin agente de retención): tildar "Retención" sin cambiar el % daba 400. En el mismo estado `f`, reemplazar:
+```ts
+    aplicaRetencion: false, retencionPct: '3',
+```
+por:
+```ts
+    aplicaRetencion: false, retencionPct: '8',
+```
+
 (d) Reemplazar:
 ```ts
   const detrac = !isBanc && f.aplicaDetraccion ? totalComp * (parseFloat(f.detraccionPct) / 100) : 0;
@@ -2040,7 +2231,7 @@ por:
   const detrac = !isBanc && f.aplicaDetraccion && tasaSel && f.moneda === 'PEN' && totalComp > tasaSel.montoMinimo ? Math.round(totalComp * tasaSel.porcentaje / 100) : 0;
 ```
 
-(e) Justo antes de `const create = useMutation({` agregar:
+(e) Justo antes del `const create = useMutation({` de `MovModal` (el que sigue a `const buildMov`, ~L823; NO el de `CuentaModal`, ~L688, donde `f`/`retenc` no existen — D9) agregar:
 ```ts
   // Fase 1 · datos tributarios que la compra guarda aunque quede pendiente (antes se perdían: bug L869)
   const extrasCompra = (): Pick<GastoInput, 'fechaVencimiento' | 'detraccion' | 'retencion'> => ({
@@ -2109,6 +2300,16 @@ por:
                     )}
 ```
 
+(i) D14 · el 3% IGV requiere agente de retención (hoy ninguna empresa lo tiene configurado): sacar esa opción del `<select>` de retención hasta que exista la Fase 2. Reemplazar:
+```tsx
+                    {f.aplicaRetencion && <select className={cn(inputCls, 'mt-1.5')} value={f.retencionPct} onChange={(e) => set({ retencionPct: e.target.value })}><option value="3">3% · Retención IGV</option><option value="8">8% · Honorarios 4ta</option></select>}
+```
+por:
+```tsx
+                    {/* ponytail: 3% IGV vuelve cuando empresa.config.agenteRetencion exista (Fase 2) */}
+                    {f.aplicaRetencion && <select className={cn(inputCls, 'mt-1.5')} value={f.retencionPct} onChange={(e) => set({ retencionPct: e.target.value })}><option value="8">8% · Honorarios 4ta</option></select>}
+```
+
 - [ ] **Step 3: `ValorizacionesTab.tsx` — `FacturaValoModal`**
 
 (a) En `cambiarEstado`, reemplazar el tipo de `comprobante`:
@@ -2153,7 +2354,7 @@ function FacturaValoModal({ pending, onClose, onConfirm }: {
 por:
 ```tsx
 // Mini-modal · al marcar valo facturada captura el comprobante electrónico REAL (Registro de Ventas / RVIE / CxC 1212).
-// Fase 1 · serie y número obligatorios: ya no existe el correlativo automático.
+// Fase 1 · serie y número obligatorios: ya no hay número mock.
 function FacturaValoModal({ pending, error, onClose, onConfirm }: {
   pending: boolean;
   error: string | null;
@@ -2234,7 +2435,7 @@ JOIN documento_pendiente d ON d.doc_origen_tipo = 'gasto' AND d.doc_origen_id = 
 LEFT JOIN detraccion_documento dd ON dd.doc_origen_tipo = 'gasto' AND dd.doc_origen_id = g.id
 WHERE g.proveedor_ruc = '20999999995' AND g.numero = '7001';
 ```
-Expected: vencimiento guardado, `abierto`, `1180.00`, `030`, `118.00`.
+Expected: vencimiento guardado, `abierto`, `1180.00`, `030`, `47.00` (1180 × 4% = 47.2, redondeado a 47.00).
 3. Repetir la misma factura → el modal muestra el error `ya está registrada` (409).
 4. Proyecto con valorización aprobada → Marcar facturada: el botón queda deshabilitado sin número; con número `E001-99001` y detracción 500 + código → guarda y crea la CxC.
 5. Limpiar: `DELETE` de los gastos/documentos/detracciones de RUC `20999999995` y revertir la valorización de prueba (`status`, `comprobante_*` a como estaban), o anular desde la UI.
@@ -2263,4 +2464,5 @@ pnpm --filter @erp/frontend exec tsc --noEmit
 ```
 Expected: todo `OK`, `comm` sin salida, `tsc` frontend exit 0.
 - [ ] Verificar que no quedaron residuos de prueba: `SELECT count(*) FROM gastos WHERE proveedor_ruc LIKE '209999999%' OR fecha >= '2099-01-01';` → 0.
+- [ ] D4 · verificar que no quedaron CxP huérfanas (sin su gasto) de las corridas de test: `SELECT count(*) FROM documento_pendiente d WHERE d.doc_origen_tipo='gasto' AND NOT EXISTS (SELECT 1 FROM gastos g WHERE g.id=d.doc_origen_id);` → 0.
 - [ ] Actualizar memoria del proyecto (estado Fase 1 en `erp_mmh_test`, desviaciones WS0, limitación del prorrateo) y dejar la Fase 2 lista para planificar: reglas de validación ampliadas, percepción aplicada, diferencia de cambio, pago de detracción desde la cuenta BN.
