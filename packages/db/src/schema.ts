@@ -667,7 +667,7 @@ export const documentoPendiente = pgTable(
     cuentaControl: varchar('cuenta_control', { length: 10 }).notNull().references(() => planContable.codigo),
     terceroRuc: varchar('tercero_ruc', { length: 11 }),
     terceroRazon: varchar('tercero_razon', { length: 255 }),
-    docTipo: varchar('doc_tipo', { length: 20 }),
+    docTipo: varchar('doc_tipo', { length: 40 }), // Fase 1 · 'Recibo por Honorarios' son 21 caracteres
     docSerie: varchar('doc_serie', { length: 20 }),
     docNumero: varchar('doc_numero', { length: 30 }),
     fechaEmision: date('fecha_emision'),
@@ -686,7 +686,7 @@ export const documentoPendiente = pgTable(
     updatedAt: timestamp('updated_at').notNull().defaultNow(),
   },
   (t) => ({
-    uq: uniqueIndex('docpend_uq').on(t.empresaId, t.tipo, t.docTipo, t.docSerie, t.docNumero),
+    uq: uniqueIndex('docpend_uq').on(t.empresaId, t.tipo, t.terceroRuc, t.docTipo, t.docSerie, t.docNumero), // Fase 1 · + tercero (misma serie en 2 proveedores)
     controlIdx: index('docpend_control_idx').on(t.empresaId, t.cuentaControl),
     asientoIdx: index('docpend_asiento_idx').on(t.asientoOrigenId),
   }),
@@ -700,7 +700,7 @@ export const aplicacionDocumento = pgTable(
   {
     id: uuid('id').primaryKey().defaultRandom(),
     documentoPendienteId: uuid('documento_pendiente_id').notNull().references(() => documentoPendiente.id, { onDelete: 'cascade' }),
-    asientoId: uuid('asiento_id').notNull().references(() => asientos.id, { onDelete: 'cascade' }),
+    asientoId: uuid('asiento_id').references(() => asientos.id, { onDelete: 'cascade' }), // Fase 1 · null hasta que el motor postea el pago
     asientoLineaId: uuid('asiento_linea_id').references(() => asientosLineas.id, { onDelete: 'set null' }),
     montoAplicado: decimal('monto_aplicado', { precision: 14, scale: 2 }).notNull(), // > 0 (CHECK)
     moneda: varchar('moneda', { length: 3 }).notNull().default('PEN'),
@@ -709,6 +709,9 @@ export const aplicacionDocumento = pgTable(
     estado: varchar('estado', { length: 10 }).notNull().default('activa'), // activa | anulada (CHECK)
     createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
     origenRef: varchar('origen_ref', { length: 80 }),
+    // Fase 1 · captura del pago antes del asiento: movimiento (pago/cobro) o nota (NC que reduce la factura)
+    origenTipo: varchar('origen_tipo', { length: 12 }), // movimiento | nota (CHECK)
+    origenId: uuid('origen_id'),
     createdAt: timestamp('created_at').notNull().defaultNow(),
   },
   (t) => ({
@@ -747,6 +750,7 @@ export const cuentasBancarias = pgTable('cuentas_bancarias', {
   moneda: varchar('moneda', { length: 3 }).notNull().default('PEN'),
   descripcion: varchar('descripcion', { length: 120 }), // Cuenta Corriente Principal · Caja Chica Oficina
   cuentaContable: varchar('cuenta_contable', { length: 10 }), // F1 · sub-cuenta PCGE 104x (104101…) para asientos de caja
+  tipo: varchar('tipo', { length: 15 }).notNull().default('banco'), // Fase 1 · banco | caja | detracciones (CHECK)
   activo: boolean('activo').notNull().default(true),
   createdAt: timestamp('created_at').notNull().defaultNow(),
 });
@@ -818,6 +822,15 @@ export const gastos = pgTable(
     cuentaContableOrigen: varchar('cuenta_contable_origen', { length: 10 }), // MANUAL | SUGERIDO (null = no elegida)
     prorrateable: boolean('prorrateable').notNull().default(false),
     observaciones: text('observaciones'),
+    // Fase 1 · documento: vencimiento (CxP), TC (USD), retención/percepción, referencia de nota de crédito
+    fechaVencimiento: date('fecha_vencimiento'),
+    tipoCambio: decimal('tipo_cambio', { precision: 8, scale: 4 }),
+    retencion: decimal('retencion', { precision: 14, scale: 2 }).notNull().default('0'),
+    retencionTipo: varchar('retencion_tipo', { length: 10 }), // igv3 | renta4ta (CHECK)
+    percepcion: decimal('percepcion', { precision: 14, scale: 2 }).notNull().default('0'),
+    docModificaSerie: varchar('doc_modifica_serie', { length: 20 }),
+    docModificaNumero: varchar('doc_modifica_numero', { length: 40 }),
+    motivoNota: varchar('motivo_nota', { length: 2 }), // catálogo SUNAT 09
     lockedAt: timestamp('locked_at'), // H2 · congelado por cierre de periodo
     createdAt: timestamp('created_at').notNull().defaultNow(),
   },
@@ -829,6 +842,55 @@ export const gastos = pgTable(
 );
 export type Gasto = typeof gastos.$inferSelect;
 export type NewGasto = typeof gastos.$inferInsert;
+
+// Fase 1 · detalle opcional de una compra. Sin líneas = una línea implícita (comportamiento anterior).
+export const gastoLineas = pgTable(
+  'gasto_lineas',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    gastoId: uuid('gasto_id').notNull().references(() => gastos.id, { onDelete: 'cascade' }),
+    numero: integer('numero').notNull(),
+    descripcion: text('descripcion').notNull(),
+    unidad: varchar('unidad', { length: 10 }),
+    cantidad: decimal('cantidad', { precision: 14, scale: 4 }).notNull().default('1'),
+    valorUnitario: decimal('valor_unitario', { precision: 14, scale: 5 }).notNull().default('0'),
+    descuento: decimal('descuento', { precision: 14, scale: 2 }).notNull().default('0'),
+    valorVenta: decimal('valor_venta', { precision: 14, scale: 2 }).notNull(), // cantidad × valorUnitario − descuento
+    afectacionIgv: varchar('afectacion_igv', { length: 2 }).notNull().default('10'), // catálogo SUNAT 07
+    igv: decimal('igv', { precision: 14, scale: 2 }).notNull().default('0'),
+    cuentaContable: varchar('cuenta_contable', { length: 10 }).references(() => planContable.codigo),
+    partidaId: uuid('partida_id').references(() => partidas.id, { onDelete: 'set null' }),
+    proyectoId: uuid('proyecto_id').references(() => proyectos.id, { onDelete: 'set null' }),
+    aInventario: boolean('a_inventario').notNull().default(false),
+  },
+  (t) => ({ numeroUq: uniqueIndex('gasto_lineas_numero_uq').on(t.gastoId, t.numero) }),
+);
+export type GastoLinea = typeof gastoLineas.$inferSelect;
+
+// Fase 1 · detracción por documento (compra o venta): calculada, declarada y constancia de depósito.
+export const detraccionDocumento = pgTable(
+  'detraccion_documento',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    docOrigenTipo: varchar('doc_origen_tipo', { length: 12 }).notNull(), // gasto | valorizacion (CHECK)
+    docOrigenId: uuid('doc_origen_id').notNull(),
+    empresaId: integer('empresa_id').notNull().references(() => empresas.id),
+    codigo: varchar('codigo', { length: 3 }).notNull(),
+    porcentaje: decimal('porcentaje', { precision: 5, scale: 2 }).notNull(),
+    basePen: decimal('base_pen', { precision: 14, scale: 2 }).notNull(),
+    monto: decimal('monto', { precision: 14, scale: 2 }).notNull(), // calculado (entero más cercano, PEN)
+    montoDeclarado: decimal('monto_declarado', { precision: 14, scale: 2 }),
+    cuentaBn: varchar('cuenta_bn', { length: 20 }),
+    npd: varchar('npd', { length: 20 }),
+    constanciaNumero: varchar('constancia_numero', { length: 30 }),
+    fechaDeposito: date('fecha_deposito'),
+    estado: varchar('estado', { length: 12 }).notNull().default('pendiente'), // pendiente | depositada | no_aplica (CHECK)
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+    updatedAt: timestamp('updated_at').notNull().defaultNow(),
+  },
+  (t) => ({ origenUq: uniqueIndex('detrdoc_origen_uq').on(t.docOrigenTipo, t.docOrigenId) }),
+);
+export type DetraccionDocumento = typeof detraccionDocumento.$inferSelect;
 
 // FIN-2 · Movimientos de cuenta (Fact de Flujo Cuentas) · caja real por cuenta bancaria
 export const movimientos = pgTable(
