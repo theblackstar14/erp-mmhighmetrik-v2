@@ -50,21 +50,41 @@ const tcSchema = z.object({
     compra: z.number().positive().max(99),
     venta: z.number().positive().max(99),
   })).min(1).max(400),
+}).superRefine((v, ctx) => {
+  const vistos = new Set<string>();
+  v.filas.forEach((f, i) => {
+    const key = `${f.fecha}|${f.moneda}`;
+    if (vistos.has(key)) ctx.addIssue({ code: z.ZodIssueCode.custom, message: `fecha+moneda duplicado: ${key}`, path: ['filas', i] });
+    vistos.add(key);
+  });
 });
 
-router.put('/tipo-cambio', requirePermiso('contabilidad', 'edicion'), async (req, res) => {
-  const parse = tcSchema.safeParse(req.body);
-  if (!parse.success) return res.status(400).json({ error: parse.error.flatten() });
-  const { filas } = parse.data;
-  await db.insert(schema.tipoCambio)
-    .values(filas.map((f) => ({ fecha: f.fecha, moneda: f.moneda, compra: String(f.compra), venta: String(f.venta), fuente: 'manual' })))
-    .onConflictDoUpdate({
-      target: [schema.tipoCambio.fecha, schema.tipoCambio.moneda],
-      set: { compra: sqlExcluded('compra'), venta: sqlExcluded('venta'), fuente: 'manual', updatedAt: new Date() },
+router.put('/tipo-cambio', requirePermiso('contabilidad', 'edicion'), async (req, res, next) => {
+  try {
+    const parse = tcSchema.safeParse(req.body);
+    if (!parse.success) return res.status(400).json({ error: parse.error.flatten() });
+    const { filas } = parse.data;
+    const t = schema.tipoCambio;
+    const existentes = await db.select().from(t)
+      .where(or(...filas.map((f) => and(eq(t.fecha, f.fecha), eq(t.moneda, f.moneda))!)));
+    const before = existentes.map((r) => ({ fecha: r.fecha, moneda: r.moneda, compra: Number(r.compra), venta: Number(r.venta) }));
+    await db.insert(schema.tipoCambio)
+      .values(filas.map((f) => ({ fecha: f.fecha, moneda: f.moneda, compra: String(f.compra), venta: String(f.venta), fuente: 'manual' })))
+      .onConflictDoUpdate({
+        target: [schema.tipoCambio.fecha, schema.tipoCambio.moneda],
+        set: { compra: sqlExcluded('compra'), venta: sqlExcluded('venta'), fuente: 'manual', updatedAt: new Date() },
+      });
+    const fechas = filas.map((f) => f.fecha).sort();
+    await audit(req, {
+      action: 'update_tipo_cambio', entityType: 'tipo_cambio',
+      before,
+      after: { empresaId: req.empresaId, n: filas.length, desde: fechas[0], hasta: fechas[fechas.length - 1], filas },
+      motivo: null,
     });
-  const fechas = filas.map((f) => f.fecha).sort();
-  await audit(req, { action: 'update_tipo_cambio', entityType: 'tipo_cambio', after: { n: filas.length, desde: fechas[0], hasta: fechas[fechas.length - 1] } });
-  res.json({ ok: true, n: filas.length });
+    res.json({ ok: true, n: filas.length });
+  } catch (e) {
+    next(e);
+  }
 });
 
 export default router;

@@ -47,6 +47,18 @@ try {
   assert.equal((await call('GET', '/api/catalogos/tipo-cambio?fecha=2099-02-01&moneda=USD')).status, 404, 'sin TC reciente');
   assert.equal((await call('PUT', '/api/catalogos/tipo-cambio', { filas: [{ fecha: '2099-01-09', moneda: 'XXX', compra: 1, venta: 1 }] })).status, 400, 'moneda invalida');
 
+  assert.equal((await call('PUT', '/api/catalogos/tipo-cambio', { filas: [
+    { fecha: '2099-01-20', moneda: 'USD', compra: 3.4, venta: 3.41 },
+    { fecha: '2099-01-20', moneda: 'USD', compra: 3.5, venta: 3.51 },
+  ] })).status, 400, 'fecha+moneda duplicado en la misma solicitud');
+
+  const putReup = await call('PUT', '/api/catalogos/tipo-cambio', { filas: [
+    { fecha: '2099-01-09', moneda: 'USD', compra: 3.362, venta: 3.370 },
+  ] });
+  assert.deepEqual(putReup.json, { ok: true, n: 1 }, 're-PUT del mismo fecha+moneda (rama UPDATE del upsert)');
+  const tcReup = await call('GET', '/api/catalogos/tipo-cambio?fecha=2099-01-10&moneda=USD');
+  assert.deepEqual(tcReup.json, { fecha: '2099-01-09', moneda: 'USD', compra: 3.362, venta: 3.37, diasAtras: 1 }, 'el re-PUT piso el valor anterior');
+
   console.log('catalogos-endpoints VERDE');
 } finally {
   await db.delete(schema.tipoCambio).where(and(eq(schema.tipoCambio.moneda, 'USD'), gte(schema.tipoCambio.fecha, '2099-01-01')));
