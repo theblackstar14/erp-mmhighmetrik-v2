@@ -11,7 +11,8 @@ import postgres from 'postgres';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
-const sql = postgres(process.env.DATABASE_URL ?? 'postgresql://erp:erp@localhost:5432/erp_mmh', { max: 1 });
+if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL no definido: revisa el .env de la raiz (debe apuntar a erp_mmh_test)');
+const sql = postgres(process.env.DATABASE_URL, { max: 1 });
 const leer = <T>(nombre: string): T | null => {
   const p = path.resolve(__dirname, 'data', nombre);
   return fs.existsSync(p) ? (JSON.parse(fs.readFileSync(p, 'utf8')) as T) : null;
