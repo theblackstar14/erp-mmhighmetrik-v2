@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { extraerCuentasPcge } from './pcge.js';
+import { extraerCuentasPcge, ultimoSinDescripcion } from './pcge.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const origen = process.argv[2];
@@ -23,4 +23,4 @@ const cuentas = extraerCuentasPcge(texto);
 const destino = path.resolve(__dirname, '../data/pcge-2010.json');
 fs.writeFileSync(destino, `${JSON.stringify({ fuente: `PCGE 2010 · ${path.basename(origen)}`, cuentas }, null, 1)}\n`);
 const porNivel = cuentas.reduce<Record<number, number>>((a, c) => ((a[c.nivel] = (a[c.nivel] ?? 0) + 1), a), {});
-console.log(`${cuentas.length} cuentas · por nivel ${JSON.stringify(porNivel)} →`, destino);
+console.log(`${cuentas.length} cuentas · por nivel ${JSON.stringify(porNivel)} · ${ultimoSinDescripcion} codigos en linea propia sin descripcion (descartados) →`, destino);
