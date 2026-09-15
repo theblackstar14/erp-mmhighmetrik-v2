@@ -11,6 +11,7 @@ import activosRoutes from './routes/activos.js';
 import avancesRoutes from './routes/avances.js';
 import conciliacionRoutes from './routes/conciliacion.js';
 import contabilidadRoutes from './routes/contabilidad.js';
+import catalogosRoutes from './routes/catalogos.js';
 import contractualRoutes from './routes/contractual.js';
 import documentosRoutes from './routes/documentos.js';
 import finanzasRoutes from './routes/finanzas.js';
@@ -75,6 +76,7 @@ app.use('/api', planillaRoutes); // FIN-4 · planilla construcción civil
 app.use('/api', oficinaRoutes); // FIN-5 · oficina · rendiciones / viáticos
 app.use('/api/oficina', planillaOficinaRoutes); // FIN-5B · planilla oficina (régimen general)
 app.use('/api/contabilidad', contabilidadRoutes); // PCGE · asientos · diario/mayor · fiscal
+app.use('/api/catalogos', catalogosRoutes); // Fase 0 · catálogos SUNAT · detracciones · tipo de cambio manual
 app.use('/api/conciliacion', conciliacionRoutes); // H3 · conciliación bancaria (ERP ↔ extracto)
 app.use('/api', activosRoutes); // activos · herramientas y equipos + traslados
 app.use('/api', notificacionesRoutes); // alertas / campana
