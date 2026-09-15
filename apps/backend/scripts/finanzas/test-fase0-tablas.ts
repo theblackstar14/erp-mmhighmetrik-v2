@@ -2,19 +2,13 @@
  * Fase 0 · las 3 tablas existen con sus columnas.
  * node apps/backend/node_modules/tsx/dist/cli.mjs apps/backend/scripts/finanzas/test-fase0-tablas.ts
  */
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import dotenv from 'dotenv';
-import postgres from 'postgres';
 import assert from 'node:assert/strict';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-dotenv.config({ path: path.resolve(__dirname, '../../../../.env') });
+// Load env first to set DATABASE_URL before @erp/db is imported
+await import('../../src/env.js');
 
-const sql = postgres(
-  process.env.DATABASE_URL ?? 'postgresql://erp:erp@localhost:5432/erp_mmh',
-  { max: 1 },
-);
+const { db, schema } = await import('@erp/db');
+const { sql } = await import('drizzle-orm');
 
 const esperado: Record<string, string[]> = {
   catalogo_sunat: ['catalogo', 'codigo', 'descripcion', 'extra'],
@@ -23,10 +17,33 @@ const esperado: Record<string, string[]> = {
 };
 
 for (const [tabla, cols] of Object.entries(esperado)) {
-  const rows = await sql`select column_name from information_schema.columns where table_name = ${tabla}`;
-  const reales = rows.map((r: { column_name: string }) => r.column_name);
+  const rows = (await db.execute(sql`select column_name from information_schema.columns where table_name = ${tabla}`)) as unknown as { column_name: string }[];
+  const reales = rows.map((r) => r.column_name);
   for (const c of cols) assert.ok(reales.includes(c), `${tabla}.${c} existe`);
   console.log(`  ✓ ${tabla}`);
 }
+
+// Verificar exports ORM
+try {
+  await db.select().from(schema.catalogoSunat).limit(1);
+  console.log('  ✓ orm catalogoSunat');
+} catch (e) {
+  throw new Error(`orm catalogoSunat: ${(e as Error).message}`);
+}
+
+try {
+  await db.select().from(schema.detraccionTasa).limit(1);
+  console.log('  ✓ orm detraccionTasa');
+} catch (e) {
+  throw new Error(`orm detraccionTasa: ${(e as Error).message}`);
+}
+
+try {
+  await db.select().from(schema.tipoCambio).limit(1);
+  console.log('  ✓ orm tipoCambio');
+} catch (e) {
+  throw new Error(`orm tipoCambio: ${(e as Error).message}`);
+}
+
 console.log('fase0-tablas VERDE');
 process.exit(0);
