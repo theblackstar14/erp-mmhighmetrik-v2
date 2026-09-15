@@ -112,6 +112,7 @@ const creados: string[] = []; // gasto ids para limpiar
     // limpieza: asientos de mis gastos + gastos + cuenta test + sesión
     for (const gid of creados) {
       await db.delete(schema.asientos).where(and(eq(schema.asientos.origen, 'gasto'), eq(schema.asientos.origenId, gid))).catch(() => {});
+      await db.delete(schema.documentoPendiente).where(and(eq(schema.documentoPendiente.docOrigenTipo, 'gasto'), eq(schema.documentoPendiente.docOrigenId, gid))).catch(() => {}); // D4
       await db.delete(schema.gastos).where(eq(schema.gastos.id, gid)).catch(() => {});
     }
     await db.delete(schema.planContable).where(eq(schema.planContable.codigo, '6349001')).catch(() => {});

@@ -9,7 +9,7 @@ import finanzasRoutes from '../../src/routes/finanzas.js';
 import contabilidadRoutes from '../../src/routes/contabilidad.js';
 import { lucia } from '../../src/auth.js';
 import { db, schema } from '@erp/db';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 
 const USER = 'af36a9b1-3b8e-4471-99d0-d08cf271187d';
 const RUC = '20999999999'; // proveedor de prueba
@@ -63,6 +63,7 @@ const RUC = '20999999999'; // proveedor de prueba
     failed = true;
     console.error('\n  ✗ FALLÓ:', e?.message ?? e, '\n');
   } finally {
+    if (gastoId) await db.delete(schema.documentoPendiente).where(and(eq(schema.documentoPendiente.docOrigenTipo, 'gasto'), eq(schema.documentoPendiente.docOrigenId, gastoId))).catch(() => {}); // D4
     if (gastoId) await db.delete(schema.gastos).where(eq(schema.gastos.id, gastoId)).catch(() => {});
     await lucia.invalidateSession(session.id).catch(() => {});
     server.close();

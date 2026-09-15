@@ -1,12 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { db, schema } from '@erp/db';
-import { and, asc, desc, eq, gte, isNull, lte, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, isNull, lte, sql } from 'drizzle-orm';
 import { Router } from 'express';
 import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
 import { periodoCerradoDeFecha } from '../lib/periodos.js';
 import { audit } from '../lib/audit.js';
 import { resolverClase } from '../lib/clasificacion.js';
+import { extrasCompraSchema, registrarCompra } from '../lib/compras.js';
+import { DocumentoError, anularAplicacionesDe } from '../lib/documentosPendientes.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -96,6 +98,27 @@ const gastoSchema = z.object({
   cuentaContableOrigen: z.enum(['USUARIO', 'SUGERIDO']).optional().nullable(),
 });
 
+// Fase 1 · el alta de compra acepta los datos de documento; el PUT sigue usando gastoSchema (edición de cabecera)
+const gastoCompraSchema = gastoSchema.extend(extrasCompraSchema.shape);
+
+async function validarCuentasCompra(cabecera: string | null | undefined, lineas: { cuentaContable?: string | null }[] | undefined) {
+  for (const c of [cabecera, ...(lineas ?? []).map((l) => l.cuentaContable)]) {
+    const err = await validarCuentaContable(c);
+    if (err) return err;
+  }
+  return null;
+}
+
+function separarExtras<T extends z.infer<typeof gastoCompraSchema>>(d: T) {
+  const { fechaVencimiento, tipoCambio, lineas, detraccion, retencion, percepcion, docModifica, motivoNota, ...resto } = d;
+  return { extras: { fechaVencimiento, tipoCambio, lineas, detraccion, retencion, percepcion, docModifica, motivoNota }, resto };
+}
+
+function responderErrorCompra(e: unknown, res: import('express').Response) {
+  if (e instanceof DocumentoError) { res.status(e.status).json({ error: e.message }); return true; }
+  return false;
+}
+
 // WS1 · valida que la cuenta exista, esté activa y pertenezca a la empresa (o sea compartida).
 // Devuelve error string o null. empresaId operativo = MM(1) por ahora.
 async function validarCuentaContable(codigo: string | null | undefined, empresaId = 1): Promise<string | null> {
@@ -106,26 +129,6 @@ async function validarCuentaContable(codigo: string | null | undefined, empresaI
   if (c.activa === false) return `cuenta contable ${codigo} está inactiva`;
   if (c.empresaId != null && c.empresaId !== empresaId) return `cuenta contable ${codigo} pertenece a otra empresa`;
   return null;
-}
-
-// FX · gasto → inventario: crea un ítem draft ligado (herramientas/equipos/EPPS). El usuario completa
-// código/serie/foto/ubicación en Inventario (filtro "Por completar"); ahí puede promoverlo a activo.
-async function crearDraftInventario(gasto: typeof schema.gastos.$inferSelect) {
-  await db.insert(schema.inventarioItems).values({
-    fecha: gasto.fecha,
-    proyectoId: gasto.proyectoId ?? null,
-    proveedorRuc: gasto.proveedorRuc ?? null,
-    proveedorRazon: gasto.proveedorRazon ?? null,
-    tipoComprobante: gasto.tipoComprobante ?? null,
-    serie: gasto.serie ?? null,
-    numero: gasto.numero ?? null,
-    cantidad: '1',
-    descripcionItem: gasto.descripcionItem ?? gasto.tipoGasto ?? 'Ítem',
-    valorUnitario: gasto.total ?? '0',
-    categoria: gasto.tipoGasto ?? null,
-    estado: 'Por completar',
-    gastoId: gasto.id,
-  });
 }
 
 function toValues(d: z.infer<typeof gastoSchema>) {
@@ -180,23 +183,33 @@ router.get('/proyectos/:id/gastos', async (req, res) => {
   res.json({ gastos: list, stats: { count: list.length, totalGeneral, subtotalGeneral, porTipo } });
 });
 
-router.post('/proyectos/:id/gastos', async (req, res) => {
-  const parse = gastoSchema.safeParse(req.body);
+router.post('/proyectos/:id/gastos', async (req, res, next) => {
+  const parse = gastoCompraSchema.safeParse(req.body);
   if (!parse.success) return res.status(400).json({ error: parse.error.flatten() });
-  const errCuenta = await validarCuentaContable(parse.data.cuentaContable); // WS1
+  const { extras, resto } = separarExtras(parse.data);
+  const errCuenta = await validarCuentasCompra(resto.cuentaContable, extras.lineas); // WS1
   if (errCuenta) return res.status(400).json({ error: errCuenta });
-  const values = { proyectoId: req.params.id!, ...toValues(parse.data) };
+  const values = { proyectoId: req.params.id!, ...toValues(resto) };
   // FINDING 2: ruta de proyecto → siempre destino='proyecto' (ignorar lo que diga el cliente)
-  const cls = await resolverClase({ proyectoId: values.proyectoId, tipoGasto: values.tipoGasto, destino: 'proyecto', clasificacion: parse.data.clasificacion });
-  const [gasto] = await db.insert(schema.gastos).values({ ...values, ...cls }).returning();
-  if (parse.data.inventariable && gasto) await crearDraftInventario(gasto);
-  res.json({ gasto });
+  const cls = await resolverClase({ proyectoId: values.proyectoId, tipoGasto: values.tipoGasto, destino: 'proyecto', clasificacion: resto.clasificacion });
+  try {
+    const r = await db.transaction((tx) => registrarCompra(tx, { values: { ...values, ...cls }, extras, inventariable: resto.inventariable, userId: req.user!.id }));
+    res.json({ gasto: r.gasto, documento: r.documento, detraccion: r.detraccion });
+  } catch (e) {
+    if (!responderErrorCompra(e, res)) return next(e); // D5 · Express 4 no atrapa el throw async: el request se cuelga sin next
+  }
 });
 
 router.put('/gastos/:id', async (req, res) => {
   const parse = gastoSchema.partial().safeParse(req.body);
   if (!parse.success) return res.status(400).json({ error: parse.error.flatten() });
   const d = parse.data;
+  // Fase 1 · si la compra ya tiene cuenta por pagar, editar los datos del documento la deja desincronizada (D13)
+  if (['total', 'subtotal', 'igv', 'exonerado', 'moneda', 'serie', 'numero', 'proveedorRuc', 'tipoComprobante'].some((k) => k in d)) {
+    const [docExistente] = await db.select({ id: schema.documentoPendiente.id }).from(schema.documentoPendiente)
+      .where(and(eq(schema.documentoPendiente.docOrigenTipo, 'gasto'), eq(schema.documentoPendiente.docOrigenId, req.params.id!))).limit(1);
+    if (docExistente) return res.status(409).json({ error: 'La compra tiene cuenta por pagar · anula y registra de nuevo' });
+  }
   const errCuenta = await validarCuentaContable(d.cuentaContable); // WS1
   if (errCuenta) return res.status(400).json({ error: errCuenta });
   const set: Record<string, unknown> = {};
@@ -238,10 +251,25 @@ router.put('/gastos/:id', async (req, res) => {
 });
 
 router.delete('/gastos/:id', async (req, res) => {
-  const [g] = await db.select({ lockedAt: schema.gastos.lockedAt }).from(schema.gastos).where(eq(schema.gastos.id, req.params.id!));
+  const id = req.params.id!;
+  const [g] = await db.select({ lockedAt: schema.gastos.lockedAt }).from(schema.gastos).where(eq(schema.gastos.id, id));
   if (g?.lockedAt) return res.status(423).json({ error: 'Gasto congelado por cierre de periodo · reabrir el periodo primero' }); // H2.1
-  await db.delete(schema.gastos).where(eq(schema.gastos.id, req.params.id!));
-  await audit(req, { action: 'delete', entityType: 'gasto', entityId: req.params.id! });
+  const d = schema.documentoPendiente, a = schema.aplicacionDocumento;
+  const [doc] = await db.select({ id: d.id }).from(d).where(and(eq(d.docOrigenTipo, 'gasto'), eq(d.docOrigenId, id)));
+  if (doc) {
+    const [activa] = await db.select({ id: a.id }).from(a).where(and(eq(a.documentoPendienteId, doc.id), eq(a.estado, 'activa'))).limit(1);
+    if (activa) return res.status(409).json({ error: 'La compra tiene pagos o notas de crédito aplicados · anúlalos primero' });
+  }
+  await db.transaction(async (tx) => {
+    await anularAplicacionesDe(tx, 'nota', id); // si es NC, devuelve el saldo a la factura referida
+    if (doc) {
+      await tx.delete(a).where(eq(a.documentoPendienteId, doc.id));
+      await tx.delete(d).where(eq(d.id, doc.id));
+    }
+    await tx.delete(schema.detraccionDocumento).where(and(eq(schema.detraccionDocumento.docOrigenTipo, 'gasto'), eq(schema.detraccionDocumento.docOrigenId, id)));
+    await tx.delete(schema.gastos).where(eq(schema.gastos.id, id));
+  });
+  await audit(req, { action: 'delete', entityType: 'gasto', entityId: id });
   res.json({ ok: true });
 });
 
@@ -429,7 +457,6 @@ router.delete('/inventario/:id', async (req, res) => {
 });
 
 // ════════════════ VISTAS GLOBALES (sidebar · proyecto = filtro) ════════════════
-const gastoSchemaG = gastoSchema.extend({ proyectoId: z.string().uuid().optional().nullable() });
 const movSchemaG = movSchema.extend({ proyectoId: z.string().uuid().optional().nullable() });
 const invSchemaG = invSchema.extend({ proyectoId: z.string().uuid().optional().nullable() });
 
@@ -445,21 +472,55 @@ router.get('/gastos', async (req, res) => {
   const subtotalGeneral = list.reduce((s, g) => s + Number(g.subtotal), 0);
   const porTipo: Record<string, number> = {};
   for (const g of list) { const k = g.tipoGasto ?? 'Sin categoría'; porTipo[k] = (porTipo[k] ?? 0) + Number(g.total); }
-  res.json({ gastos: list.map((g) => ({ ...g, proyectoCodigo: g.proyectoId ? pm.get(g.proyectoId)?.codigo ?? null : null })), stats: { count: list.length, totalGeneral, subtotalGeneral, porTipo } });
+  // Fase 1 · saldo de la CxP de cada compra (null = sin documento: histórico, NC o rendición)
+  const docs = list.length
+    ? await db.select({ origen: schema.documentoPendiente.docOrigenId, saldo: schema.documentoPendiente.saldoPendiente, estado: schema.documentoPendiente.estado })
+      .from(schema.documentoPendiente)
+      .where(and(eq(schema.documentoPendiente.docOrigenTipo, 'gasto'), inArray(schema.documentoPendiente.docOrigenId, list.map((g) => g.id))))
+    : [];
+  const docPorGasto = new Map(docs.map((d) => [d.origen, d]));
+  const estadoPago = (e: string) => (e === 'cancelado' ? 'pagado' : e === 'parcial' ? 'parcial' : 'pendiente');
+  res.json({
+    gastos: list.map((g) => {
+      const d = docPorGasto.get(g.id);
+      return { ...g, proyectoCodigo: g.proyectoId ? pm.get(g.proyectoId)?.codigo ?? null : null, saldoPendiente: d ? Number(d.saldo) : null, estadoPago: d ? estadoPago(d.estado) : null };
+    }),
+    stats: { count: list.length, totalGeneral, subtotalGeneral, porTipo },
+  });
 });
-router.post('/gastos', async (req, res) => {
-  const parse = gastoSchemaG.safeParse(req.body);
+
+// Fase 1 · detalle de una compra: líneas + CxP + aplicaciones (pagos/NC) + detracción
+router.get('/gastos/:id/detalle', async (req, res) => {
+  const id = req.params.id!;
+  const [gasto] = await db.select().from(schema.gastos).where(eq(schema.gastos.id, id));
+  if (!gasto) return res.status(404).json({ error: 'Gasto no encontrado' });
+  const d = schema.documentoPendiente;
+  const lineas = await db.select().from(schema.gastoLineas).where(eq(schema.gastoLineas.gastoId, id)).orderBy(asc(schema.gastoLineas.numero));
+  const [documento] = await db.select().from(d).where(and(eq(d.docOrigenTipo, 'gasto'), eq(d.docOrigenId, id)));
+  const aplicaciones = documento
+    ? await db.select().from(schema.aplicacionDocumento).where(eq(schema.aplicacionDocumento.documentoPendienteId, documento.id)).orderBy(asc(schema.aplicacionDocumento.createdAt))
+    : [];
+  const [detraccion] = await db.select().from(schema.detraccionDocumento).where(and(eq(schema.detraccionDocumento.docOrigenTipo, 'gasto'), eq(schema.detraccionDocumento.docOrigenId, id)));
+  res.json({ gasto, lineas, documento: documento ?? null, aplicaciones, detraccion: detraccion ?? null });
+});
+
+router.post('/gastos', async (req, res, next) => {
+  const parse = gastoCompraSchema.extend({ proyectoId: z.string().uuid().optional().nullable() }).safeParse(req.body);
   if (!parse.success) return res.status(400).json({ error: parse.error.flatten() });
-  const { proyectoId, ...rest } = parse.data;
-  const errCuenta = await validarCuentaContable(rest.cuentaContable); // WS1
+  const { proyectoId, ...data } = parse.data;
+  const { extras, resto } = separarExtras(data);
+  const errCuenta = await validarCuentasCompra(resto.cuentaContable, extras.lineas); // WS1
   if (errCuenta) return res.status(400).json({ error: errCuenta });
-  if (await bloqueoPeriodo(rest.fecha, res)) return;
-  const values = { proyectoId: proyectoId ?? null, ...toValues(rest) };
-  const cls = await resolverClase({ proyectoId: values.proyectoId, tipoGasto: values.tipoGasto, destino: rest.destino, clasificacion: rest.clasificacion });
-  const [gasto] = await db.insert(schema.gastos).values({ ...values, ...cls }).returning();
-  if (rest.inventariable && gasto) await crearDraftInventario(gasto);
-  await audit(req, { action: 'create', entityType: 'gasto', entityId: gasto!.id, after: { total: gasto!.total, tipo: gasto!.tipoGasto, proveedor: gasto!.proveedorRazon } });
-  res.json({ gasto });
+  if (await bloqueoPeriodo(resto.fecha, res)) return;
+  const values = { proyectoId: proyectoId ?? null, ...toValues(resto) };
+  const cls = await resolverClase({ proyectoId: values.proyectoId, tipoGasto: values.tipoGasto, destino: resto.destino, clasificacion: resto.clasificacion });
+  try {
+    const r = await db.transaction((tx) => registrarCompra(tx, { values: { ...values, ...cls }, extras, inventariable: resto.inventariable, userId: req.user!.id }));
+    await audit(req, { action: 'create', entityType: 'gasto', entityId: r.gasto.id, after: { total: r.gasto.total, tipo: r.gasto.tipoGasto, proveedor: r.gasto.proveedorRazon, lineas: r.lineas, documento: r.documento?.id ?? null } });
+    res.json({ gasto: r.gasto, documento: r.documento, detraccion: r.detraccion });
+  } catch (e) {
+    if (!responderErrorCompra(e, res)) return next(e); // D5 · Express 4 no atrapa el throw async: el request se cuelga sin next
+  }
 });
 
 // GET /movimientos?proyectoId=  (global)
