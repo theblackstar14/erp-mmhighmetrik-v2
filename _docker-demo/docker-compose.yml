@@ -8,13 +8,13 @@ services:
     environment:
       POSTGRES_USER: erp
       POSTGRES_PASSWORD: erp
-      POSTGRES_DB: erp_mmh
+      POSTGRES_DB: erp_mmh_test
     volumes:
-      - erp-demo-data:/var/lib/postgresql
+      - erp-mmh-test-data:/var/lib/postgresql
       # Postgres corre los *.sql de initdb.d en el primer arranque (sin shell · cross-platform)
       - ./db-init/01-restore.sql:/docker-entrypoint-initdb.d/01-restore.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U erp -d erp_mmh"]
+      test: ["CMD-SHELL", "pg_isready -U erp -d erp_mmh_test"]
       interval: 5s
       timeout: 5s
       retries: 12
@@ -28,18 +28,18 @@ services:
     restart: unless-stopped
     env_file: .env            # ← copia aquí tu .env (trae GEMINI/ANTHROPIC/NAS keys)
     environment:              # estas mandan sobre el .env (DB apunta al contenedor)
-      DATABASE_URL: postgresql://erp:erp@db:5432/erp_mmh
-      CORS_ORIGIN: http://localhost:3001
+      DATABASE_URL: postgresql://erp:erp@db:5432/erp_mmh_test
+      CORS_ORIGIN: http://localhost:${APP_PORT:-3001}
       NODE_ENV: production
       SERVE_STATIC: "1"
       FRONTEND_DIST: /app/apps/frontend/dist
       PORT: "3001"
     ports:
-      - "3001:3001"
+      - "${APP_PORT:-3001}:3001"
     depends_on:
       db:
         condition: service_healthy
 
 volumes:
-  erp-demo-data:
-    name: erp-demo-data
+  erp-mmh-test-data:
+    name: erp-mmh-test-data
