@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import ReactECharts from '@/lib/echarts.js';
 import { Sparkles } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { api } from '@/lib/api.js';
 import { Skel } from '@/components/ui/Skeleton.js';
 import { useThemeStore } from '@/lib/theme-store.js';
@@ -23,13 +23,9 @@ export default function FlujoCajaView({ proyectoId }: { proyectoId: string }) {
   const dark = theme === 'dark';
   const [cfDrill, setCfDrill] = useState<CashflowClick | null>(null);
   const [sankeyMode, setSankeyMode] = useState<'egresos' | 'ingresos'>('egresos');
-  // El sankey de echarts revienta si se monta con el contenedor en tamaño 0 (embebido bajo
-  // Suspense + animación del Resumen v2): montarlo un frame después del layout.
-  const [chartsReady, setChartsReady] = useState(false);
-  useEffect(() => {
-    const raf = requestAnimationFrame(() => setChartsReady(true));
-    return () => cancelAnimationFrame(raf);
-  }, []);
+  // Sankey colapsado por defecto: es análisis exploratorio, no decisión diaria. Montarlo solo
+  // al abrir también evita el crash de echarts con contenedor en tamaño 0 (Suspense/animación).
+  const [sankeyOpen, setSankeyOpen] = useState(false);
   const { data, isLoading } = useQuery({ queryKey: ['finanzas-flujo', proyectoId], queryFn: () => api.finanzas.getFlujo(proyectoId) });
 
   const axis = dark ? '#a1a1aa' : '#52525b';
@@ -172,30 +168,38 @@ export default function FlujoCajaView({ proyectoId }: { proyectoId: string }) {
         />
       )}
 
-      {/* Sankey · toggle Egresos / Ingresos (vistas separadas) */}
-      <div className="rounded-lg border border-line bg-bg-elev p-4">
-        <div className="flex items-center justify-between mb-2 gap-3">
+      {/* Sankey · colapsado por defecto (análisis a demanda, no ocupa el Resumen) */}
+      <div className="rounded-lg border border-line bg-bg-elev">
+        <div className="flex items-center justify-between gap-3 px-4 py-2.5">
           <h3 className="text-[13px] font-semibold">
-            {sankeyMode === 'egresos' ? 'Egresos · Proyecto → Categoría' : 'Ingresos · Cliente → Proyecto'}
+            ¿A dónde se va la plata? <span className="font-normal text-[11px] text-ink-4">{sankeyMode === 'egresos' ? 'proyecto → categoría' : 'cliente → proyecto'} · acumulado</span>
           </h3>
           <div className="flex items-center gap-2">
-            <div className="flex rounded-md border border-line overflow-hidden text-[11px]">
-              {(['egresos', 'ingresos'] as const).map((m) => (
-                <button key={m} onClick={() => setSankeyMode(m)} className={cn('px-2.5 h-7 capitalize', sankeyMode === m ? 'bg-primary text-primary-foreground' : 'text-ink-2 hover:bg-bg-sunken')}>{m}</button>
-              ))}
-            </div>
-            <span className="text-[10px] font-mono uppercase tracking-wider text-ink-4">acumulado</span>
+            {sankeyOpen && (
+              <div className="flex rounded-md border border-line overflow-hidden text-[11px]">
+                {(['egresos', 'ingresos'] as const).map((m) => (
+                  <button key={m} onClick={() => setSankeyMode(m)} className={cn('px-2.5 h-7 capitalize', sankeyMode === m ? 'bg-primary text-primary-foreground' : 'text-ink-2 hover:bg-bg-sunken')}>{m}</button>
+                ))}
+              </div>
+            )}
+            <button onClick={() => setSankeyOpen((o) => !o)} className="h-7 px-2.5 rounded-md border border-line text-[11px] font-medium text-ink-2 hover:bg-bg-sunken">
+              {sankeyOpen ? 'Ocultar' : 'Ver diagrama'}
+            </button>
           </div>
         </div>
-        {(sankeyData?.links.length ?? 0) === 0 ? (
-          <Empty msg={sankeyMode === 'egresos' ? 'Sin gastos por categoría para diagramar' : 'Sin ingresos con cliente identificable · asigna cliente a los proyectos'} />
-        ) : (
-          <>
-            {chartsReady && <ReactECharts option={sankeyOption} style={{ height: 420 }} notMerge lazyUpdate opts={{ renderer: 'svg' }} />}
-            {sankeyMode === 'ingresos' && (data?.ingresosSinCliente ?? 0) > 0 && (
-              <div className="text-[10.5px] text-ink-4 mt-1.5">{fmtPEN(data!.ingresosSinCliente)} en ingresos sin cliente asignado (no mostrados · asigna cliente al proyecto para incluirlos).</div>
+        {sankeyOpen && (
+          <div className="border-t border-line px-4 pb-4 pt-2">
+            {(sankeyData?.links.length ?? 0) === 0 ? (
+              <Empty msg={sankeyMode === 'egresos' ? 'Sin gastos por categoría para diagramar' : 'Sin ingresos con cliente identificable · asigna cliente a los proyectos'} />
+            ) : (
+              <>
+                <ReactECharts option={sankeyOption} style={{ height: 420 }} notMerge lazyUpdate opts={{ renderer: 'svg' }} />
+                {sankeyMode === 'ingresos' && (data?.ingresosSinCliente ?? 0) > 0 && (
+                  <div className="text-[10.5px] text-ink-4 mt-1.5">{fmtPEN(data!.ingresosSinCliente)} en ingresos sin cliente asignado (no mostrados · asigna cliente al proyecto para incluirlos).</div>
+                )}
+              </>
             )}
-          </>
+          </div>
         )}
       </div>
     </div>

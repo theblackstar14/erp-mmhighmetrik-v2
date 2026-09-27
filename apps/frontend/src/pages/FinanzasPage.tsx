@@ -190,7 +190,9 @@ function ResumenView({ r, loading, onJump }: { r: FinanzasResumen | undefined; l
         ))}
       </div>
 
+      {/* columnas balanceadas: izq = inbox + utilidad · der = proyección + aging + tesorería (sin huecos) */}
       <div className="grid grid-cols-1 lg:grid-cols-[3fr_2fr] gap-4 items-start">
+        <div className="space-y-4">
         {/* Inbox: qué requiere acción hoy · cada fila salta a resolverlo */}
         <div className="rounded-lg border border-line bg-bg-elev overflow-hidden">
           <div className="flex items-center gap-2 border-b border-line px-3.5 py-2.5">
@@ -211,6 +213,27 @@ function ResumenView({ r, loading, onJump }: { r: FinanzasResumen | undefined; l
                 <button onClick={i.jump} className="h-[26px] px-2.5 rounded-md border border-line text-[11px] font-medium hover:bg-bg-sunken shrink-0">{i.btn} →</button>
               </div>
             ))}
+        </div>
+
+        {/* Utilidad por proyecto · la vista de Mario */}
+        <div className="rounded-lg border border-line bg-bg-elev overflow-hidden">
+          <div className="border-b border-line px-3.5 py-2.5"><b className="text-[12.5px]">Utilidad por proyecto</b> <span className="font-mono text-[10.5px] text-ink-4">valorizado − gastado (base sin IGV)</span></div>
+          {v2.utilidadPorProyecto.length === 0 ? <div className="px-3.5 py-6 text-center text-[12px] text-ink-3">Sin proyectos con movimiento</div> : (
+            <table className="w-full">
+              <thead><tr className="border-b border-line bg-bg-sunken">{['Obra', 'Valorizado', 'Gastado', 'Margen'].map((h, i) => <th key={h} className={cn('px-3 py-1.5 font-mono text-[9.5px] uppercase tracking-wider text-ink-4', i > 0 ? 'text-right' : 'text-left')}>{h}</th>)}</tr></thead>
+              <tbody>
+                {v2.utilidadPorProyecto.map((u) => (
+                  <tr key={u.proyectoId} className="border-b border-line last:border-0">
+                    <td className="px-3 py-1.5"><span className="font-mono text-[11px]">{u.proyectoCodigo ?? '—'}</span><div className="text-[10px] text-ink-4 max-w-[180px] truncate">{u.proyectoNombre ?? ''}</div></td>
+                    <td className="px-3 py-1.5 font-mono text-[11px] tabular-nums text-right">{fmtPEN(u.valorizado)}</td>
+                    <td className="px-3 py-1.5 font-mono text-[11px] tabular-nums text-right text-ink-3">{fmtPEN(u.gastado)}</td>
+                    <td className={cn('px-3 py-1.5 font-mono text-[11px] tabular-nums text-right font-semibold', u.margenPct == null ? 'text-ink-4' : u.margenPct >= 0 ? 'text-emerald-700' : 'text-rose-600')}>{u.margenPct != null ? `${(u.margenPct * 100).toFixed(1)}%` : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
         </div>
 
         <div className="space-y-4">
@@ -247,43 +270,21 @@ function ResumenView({ r, loading, onJump }: { r: FinanzasResumen | undefined; l
               <span><i className="inline-block h-2 w-2 rounded-[2px] bg-rose-600 mr-1" />+30 vencido</span>
             </div>
           </div>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
-        {/* Utilidad por proyecto · la vista de Mario */}
-        <div className="rounded-lg border border-line bg-bg-elev overflow-hidden">
-          <div className="border-b border-line px-3.5 py-2.5"><b className="text-[12.5px]">Utilidad por proyecto</b> <span className="font-mono text-[10.5px] text-ink-4">valorizado − gastado (base sin IGV)</span></div>
-          {v2.utilidadPorProyecto.length === 0 ? <div className="px-3.5 py-6 text-center text-[12px] text-ink-3">Sin proyectos con movimiento</div> : (
+          {/* Tesorería compacta · el detalle vive en Caja y bancos */}
+          <div className="rounded-lg border border-line bg-bg-elev overflow-hidden">
+            <div className="flex items-center border-b border-line px-3.5 py-2.5"><b className="text-[12.5px]">Tesorería</b><span className="flex-1" /><button onClick={() => onJump('caja')} className="text-[11px] text-primary hover:underline">Caja y bancos →</button></div>
             <table className="w-full">
-              <thead><tr className="border-b border-line bg-bg-sunken">{['Obra', 'Valorizado', 'Gastado', 'Margen'].map((h, i) => <th key={h} className={cn('px-3 py-1.5 font-mono text-[9.5px] uppercase tracking-wider text-ink-4', i > 0 ? 'text-right' : 'text-left')}>{h}</th>)}</tr></thead>
               <tbody>
-                {v2.utilidadPorProyecto.map((u) => (
-                  <tr key={u.proyectoId} className="border-b border-line last:border-0">
-                    <td className="px-3 py-1.5"><span className="font-mono text-[11px]">{u.proyectoCodigo ?? '—'}</span><div className="text-[10px] text-ink-4 max-w-[180px] truncate">{u.proyectoNombre ?? ''}</div></td>
-                    <td className="px-3 py-1.5 font-mono text-[11px] tabular-nums text-right">{fmtPEN(u.valorizado)}</td>
-                    <td className="px-3 py-1.5 font-mono text-[11px] tabular-nums text-right text-ink-3">{fmtPEN(u.gastado)}</td>
-                    <td className={cn('px-3 py-1.5 font-mono text-[11px] tabular-nums text-right font-semibold', u.margenPct == null ? 'text-ink-4' : u.margenPct >= 0 ? 'text-emerald-700' : 'text-rose-600')}>{u.margenPct != null ? `${(u.margenPct * 100).toFixed(1)}%` : '—'}</td>
+                {r.tesoreria.cuentas.map((c) => (
+                  <tr key={c.cuenta.id} className="border-b border-line last:border-0">
+                    <td className="px-3 py-1.5 font-mono text-[11px] text-ink-3">{c.cuenta.cuentaContable ?? '—'}</td>
+                    <td className="px-3 py-1.5 text-[11.5px] max-w-[200px] truncate">{c.cuenta.descripcion ?? c.cuenta.codigo}</td>
+                    <td className={cn('px-3 py-1.5 font-mono text-[11.5px] tabular-nums text-right font-semibold', c.saldo < 0 && 'text-rose-600')}>{fmtPEN(c.saldo)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          )}
-        </div>
-        {/* Tesorería compacta · el detalle vive en Caja y bancos */}
-        <div className="rounded-lg border border-line bg-bg-elev overflow-hidden">
-          <div className="flex items-center border-b border-line px-3.5 py-2.5"><b className="text-[12.5px]">Tesorería</b><span className="flex-1" /><button onClick={() => onJump('caja')} className="text-[11px] text-primary hover:underline">Caja y bancos →</button></div>
-          <table className="w-full">
-            <tbody>
-              {r.tesoreria.cuentas.map((c) => (
-                <tr key={c.cuenta.id} className="border-b border-line last:border-0">
-                  <td className="px-3 py-1.5 font-mono text-[11px] text-ink-3">{c.cuenta.cuentaContable ?? '—'}</td>
-                  <td className="px-3 py-1.5 text-[11.5px] max-w-[200px] truncate">{c.cuenta.descripcion ?? c.cuenta.codigo}</td>
-                  <td className={cn('px-3 py-1.5 font-mono text-[11.5px] tabular-nums text-right font-semibold', c.saldo < 0 && 'text-rose-600')}>{fmtPEN(c.saldo)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          </div>
         </div>
       </div>
     </div>
