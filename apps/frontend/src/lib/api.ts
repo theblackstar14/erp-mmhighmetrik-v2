@@ -260,6 +260,12 @@ export const api = {
       if (proyectoId && proyectoId !== 'todos') qs.set('proyectoId', proyectoId);
       return req<{ movimientos: Movimiento[]; stats: { count: number; ingresos: number; egresos: number; neto: number } }>(`/api/movimientos${qs.toString() ? `?${qs}` : ''}`);
     },
+    // F2.2 · facturas con saldo del tercero (proveedor → jala facturas)
+    listDocumentosPendientes: (tipo: 'cxp' | 'cxc', q?: string) => {
+      const qs = new URLSearchParams({ tipo });
+      if (q?.trim()) qs.set('q', q.trim());
+      return req<{ documentos: DocumentoPendiente[] }>(`/api/documentos-pendientes?${qs}`);
+    },
     // F2.1 · registro de ventas (valorizaciones con comprobante)
     listVentas: (proyectoId?: string) => {
       const qs = proyectoId && proyectoId !== 'todos' ? `?proyectoId=${proyectoId}` : '';
@@ -1899,8 +1905,17 @@ export type MovimientoInput = {
   gastoId?: string | null;
   cuentaContable?: string | null; // WS1 · cuenta contra manual (Kelly)
   cuentaContableOrigen?: 'USUARIO' | 'SUGERIDO' | null;
+  aplicaciones?: { documentoPendienteId: string; monto: number }[]; // F2.2 · pago/cobro aplicado a documentos
 };
 export type SaldoCuenta = { cuenta: CuentaBancaria; ingresos: number; egresos: number; saldo: number; movimientos: number };
+// F2.2 · documento pendiente (CxP/CxC) con saldo derivado de aplicaciones
+export type DocumentoPendiente = {
+  id: string; tipo: 'cxp' | 'cxc'; terceroRuc: string | null; terceroRazon: string | null;
+  docTipo: string | null; docSerie: string | null; docNumero: string | null;
+  fechaEmision: string; fechaVenc: string | null; moneda: string;
+  montoOriginal: string; saldoPendiente: string; estado: 'abierto' | 'parcial' | 'cancelado';
+  obraId: string | null; docOrigenTipo: string | null; docOrigenId: string | null;
+};
 
 // ─── Finanzas · resumen consolidado (1 request) ───────────────
 export type FinanzasResumen = {

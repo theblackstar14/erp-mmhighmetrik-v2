@@ -8,7 +8,7 @@ import { periodoCerradoDeFecha } from '../lib/periodos.js';
 import { audit } from '../lib/audit.js';
 import { resolverClase } from '../lib/clasificacion.js';
 import { extrasCompraSchema, registrarCompra } from '../lib/compras.js';
-import { DocumentoError, anularAplicacionesDe } from '../lib/documentosPendientes.js';
+import { DocumentoError, anularAplicacionesDe, aplicar, aplicarPagoAOrigen } from '../lib/documentosPendientes.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -414,7 +414,9 @@ router.post('/movimientos/:id/anular', async (req, res) => {
       .set({ anulado: true, anuladoPor: req.user!.id, anuladoEn: new Date(), anuladoMotivo: motivo })
       .where(and(eq(schema.movimientos.transferenciaId, prev.transferenciaId), eq(schema.movimientos.anulado, false)));
   }
-  await audit(req, { action: 'anular', entityType: 'movimiento', entityId: mov!.id, before: { anulado: false, monto: prev.monto }, after: { anulado: true }, motivo });
+  // F2.2 · pago anulado devuelve el saldo a sus documentos (anula aplicaciones activas)
+  const devueltas = await anularAplicacionesDe(db, 'movimiento', prev.id);
+  await audit(req, { action: 'anular', entityType: 'movimiento', entityId: mov!.id, before: { anulado: false, monto: prev.monto }, after: { anulado: true, aplicacionesAnuladas: devueltas }, motivo });
   res.json({ movimiento: mov });
 });
 
@@ -473,7 +475,11 @@ router.delete('/inventario/:id', async (req, res) => {
 });
 
 // ════════════════ VISTAS GLOBALES (sidebar · proyecto = filtro) ════════════════
-const movSchemaG = movSchema.extend({ proyectoId: z.string().uuid().optional().nullable() });
+const movSchemaG = movSchema.extend({
+  proyectoId: z.string().uuid().optional().nullable(),
+  // F2.2 · un pago/cobro puede aplicarse a varios documentos pendientes (proveedor → jala facturas)
+  aplicaciones: z.array(z.object({ documentoPendienteId: z.string().uuid(), monto: z.number().positive() })).optional(),
+});
 const invSchemaG = invSchema.extend({ proyectoId: z.string().uuid().optional().nullable() });
 
 // GET /gastos?proyectoId=&tipo=  (global · all o filtrado)
@@ -551,10 +557,14 @@ router.get('/movimientos', async (req, res) => {
 router.post('/movimientos', async (req, res) => {
   const parse = movSchemaG.safeParse(req.body);
   if (!parse.success) return res.status(400).json({ error: parse.error.flatten() });
-  const { proyectoId, ...rest } = parse.data;
+  const { proyectoId, aplicaciones, ...rest } = parse.data;
   // F2.1 · todo movimiento de caja sale/entra de una cuenta: sin cuentaId el motor 104x no puede
   // asentarlo (así nacieron los huérfanos de prorrateo del 2026-08). Obligatoria desde ahora.
   if (!rest.cuentaId) return res.status(400).json({ error: 'Cuenta de origen requerida: indica de qué cuenta sale o a cuál entra el dinero' });
+  if (aplicaciones?.length) {
+    const sumAp = aplicaciones.reduce((s, a) => s + a.monto, 0);
+    if (sumAp > Number(rest.monto) + 0.005) return res.status(400).json({ error: `Lo aplicado (${sumAp.toFixed(2)}) excede el monto del movimiento (${Number(rest.monto).toFixed(2)})` });
+  }
   { const mErr = validarMonedaTC(rest.moneda, rest.tipoCambio); if (mErr) return res.status(400).json({ error: mErr }); }
   { const cErr = await validarCuentaContable(rest.cuentaContable); if (cErr) return res.status(400).json({ error: cErr }); } // WS1
   if (await bloqueoPeriodo(rest.fecha, res)) return;
@@ -572,9 +582,46 @@ router.post('/movimientos', async (req, res) => {
     return res.json({ movimiento: rows[0], transferencia: true, filas: rows.length });
   }
 
-  const [mov] = await db.insert(schema.movimientos).values({ proyectoId: proyectoId ?? null, ...base, userId: uid }).returning();
-  await audit(req, { action: 'create', entityType: 'movimiento', entityId: mov!.id, after: { monto: mov!.monto, tipo: mov!.tipoMovimiento, naturaleza: mov!.naturalezaContable, cuentaId: mov!.cuentaId } });
-  res.json({ movimiento: mov });
+  // F2.2 · movimiento + aplicaciones en UNA transacción: el saldo del documento se deriva
+  // de las aplicaciones activas (sub-mayor Fase 1). Sin aplicaciones explícitas, un pago
+  // ligado a gasto/valo aplica solo contra su documento (fix: antes la CxP no bajaba).
+  try {
+    const { mov, aplicadas } = await db.transaction(async (tx) => {
+      const [m] = await tx.insert(schema.movimientos).values({ proyectoId: proyectoId ?? null, ...base, userId: uid }).returning();
+      let n = 0;
+      if (aplicaciones?.length) {
+        await aplicar(tx, {
+          origenTipo: 'movimiento', origenId: m!.id, fecha: rest.fecha, userId: uid,
+          aplicaciones, tipoEsperado: rest.tipoMovimiento === 'Egreso' ? 'cxp' : 'cxc', moneda: rest.moneda,
+        });
+        n = aplicaciones.length;
+      } else if (rest.gastoId) {
+        if (await aplicarPagoAOrigen(tx, { docOrigenTipo: 'gasto', docOrigenId: rest.gastoId, movimientoId: m!.id, monto: rest.monto, fecha: rest.fecha, userId: uid })) n = 1;
+      } else if (rest.valorizacionId) {
+        if (await aplicarPagoAOrigen(tx, { docOrigenTipo: 'valorizacion', docOrigenId: rest.valorizacionId, movimientoId: m!.id, monto: rest.monto, fecha: rest.fecha, userId: uid })) n = 1;
+      }
+      return { mov: m!, aplicadas: n };
+    });
+    await audit(req, { action: 'create', entityType: 'movimiento', entityId: mov.id, after: { monto: mov.monto, tipo: mov.tipoMovimiento, naturaleza: mov.naturalezaContable, cuentaId: mov.cuentaId, aplicadas } });
+    res.json({ movimiento: mov, aplicadas });
+  } catch (e) {
+    if (e instanceof DocumentoError) return res.status(e.status).json({ error: e.message });
+    throw e;
+  }
+});
+
+// F2.2 · GET /documentos-pendientes?tipo=cxp|cxc&q= · facturas con saldo, para "proveedor → jala facturas"
+router.get('/documentos-pendientes', async (req, res) => {
+  const { tipo, q } = req.query as { tipo?: string; q?: string };
+  const d = schema.documentoPendiente;
+  const conds = [inArray(d.estado, ['abierto', 'parcial'])];
+  if (tipo === 'cxp' || tipo === 'cxc') conds.push(eq(d.tipo, tipo));
+  const term = (q ?? '').trim().toLowerCase();
+  if (term) {
+    conds.push(sql`(lower(coalesce(${d.terceroRazon},'')) LIKE ${'%' + term + '%'} OR coalesce(${d.terceroRuc},'') LIKE ${term + '%'} OR lower(coalesce(${d.docSerie},'') || '-' || coalesce(${d.docNumero},'')) LIKE ${'%' + term + '%'})`);
+  }
+  const docs = await db.select().from(d).where(and(...conds)).orderBy(asc(d.terceroRazon), asc(d.fechaVenc)).limit(100);
+  res.json({ documentos: docs });
 });
 
 // F2.1 · GET /ventas?proyectoId= · registro de ventas (valorizaciones con comprobante) + detracción

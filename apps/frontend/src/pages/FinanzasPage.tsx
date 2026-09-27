@@ -870,6 +870,8 @@ function MovModal({ proyectos, defaultProyecto, onClose }: { proyectos: { id: st
     const { cuentas } = await api.contabilidad.searchPlan(cuenta);
     setCuentaContable(cuenta); setCuentaRow(cuentas.find((c) => c.codigo === cuenta)); setCuentaSugerida(true);
   };
+  // F2.2 · aplicar el pago/cobro a facturas pendientes del tercero (docId → monto a aplicar)
+  const [aplicSel, setAplicSel] = useState<Record<string, string>>({});
   // Prorrateo · repartir un gasto compartido entre varias obras (montos manuales)
   const [prorratear, setProrratear] = useState(false);
   const [reparto, setReparto] = useState<{ proyectoId: string; monto: string }[]>([{ proyectoId: '', monto: '' }, { proyectoId: '', monto: '' }]);
@@ -923,6 +925,22 @@ function MovModal({ proyectos, defaultProyecto, onClose }: { proyectos: { id: st
   }, [f.contraparte, isIngreso, isBanc, proveedores]);
 
   const esGastoEgreso = tipo === 'Egreso' && esGasto;
+
+  // F2.2 · el proveedor/cliente jala sus facturas pendientes (pago/cobro suelto, no gasto nuevo).
+  // El RUC manda sobre el nombre: la razón social del maestro puede diferir de la del documento.
+  const pendTerm = f.tipoDoc === 'RUC' && /^\d{11}$/.test(f.docNumero) ? f.docNumero : f.contraparte;
+  const muestraPendientes = !isBanc && !esGastoEgreso && pendTerm.trim().length >= 3;
+  const pendQ = useQuery({
+    queryKey: ['docs-pend', isIngreso ? 'cxc' : 'cxp', pendTerm],
+    queryFn: () => api.finanzas.listDocumentosPendientes(isIngreso ? 'cxc' : 'cxp', pendTerm),
+    enabled: muestraPendientes,
+  });
+  const docsPend = pendQ.data?.documentos ?? [];
+  const apList = Object.entries(aplicSel)
+    .map(([documentoPendienteId, m]) => ({ documentoPendienteId, monto: parseFloat(m) || 0 }))
+    .filter((a) => a.monto > 0);
+  const totalAplicado = apList.reduce((s, a) => s + a.monto, 0);
+
   const buildMov = (gastoId?: string): MovimientoInput & { proyectoId?: string | null } => ({
     fecha: f.fecha,
     tipoMovimiento: isBanc ? 'Egreso' : tipo,
@@ -946,6 +964,7 @@ function MovModal({ proyectos, defaultProyecto, onClose }: { proyectos: { id: st
     numOperacion: f.numOperacion || null,
     descripcion: f.descripcion || null,
     gastoId: gastoId ?? null,
+    aplicaciones: !gastoId && apList.length ? apList : undefined, // F2.2 · pago suelto aplicado a documentos
   });
 
   const create = useMutation({
@@ -1019,7 +1038,8 @@ function MovModal({ proyectos, defaultProyecto, onClose }: { proyectos: { id: st
   // F2.1 · si la operación genera movimiento de caja (todo salvo gasto pendiente), la cuenta de
   // origen es obligatoria: sin ella el motor 104x no puede asentar (huérfanos de prorrateo 2026-08).
   const creaMovimiento = isBanc || !esGastoEgreso || estadoPago === 'pagado';
-  const isValid = sub > 0 && f.fecha && repartoValido && (!creaMovimiento || !!f.cuentaId) && (isBanc ? (f.cuentaId && (!esTransfer || (f.cuentaDestinoId && f.cuentaDestinoId !== f.cuentaId))) : (f.contraparte.trim() && validDoc));
+  const aplicOk = totalAplicado <= totalComp + 0.005; // F2.2 · lo aplicado no excede el pago
+  const isValid = sub > 0 && f.fecha && repartoValido && aplicOk && (!creaMovimiento || !!f.cuentaId) && (isBanc ? (f.cuentaId && (!esTransfer || (f.cuentaDestinoId && f.cuentaDestinoId !== f.cuentaId))) : (f.contraparte.trim() && validDoc));
 
   const onSave = () => {
     setError(null);
@@ -1175,6 +1195,49 @@ function MovModal({ proyectos, defaultProyecto, onClose }: { proyectos: { id: st
                   </div>
                 </Field>
               </SecBox>
+
+              {muestraPendientes && (docsPend.length > 0 || pendQ.isLoading) && (
+                <SecBox title={`Facturas pendientes de ${isIngreso ? 'cobro' : 'pago'} · jaladas del tercero`}>
+                  {pendQ.isLoading ? <div className="text-[11.5px] text-ink-3 py-2">Buscando documentos…</div> : (
+                    <>
+                      <div className="rounded-md border border-line overflow-hidden">
+                        <table className="w-full">
+                          <thead><tr className="border-b border-line bg-bg-sunken">{['Documento', 'Vence', 'Saldo', 'Aplicar'].map((h, i) => <th key={i} className={cn('px-2.5 py-1.5 font-mono text-[9.5px] uppercase tracking-wider text-ink-4', i >= 2 ? 'text-right' : 'text-left')}>{h}</th>)}</tr></thead>
+                          <tbody>
+                            {docsPend.map((d) => {
+                              const saldo = Number(d.saldoPendiente);
+                              const val = aplicSel[d.id] ?? '';
+                              return (
+                                <tr key={d.id} className="border-b border-line last:border-0">
+                                  <td className="px-2.5 py-1.5 text-[11px]">
+                                    <span className="font-mono">{[d.docSerie, d.docNumero].filter(Boolean).join('-') || 's/n'}</span>
+                                    <div className="text-[10px] text-ink-4 max-w-[180px] truncate">{d.terceroRazon ?? d.terceroRuc ?? ''}{d.estado === 'parcial' ? ' · parcial' : ''}</div>
+                                  </td>
+                                  <td className="px-2.5 py-1.5 text-[10.5px] font-mono text-ink-3">{d.fechaVenc ?? '—'}</td>
+                                  <td className="px-2.5 py-1.5 text-[11px] font-mono tabular-nums text-right text-rose-600">{fmtPEN(saldo)}</td>
+                                  <td className="px-2.5 py-1.5 text-right">
+                                    <div className="inline-flex items-center gap-1">
+                                      <input type="number" step="0.01" min="0" max={saldo} value={val}
+                                        onChange={(e) => setAplicSel((s) => ({ ...s, [d.id]: e.target.value }))}
+                                        className="h-7 w-[92px] px-2 rounded border border-line bg-bg-elev text-[11px] font-mono text-right" placeholder="0.00" />
+                                      <button type="button" title="Aplicar todo el saldo" onClick={() => setAplicSel((s) => ({ ...s, [d.id]: saldo.toFixed(2) }))}
+                                        className="h-7 px-1.5 rounded border border-line text-[10px] text-ink-3 hover:bg-bg-sunken">max</button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div className={cn('mt-2 text-[11px]', totalAplicado > totalComp + 0.005 ? 'text-rose-600 font-medium' : 'text-ink-3')}>
+                        Aplicado <span className="font-mono font-semibold">{fmtPEN(totalAplicado)}</span> de <span className="font-mono">{fmtPEN(totalComp)}</span>
+                        {totalAplicado > totalComp + 0.005 ? ' · excede el monto del movimiento' : totalAplicado > 0 ? ` · el saldo de cada factura baja al registrar` : ' · opcional: deja en 0 para un movimiento sin documento'}
+                      </div>
+                    </>
+                  )}
+                </SecBox>
+              )}
 
               <SecBox title="Montos">
                 <div className="grid grid-cols-4 gap-3">
