@@ -552,6 +552,9 @@ router.post('/movimientos', async (req, res) => {
   const parse = movSchemaG.safeParse(req.body);
   if (!parse.success) return res.status(400).json({ error: parse.error.flatten() });
   const { proyectoId, ...rest } = parse.data;
+  // F2.1 · todo movimiento de caja sale/entra de una cuenta: sin cuentaId el motor 104x no puede
+  // asentarlo (así nacieron los huérfanos de prorrateo del 2026-08). Obligatoria desde ahora.
+  if (!rest.cuentaId) return res.status(400).json({ error: 'Cuenta de origen requerida: indica de qué cuenta sale o a cuál entra el dinero' });
   { const mErr = validarMonedaTC(rest.moneda, rest.tipoCambio); if (mErr) return res.status(400).json({ error: mErr }); }
   { const cErr = await validarCuentaContable(rest.cuentaContable); if (cErr) return res.status(400).json({ error: cErr }); } // WS1
   if (await bloqueoPeriodo(rest.fecha, res)) return;
@@ -572,6 +575,62 @@ router.post('/movimientos', async (req, res) => {
   const [mov] = await db.insert(schema.movimientos).values({ proyectoId: proyectoId ?? null, ...base, userId: uid }).returning();
   await audit(req, { action: 'create', entityType: 'movimiento', entityId: mov!.id, after: { monto: mov!.monto, tipo: mov!.tipoMovimiento, naturaleza: mov!.naturalezaContable, cuentaId: mov!.cuentaId } });
   res.json({ movimiento: mov });
+});
+
+// F2.1 · GET /ventas?proyectoId= · registro de ventas (valorizaciones con comprobante) + detracción
+router.get('/ventas', async (req, res) => {
+  const { proyectoId } = req.query as { proyectoId?: string };
+  const rows = await db
+    .select({
+      id: schema.valorizaciones.id,
+      numero: schema.valorizaciones.numero,
+      proyectoId: schema.valorizaciones.proyectoId,
+      proyectoCodigo: schema.proyectos.codigo,
+      proyectoNombre: schema.proyectos.nombre,
+      fechaEmision: schema.valorizaciones.fechaEmision,
+      mesPeriodo: schema.valorizaciones.mesPeriodo,
+      status: schema.valorizaciones.status,
+      comprobanteTipo: schema.valorizaciones.comprobanteTipo,
+      comprobanteSerie: schema.valorizaciones.comprobanteSerie,
+      comprobanteNumero: schema.valorizaciones.comprobanteNumero,
+      cuentaContable: schema.valorizaciones.cuentaContable,
+      base: schema.valorizaciones.montoCd,
+      igv: schema.valorizaciones.montoIgv,
+      total: schema.valorizaciones.montoTotalConIgv,
+      totalFallback: schema.valorizaciones.montoTotal,
+      retencion: schema.valorizaciones.montoRetencion,
+      amortizacion: schema.valorizaciones.montoAmortizaciones,
+      totalContratista: schema.valorizaciones.totalContratista,
+    })
+    .from(schema.valorizaciones)
+    .leftJoin(schema.proyectos, eq(schema.proyectos.id, schema.valorizaciones.proyectoId))
+    .where(proyectoId ? eq(schema.valorizaciones.proyectoId, proyectoId) : undefined)
+    .orderBy(desc(schema.valorizaciones.fechaEmision));
+  const detr = rows.length
+    ? await db.select({ origen: schema.detraccionDocumento.docOrigenId, monto: schema.detraccionDocumento.monto, estado: schema.detraccionDocumento.estado })
+      .from(schema.detraccionDocumento)
+      .where(and(eq(schema.detraccionDocumento.docOrigenTipo, 'valorizacion'), inArray(schema.detraccionDocumento.docOrigenId, rows.map((r) => r.id))))
+    : [];
+  const dPorValo = new Map(detr.map((d) => [d.origen, d]));
+  const ventas = rows.map((r) => {
+    const total = Number(r.total ?? r.totalFallback);
+    const d = dPorValo.get(r.id);
+    return {
+      ...r,
+      total,
+      detraccion: d ? Number(d.monto) : null,
+      detraccionEstado: d?.estado ?? null,
+      cobrada: r.status === 'cobrada',
+    };
+  });
+  const stats = {
+    count: ventas.length,
+    total: ventas.reduce((s, v) => s + v.total, 0),
+    porCobrar: ventas.filter((v) => !v.cobrada).reduce((s, v) => s + v.total - Number(v.retencion ?? 0), 0),
+    retencion: ventas.reduce((s, v) => s + Number(v.retencion ?? 0), 0),
+    detraccion: ventas.reduce((s, v) => s + Number(v.detraccion ?? 0), 0),
+  };
+  res.json({ ventas, stats });
 });
 
 // GET /inventario?proyectoId=  (global)

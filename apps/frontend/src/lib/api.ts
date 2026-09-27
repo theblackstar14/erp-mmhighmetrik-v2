@@ -260,6 +260,11 @@ export const api = {
       if (proyectoId && proyectoId !== 'todos') qs.set('proyectoId', proyectoId);
       return req<{ movimientos: Movimiento[]; stats: { count: number; ingresos: number; egresos: number; neto: number } }>(`/api/movimientos${qs.toString() ? `?${qs}` : ''}`);
     },
+    // F2.1 · registro de ventas (valorizaciones con comprobante)
+    listVentas: (proyectoId?: string) => {
+      const qs = proyectoId && proyectoId !== 'todos' ? `?proyectoId=${proyectoId}` : '';
+      return req<{ ventas: VentaRow[]; stats: VentasStats }>(`/api/ventas${qs}`);
+    },
     createGastoGlobal: (data: GastoInput & { proyectoId?: string | null }) =>
       req<{ gasto: Gasto }>('/api/gastos', { method: 'POST', body: JSON.stringify(data) }),
     createMovimientoGlobal: (data: MovimientoInput & { proyectoId?: string | null }) =>
@@ -1796,6 +1801,9 @@ export type Gasto = {
   tipoGasto: string | null;
   observaciones: string | null;
   createdAt: string;
+  cuentaContable?: string | null; // WS1 · cuenta manual de Kelly
+  saldoPendiente?: number | null; // Fase 1 · saldo CxP derivado (null = sin documento)
+  estadoPago?: 'pagado' | 'parcial' | 'pendiente' | null;
 };
 export type GastoInput = {
   fecha: string;
@@ -1827,6 +1835,16 @@ export type GastoInput = {
 // WS1 · fila del autocomplete de plan contable (GET /contabilidad/plan?q=)
 export type PlanCuentaBusqueda = { codigo: string; descripcion: string; tipo: string; nivel: number; esDivisionaria: boolean; empresaId: number | null; activa: boolean; clasificable: boolean | null; claseObra: 'CD' | 'GG_OBRA' | null };
 export type GastoStats = { count: number; totalGeneral: number; subtotalGeneral: number; porTipo: Record<string, number> };
+// F2.1 · fila del registro de ventas (GET /api/ventas)
+export type VentaRow = {
+  id: string; numero: number; proyectoId: string; proyectoCodigo: string | null; proyectoNombre: string | null;
+  fechaEmision: string; mesPeriodo: string | null; status: string;
+  comprobanteTipo: string | null; comprobanteSerie: string | null; comprobanteNumero: string | null;
+  cuentaContable: string | null; base: string; igv: string; total: number;
+  retencion: string | null; amortizacion: string | null; totalContratista: string | null;
+  detraccion: number | null; detraccionEstado: string | null; cobrada: boolean;
+};
+export type VentasStats = { count: number; total: number; porCobrar: number; retencion: number; detraccion: number };
 export type CuentaBancaria = { id: string; codigo: string; banco: string | null; moneda: string; descripcion: string | null; cuentaContable: string | null; activo: boolean };
 
 // ─── Finanzas FIN-2 · movimientos (Flujo de Cuentas) ──────────

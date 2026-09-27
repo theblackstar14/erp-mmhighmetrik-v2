@@ -28,7 +28,7 @@ import { EmittingOverlay } from '@/components/ui/EmittingOverlay.js';
 
 const FlujoCajaView = lazy(() => import('./FlujoCajaView.js'));
 
-type Sub = 'resumen' | 'flujo' | 'movimientos' | 'ordenes' | 'gastos' | 'conciliacion' | 'reportes';
+type Sub = 'resumen' | 'compras' | 'ventas' | 'bancos' | 'flujo' | 'movimientos' | 'ordenes' | 'conciliacion' | 'reportes';
 
 const mesLabel = (m: string | null) => {
   if (!m) return '—';
@@ -87,10 +87,12 @@ export function FinanzasPage() {
         <nav className="flex gap-1 -mb-px">
           {([
             ['resumen', 'Resumen'],
+            ['compras', 'Compras'],
+            ['ventas', 'Ventas'],
+            ['bancos', 'Bancos'],
             ['flujo', 'Flujo de caja'],
             ['movimientos', 'Movimientos'],
             ['ordenes', 'Órdenes (aprobar/pagar)'],
-            ['gastos', 'Gastos'],
             ['conciliacion', 'Conciliación'],
             ['reportes', 'Reportes'],
           ] as const).map(([k, l]) => (
@@ -117,7 +119,9 @@ export function FinanzasPage() {
         )}
         {sub === 'ordenes' && <FinanzasOcQueue proyectoId={filtro} />}
         {sub === 'movimientos' && <GlobalLedger proyectoId={filtro} proyectos={proyectos} kind="movimientos" />}
-        {sub === 'gastos' && <GlobalLedger proyectoId={filtro} proyectos={proyectos} kind="gastos" />}
+        {sub === 'compras' && <GlobalLedger proyectoId={filtro} proyectos={proyectos} kind="gastos" />}
+        {sub === 'ventas' && <VentasView proyectoId={filtro} />}
+        {sub === 'bancos' && <BancosView />}
         {sub === 'conciliacion' && <ConciliacionView />}
         {sub === 'reportes' && <ReportesView />}
       </TabFade>
@@ -612,8 +616,8 @@ function GlobalLedger({ proyectoId, proyectos, kind }: { proyectoId: string; pro
   const pageSafe = Math.min(page, totalPages - 1);
   const gastos = gastosFilt.slice(pageSafe * PAGE, pageSafe * PAGE + PAGE);
   const csvGastos = () => {
-    const head = ['Fecha', 'Obra', 'Proveedor', 'RUC', 'Comprobante', 'Tipo', 'Descripción', 'Subtotal', 'IGV', 'Total'];
-    const lines = gastosFilt.map((g) => [g.fecha, g.proyectoId ? pm.get(g.proyectoId) ?? '' : '', g.proveedorRazon ?? '', g.proveedorRuc ?? '', [g.serie, g.numero].filter(Boolean).join('-'), g.tipoGasto ?? '', (g.descripcionItem ?? '').replace(/[\n;]/g, ' '), Number(g.subtotal).toFixed(2), Number(g.igv).toFixed(2), Number(g.total).toFixed(2)].map((c) => `"${String(c).replace(/"/g, '""')}"`).join(';'));
+    const head = ['Fecha', 'Obra', 'Proveedor', 'RUC', 'Comprobante', 'Tipo', 'Cuenta', 'Descripción', 'Subtotal', 'IGV', 'Total', 'Saldo', 'Estado'];
+    const lines = gastosFilt.map((g) => [g.fecha, g.proyectoId ? pm.get(g.proyectoId) ?? '' : '', g.proveedorRazon ?? '', g.proveedorRuc ?? '', [g.serie, g.numero].filter(Boolean).join('-'), g.tipoGasto ?? '', g.cuentaContable ?? '', (g.descripcionItem ?? '').replace(/[\n;]/g, ' '), Number(g.subtotal).toFixed(2), Number(g.igv).toFixed(2), Number(g.total).toFixed(2), g.saldoPendiente != null ? Number(g.saldoPendiente).toFixed(2) : '', g.estadoPago ?? ''].map((c) => `"${String(c).replace(/"/g, '""')}"`).join(';'));
     const blob = new Blob(['﻿' + [head.join(';'), ...lines].join('\n')], { type: 'text/csv;charset=utf-8' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `gastos_${new Date().toISOString().slice(0, 10)}.csv`; a.click(); URL.revokeObjectURL(a.href);
   };
@@ -626,7 +630,7 @@ function GlobalLedger({ proyectoId, proyectos, kind }: { proyectoId: string; pro
       </div>
       <div className="rounded-lg border border-line bg-bg-elev overflow-hidden">
         <div className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-2.5">
-          <h3 className="text-[13px] font-semibold mr-auto">Gastos <span className="text-ink-4 font-normal">{gastosFilt.length}{(q || anio || mes) ? ` de ${gastosAll.length}` : ''}</span></h3>
+          <h3 className="text-[13px] font-semibold mr-auto">Compras y gastos <span className="text-ink-4 font-normal">{gastosFilt.length}{(q || anio || mes) ? ` de ${gastosAll.length}` : ''}</span></h3>
           <div className="relative">
             <Search className="h-3.5 w-3.5 text-ink-4 absolute left-2 top-1/2 -translate-y-1/2" />
             <input value={busca} onChange={(e) => { setBusca(e.target.value); setPage(0); }} placeholder="Buscar proveedor, descripción, comprobante..." className="h-8 pl-7 pr-2 rounded-md border border-line bg-bg-elev text-[12px] w-56" />
@@ -647,17 +651,21 @@ function GlobalLedger({ proyectoId, proyectos, kind }: { proyectoId: string; pro
           <>
           <div className="overflow-x-auto">
           <table className="w-full">
-            <thead><tr className="border-b border-line bg-bg-sunken">{['Fecha', 'Obra', 'Proveedor', 'Comprob.', 'Tipo', 'Descripción', 'Total'].map((h, i) => <th key={i} className={cn('px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-ink-4', i === 6 ? 'text-right' : 'text-left')}>{h}</th>)}</tr></thead>
+            <thead><tr className="border-b border-line bg-bg-sunken">{['Fecha', 'Obra', 'Proveedor', 'Comprob.', 'Cuenta', 'Descripción', 'Total', 'Saldo', 'Estado'].map((h, i) => <th key={i} className={cn('px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-ink-4', i === 6 || i === 7 ? 'text-right' : 'text-left')}>{h}</th>)}</tr></thead>
             <tbody>
               {gastos.map((g) => (
                 <tr key={g.id} onClick={() => setGastoSel(g.id)} className="border-b border-line hover:bg-bg-sunken/30 cursor-pointer">
                   <td className="px-3 py-1.5 text-[11px] font-mono tabular-nums whitespace-nowrap">{g.fecha}</td>
                   <td className="px-3 py-1.5 text-[11px] font-mono text-ink-3">{g.proyectoId ? pm.get(g.proyectoId) ?? '—' : '—'}</td>
-                  <td className="px-3 py-1.5 text-[11.5px] max-w-[160px] truncate">{g.proveedorRazon ?? '—'}</td>
+                  <td className="px-3 py-1.5 text-[11.5px] max-w-[160px] truncate">{g.proveedorRazon ?? '—'}<div className="text-[10px] text-ink-4">{g.tipoGasto ?? ''}</div></td>
                   <td className="px-3 py-1.5 text-[11px] font-mono text-ink-3 whitespace-nowrap">{[g.serie, g.numero].filter(Boolean).join('-') || '—'}</td>
-                  <td className="px-3 py-1.5"><span className="chip">{g.tipoGasto ?? '—'}</span></td>
-                  <td className="px-3 py-1.5 text-[11.5px] max-w-[200px] truncate text-ink-3">{g.descripcionItem ?? '—'}</td>
+                  <td className="px-3 py-1.5 text-[11px] font-mono">{g.cuentaContable ?? <span className="text-warn-ink">s/cuenta</span>}</td>
+                  <td className="px-3 py-1.5 text-[11.5px] max-w-[180px] truncate text-ink-3">{g.descripcionItem ?? '—'}</td>
                   <td className="px-3 py-1.5 text-[11px] font-mono tabular-nums text-right font-semibold">{fmtPEN(Number(g.total))}</td>
+                  <td className={cn('px-3 py-1.5 text-[11px] font-mono tabular-nums text-right', Number(g.saldoPendiente ?? 0) > 0 ? 'text-rose-600' : 'text-ink-4')}>{g.saldoPendiente != null ? fmtPEN(Number(g.saldoPendiente)) : '—'}</td>
+                  <td className="px-3 py-1.5">{g.estadoPago
+                    ? <span className={cn('text-[10.5px] font-medium px-1.5 py-0.5 rounded', g.estadoPago === 'pagado' ? 'bg-emerald-50 text-emerald-700' : g.estadoPago === 'parcial' ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-700')}>{g.estadoPago}</span>
+                    : <span className="text-[10.5px] text-ink-4">—</span>}</td>
                 </tr>
               ))}
             </tbody>
@@ -678,6 +686,126 @@ function GlobalLedger({ proyectoId, proyectos, kind }: { proyectoId: string; pro
       </div>
       <p className="text-[10.5px] text-ink-4">Click en una compra para ver sus ítems de inventario + valuación. Para registrar con detalle usa el módulo por obra.</p>
       {gastoSel && <GastoItemsModal gastoId={gastoSel} onClose={() => setGastoSel(null)} />}
+    </div>
+  );
+}
+
+// ─── F2.1 · Registro de ventas (valorizaciones con comprobante) ──
+function VentasView({ proyectoId }: { proyectoId: string }) {
+  const q = useQuery({ queryKey: ['ventas-global', proyectoId], queryFn: () => api.finanzas.listVentas(proyectoId) });
+  const ventas = q.data?.ventas ?? [];
+  const st = q.data?.stats;
+  const csv = () => {
+    const head = ['Emisión', 'Obra', 'Valo', 'Comprobante', 'Cuenta', 'Base', 'IGV', 'Total', 'Detracción', 'Retención', 'Estado'];
+    const lines = ventas.map((v) => [v.fechaEmision, v.proyectoCodigo ?? '', `VAL-${v.numero}`, [v.comprobanteSerie, v.comprobanteNumero].filter(Boolean).join('-'), v.cuentaContable ?? '', Number(v.base).toFixed(2), Number(v.igv).toFixed(2), v.total.toFixed(2), v.detraccion != null ? v.detraccion.toFixed(2) : '', v.retencion ? Number(v.retencion).toFixed(2) : '', v.status].map((c) => `"${String(c).replace(/"/g, '""')}"`).join(';'));
+    const blob = new Blob(['﻿' + [head.join(';'), ...lines].join('\n')], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `ventas_${new Date().toISOString().slice(0, 10)}.csv`; a.click(); URL.revokeObjectURL(a.href);
+  };
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <Kpi label="Facturado" value={fmtPEN(st?.total ?? 0)} icon={<Receipt className="h-4 w-4" />} tone="ok" sub={`${st?.count ?? 0} valorizaciones`} />
+        <Kpi label="Por cobrar" value={fmtPEN(st?.porCobrar ?? 0)} icon={<ArrowUpRight className="h-4 w-4" />} tone="info" />
+        <Kpi label="Detracción retenida" value={fmtPEN(st?.detraccion ?? 0)} icon={<ShieldCheck className="h-4 w-4" />} tone="warn" sub="cliente deposita al BN" />
+        <Kpi label="Retención de garantía" value={fmtPEN(st?.retencion ?? 0)} icon={<ShieldCheck className="h-4 w-4" />} sub="cuenta 12122" />
+      </div>
+      <div className="rounded-lg border border-line bg-bg-elev overflow-hidden">
+        <div className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-2.5">
+          <h3 className="text-[13px] font-semibold mr-auto">Registro de ventas <span className="text-ink-4 font-normal">{ventas.length}</span></h3>
+          <button onClick={csv} disabled={ventas.length === 0} className="inline-flex items-center gap-1 h-8 px-2.5 rounded-md border border-line text-[11.5px] font-medium hover:bg-bg-sunken disabled:opacity-40"><Download className="h-3.5 w-3.5" /> CSV</button>
+        </div>
+        {q.isLoading ? <SkelRows rows={6} />
+          : ventas.length === 0 ? <div className="text-center py-8 text-[12px] text-ink-3">Sin ventas registradas · las valorizaciones facturadas aparecen aquí</div>
+          : (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead><tr className="border-b border-line bg-bg-sunken">{['Emisión', 'Obra', 'Valo', 'Comprobante', 'Cuenta', 'Base', 'IGV', 'Total', 'Detracción', 'Ret. garantía', 'Estado'].map((h, i) => <th key={i} className={cn('px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-ink-4', i >= 5 && i <= 9 ? 'text-right' : 'text-left')}>{h}</th>)}</tr></thead>
+              <tbody>
+                {ventas.map((v) => (
+                  <tr key={v.id} className="border-b border-line hover:bg-bg-sunken/30">
+                    <td className="px-3 py-1.5 text-[11px] font-mono tabular-nums whitespace-nowrap">{String(v.fechaEmision).slice(0, 10)}</td>
+                    <td className="px-3 py-1.5 text-[11px] font-mono text-ink-3">{v.proyectoCodigo ?? '—'}</td>
+                    <td className="px-3 py-1.5 text-[11px] font-mono">VAL-{String(v.numero).padStart(2, '0')}</td>
+                    <td className="px-3 py-1.5 text-[11px] font-mono whitespace-nowrap">{[v.comprobanteSerie, v.comprobanteNumero].filter(Boolean).join('-') || <span className="text-warn-ink">sin comprobante</span>}</td>
+                    <td className="px-3 py-1.5 text-[11px] font-mono text-ink-3">{v.cuentaContable ?? '7041'}</td>
+                    <td className="px-3 py-1.5 text-[11px] font-mono tabular-nums text-right">{fmtPEN(Number(v.base))}</td>
+                    <td className="px-3 py-1.5 text-[11px] font-mono tabular-nums text-right text-ink-3">{fmtPEN(Number(v.igv))}</td>
+                    <td className="px-3 py-1.5 text-[11px] font-mono tabular-nums text-right font-semibold">{fmtPEN(v.total)}</td>
+                    <td className="px-3 py-1.5 text-[11px] font-mono tabular-nums text-right text-amber-700">{v.detraccion != null ? fmtPEN(v.detraccion) : '—'}</td>
+                    <td className="px-3 py-1.5 text-[11px] font-mono tabular-nums text-right text-ink-3">{Number(v.retencion ?? 0) > 0 ? fmtPEN(Number(v.retencion)) : '—'}</td>
+                    <td className="px-3 py-1.5"><span className={cn('text-[10.5px] font-medium px-1.5 py-0.5 rounded', v.cobrada ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700')}>{v.cobrada ? 'Cobrada' : v.status}</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+      <p className="text-[10.5px] text-ink-4">Vista del registro 14.1 · el alta de ventas sin valorización (venta directa / contrato) llega con el registro de ventas standalone (F3.1).</p>
+    </div>
+  );
+}
+
+// ─── F2.1 · Libro banco por cuenta (N° de operación · cargo/abono) ──
+function BancosView() {
+  const cuentasQ = useQuery({ queryKey: ['cuentas'], queryFn: () => api.finanzas.listCuentas() });
+  const movQ = useQuery({ queryKey: ['mov-global', 'todos'], queryFn: () => api.finanzas.listMovimientosGlobal() });
+  const cuentas = (cuentasQ.data?.cuentas ?? []).filter((c) => c.activo);
+  const [cuentaSel, setCuentaSel] = useState<string>('');
+  const cuentaId = cuentaSel || cuentas[0]?.id || '';
+  const cuenta = cuentas.find((c) => c.id === cuentaId);
+  const [page, setPage] = useState(0);
+  const PAGE = 15;
+  const movs = useMemo(() => (movQ.data?.movimientos ?? []).filter((m) => m.cuentaId === cuentaId), [movQ.data, cuentaId]);
+  const cargos = movs.filter((m) => m.tipoMovimiento === 'Egreso').reduce((s, m) => s + Number(m.monto), 0);
+  const abonos = movs.filter((m) => m.tipoMovimiento === 'Ingreso').reduce((s, m) => s + Number(m.monto), 0);
+  const totalPages = Math.max(1, Math.ceil(movs.length / PAGE));
+  const pageSafe = Math.min(page, totalPages - 1);
+  const movsPage = movs.slice(pageSafe * PAGE, pageSafe * PAGE + PAGE);
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-3 gap-3">
+        <Kpi label="Abonos" value={fmtPEN(abonos)} icon={<ArrowUpRight className="h-4 w-4" />} tone="ok" />
+        <Kpi label="Cargos" value={fmtPEN(cargos)} icon={<ArrowDownRight className="h-4 w-4" />} tone="warn" />
+        <Kpi label="Saldo del libro" value={fmtPEN(abonos - cargos)} icon={<Wallet className="h-4 w-4" />} tone="info" sub={cuenta ? `${cuenta.cuentaContable ?? 'sin cuenta contable'}` : undefined} />
+      </div>
+      <div className="rounded-lg border border-line bg-bg-elev overflow-hidden">
+        <div className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-2.5">
+          <h3 className="text-[13px] font-semibold mr-auto">Libro banco <span className="text-ink-4 font-normal">{movs.length} movimientos</span></h3>
+          <select value={cuentaId} onChange={(e) => { setCuentaSel(e.target.value); setPage(0); }} className="h-8 px-2 rounded-md border border-line bg-bg-elev text-[12px] max-w-[320px]">
+            {cuentas.map((c) => <option key={c.id} value={c.id}>{c.cuentaContable ? `${c.cuentaContable} · ` : ''}{c.banco ?? ''} {c.codigo} · {c.descripcion ?? ''}</option>)}
+          </select>
+        </div>
+        {movQ.isLoading || cuentasQ.isLoading ? <SkelRows rows={8} />
+          : movs.length === 0 ? <div className="text-center py-8 text-[12px] text-ink-3">Sin movimientos en esta cuenta</div>
+          : (
+          <>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead><tr className="border-b border-line bg-bg-sunken">{['Fecha', 'Descripción', 'N° operación', 'Comprobante', 'Contraparte', 'Cargo', 'Abono'].map((h, i) => <th key={i} className={cn('px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-ink-4', i >= 5 ? 'text-right' : 'text-left')}>{h}</th>)}</tr></thead>
+              <tbody>
+                {movsPage.map((m) => {
+                  const ing = m.tipoMovimiento === 'Ingreso';
+                  return (
+                    <tr key={m.id} className="border-b border-line hover:bg-bg-sunken/30">
+                      <td className="px-3 py-1.5 text-[11px] font-mono tabular-nums whitespace-nowrap">{m.fecha}</td>
+                      <td className="px-3 py-1.5 text-[11.5px] max-w-[240px] truncate">{m.descripcion ?? m.fuenteMovimiento ?? '—'}</td>
+                      <td className="px-3 py-1.5 text-[11px] font-mono">{m.numOperacion ?? <span className="text-warn-ink">—</span>}</td>
+                      <td className="px-3 py-1.5 text-[11px] font-mono text-ink-3 whitespace-nowrap">{[m.serie, m.numero].filter(Boolean).join('-') || '—'}</td>
+                      <td className="px-3 py-1.5 text-[11.5px] text-ink-3 max-w-[150px] truncate">{m.clienteNombre ?? '—'}</td>
+                      <td className="px-3 py-1.5 text-[11px] font-mono tabular-nums text-right text-warn-ink">{!ing ? fmtPEN(Number(m.monto)) : ''}</td>
+                      <td className="px-3 py-1.5 text-[11px] font-mono tabular-nums text-right text-ok">{ing ? fmtPEN(Number(m.monto)) : ''}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div className="px-3"><Pager page={pageSafe} totalPages={totalPages} count={movs.length} per={PAGE} onPage={setPage} /></div>
+          </>
+        )}
+      </div>
+      <p className="text-[10.5px] text-ink-4">El N° de operación es obligatorio para conciliar contra el extracto · cada salida apunta a su documento, caja o glosa.</p>
     </div>
   );
 }
@@ -888,11 +1016,14 @@ function MovModal({ proyectos, defaultProyecto, onClose }: { proyectos: { id: st
   const validDoc = isBanc || (f.tipoDoc === 'RUC' ? /^\d{11}$/.test(f.docNumero) : f.tipoDoc === 'DNI' ? /^\d{8}$/.test(f.docNumero) : f.docNumero.length >= 6) || !f.docNumero;
   // en prorrateo: cada fila con obra+monto>0 y la suma debe igualar el total
   const repartoValido = !prorratear || (() => { const rows = reparto.filter((r) => r.proyectoId && (parseFloat(r.monto) || 0) > 0); const suma = rows.reduce((s, r) => s + parseFloat(r.monto), 0); return rows.length >= 2 && Math.abs(totalComp - suma) < 0.01; })();
-  const isValid = sub > 0 && f.fecha && repartoValido && (isBanc ? (f.cuentaId && (!esTransfer || (f.cuentaDestinoId && f.cuentaDestinoId !== f.cuentaId))) : (f.contraparte.trim() && validDoc));
+  // F2.1 · si la operación genera movimiento de caja (todo salvo gasto pendiente), la cuenta de
+  // origen es obligatoria: sin ella el motor 104x no puede asentar (huérfanos de prorrateo 2026-08).
+  const creaMovimiento = isBanc || !esGastoEgreso || estadoPago === 'pagado';
+  const isValid = sub > 0 && f.fecha && repartoValido && (!creaMovimiento || !!f.cuentaId) && (isBanc ? (f.cuentaId && (!esTransfer || (f.cuentaDestinoId && f.cuentaDestinoId !== f.cuentaId))) : (f.contraparte.trim() && validDoc));
 
   const onSave = () => {
     setError(null);
-    if (!isValid) { setError(isBanc ? 'Completa cuenta(s) y monto' : 'Completa contraparte, monto y documento válido'); return; }
+    if (!isValid) { setError(creaMovimiento && !f.cuentaId ? 'Indica la cuenta de la que sale o a la que entra el dinero' : isBanc ? 'Completa cuenta(s) y monto' : 'Completa contraparte, monto y documento válido'); return; }
     setEmitting(true); setEmitDone(false); create.mutate();
   };
 
