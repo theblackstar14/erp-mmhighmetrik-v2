@@ -1,0 +1,1618 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Definitivo · Finanzas + Contabilidad · ERP MM High Metrik</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+/* tokens copiados de apps/frontend/src/index.css (light) */
+:root{
+  --background:hsl(60 10% 96%); --bg-elev:hsl(0 0% 100%); --bg-sunken:hsl(60 8% 93%);
+  --foreground:hsl(0 0% 11%); --ink-2:hsl(60 4% 23%); --ink-3:hsl(60 3% 42%); --ink-4:hsl(60 3% 60%);
+  --line:hsl(60 7% 88%); --line-2:hsl(60 6% 83%); --line-strong:hsl(60 5% 76%);
+  --primary:hsl(230 68% 55%); --primary-fg:#fff; --primary-soft:hsl(224 73% 94%); --primary-ink:hsl(230 64% 30%);
+  --warn:hsl(38 100% 48%); --warn-soft:hsl(41 89% 91%); --warn-ink:hsl(36 100% 24%);
+  --destructive:hsl(5 62% 53%); --destructive-soft:hsl(7 73% 93%);
+  --ok:hsl(154 45% 34%); --ok-soft:hsl(144 36% 90%); --ok-ink:hsl(154 49% 19%);
+  --emerald-600:#059669; --emerald-700:#047857; --emerald-50:#ecfdf5;
+  --rose-600:#e11d48; --rose-700:#be123c; --rose-50:#fff1f2;
+  --amber-600:#d97706; --amber-700:#b45309; --violet-600:#7c3aed; --zinc-400:#a1a1aa;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--background);color:var(--foreground);
+  font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;line-height:1.5;
+  font-feature-settings:'cv02','cv03','cv04','cv11','ss01';-webkit-font-smoothing:antialiased}
+.mono{font-family:'JetBrains Mono','SF Mono',Menlo,Consolas,monospace;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+::selection{background:var(--primary-soft);color:var(--primary-ink)}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:6px;border:2px solid var(--background)}
+::-webkit-scrollbar-thumb:hover{background:var(--line-strong)}
+
+@keyframes pageEnter{0%{opacity:0;transform:translateY(8px) scale(.99)}100%{opacity:1;transform:none}}
+@keyframes dataIn{0%{opacity:0}100%{opacity:1}}
+@keyframes modalPop{0%{opacity:0;transform:scale(.92)}100%{opacity:1;transform:scale(1)}}
+@keyframes backdropIn{0%{opacity:0}100%{opacity:1}}
+.a-page{animation:pageEnter .35s cubic-bezier(.2,.7,.3,1) both}
+.a-data{animation:dataIn .16s ease-out both}
+.a-pop{animation:modalPop .26s cubic-bezier(.34,1.4,.5,1) both}
+.a-backdrop{animation:backdropIn .18s ease both}
+
+/* shell */
+.app{display:flex;height:100vh;overflow:hidden}
+aside{display:flex;height:100vh;flex-direction:column;overflow:hidden;width:248px;flex:0 0 248px;
+  border-right:1px solid var(--line);background:var(--bg-elev)}
+.brand{display:flex;height:56px;flex-shrink:0;align-items:center;gap:10px;padding:0 16px;border-bottom:1px solid var(--line)}
+.brand .tile{display:flex;height:28px;width:28px;flex-shrink:0;align-items:center;justify-content:center;
+  border-radius:6px;background:#0F1115;color:#fff;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;letter-spacing:-.05em}
+.brand .nm{display:flex;flex:1;flex-direction:column;line-height:1.15;overflow:hidden;white-space:nowrap}
+.brand .nm b{font-size:13px;font-weight:600;letter-spacing:-.01em}
+.brand .nm span{font-family:'JetBrains Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-3)}
+.iconbtn{display:inline-flex;height:28px;width:28px;flex-shrink:0;align-items:center;justify-content:center;
+  border:0;background:none;border-radius:6px;color:var(--ink-3);cursor:pointer}
+.iconbtn:hover{background:var(--bg-sunken);color:var(--foreground)}
+aside nav{flex:1;overflow-y:auto;padding:12px 10px}
+.navgrp{margin-bottom:12px}
+.navgrp>.lbl{padding:0 8px 6px;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:500;
+  text-transform:uppercase;letter-spacing:.1em;color:var(--ink-4)}
+.navitems{display:flex;flex-direction:column;gap:1px}
+.navitem{display:flex;align-items:center;gap:10px;border-radius:6px;padding:6px 8px;font-size:13px;
+  color:var(--ink-2);text-decoration:none;transition:background-color .15s,color .15s;cursor:pointer}
+.navitem:hover{background:var(--bg-sunken);color:var(--foreground)}
+.navitem.on{background:var(--primary-soft);color:var(--primary-ink);font-weight:500}
+.navitem .ic{width:16px;height:16px;flex-shrink:0;color:var(--ink-3)}
+.navitem.on .ic{color:var(--primary)}
+.navitem .txt{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.navitem .bdg{border-radius:4px;border:1px solid var(--line);background:var(--bg-sunken);color:var(--ink-3);
+  font-family:'JetBrains Mono',monospace;font-size:10px;padding:1px 6px}
+.asidefoot{flex-shrink:0;border-top:1px solid var(--line);padding:10px}
+.avmenu{display:flex;align-items:center;gap:8px;width:100%;border:0;background:none;border-radius:6px;padding:6px;cursor:pointer;text-align:left}
+.avmenu:hover{background:var(--bg-sunken)}
+.av{display:flex;height:28px;width:28px;flex-shrink:0;align-items:center;justify-content:center;border-radius:999px;
+  background:#0F1115;color:#fff;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700}
+.avmenu .nm{flex:1;line-height:1.2;overflow:hidden}
+.avmenu .nm b{display:block;font-size:12px;font-weight:500}
+.avmenu .nm span{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-3)}
+
+main{display:flex;flex:1;flex-direction:column;overflow:hidden;min-width:0}
+.topbar{display:flex;height:56px;flex-shrink:0;align-items:center;gap:12px;border-bottom:1px solid var(--line);
+  background:var(--bg-elev);padding:0 16px}
+.crumbs{display:flex;align-items:center;gap:6px;font-size:13px;white-space:nowrap;color:var(--ink-4)}
+.crumbs .cur{color:var(--foreground);font-weight:500}
+.search{display:flex;align-items:center;gap:8px;height:32px;flex:1;max-width:520px;margin:0 auto;
+  border:1px solid var(--line);border-radius:6px;background:var(--bg-sunken);padding:0 10px;color:var(--ink-4);font-size:12.5px}
+.search .kbd{margin-left:auto;border:1px solid var(--line-2);border-radius:4px;background:var(--bg-elev);
+  padding:1px 5px;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-4)}
+.bell{position:relative}
+.bell .dot{position:absolute;top:0;right:-2px;min-width:15px;height:15px;border-radius:999px;background:var(--destructive);
+  color:#fff;font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:700;display:flex;align-items:center;justify-content:center;padding:0 3px}
+.copilot{display:inline-flex;align-items:center;gap:6px;height:32px;border:0;border-radius:6px;background:var(--primary);
+  color:var(--primary-fg);padding:0 11px;font:500 12px/1 'Inter',sans-serif;cursor:pointer}
+.copilot:hover{opacity:.9}
+.scrollarea{flex:1;overflow-y:auto;padding:20px}
+.stack{display:flex;flex-direction:column;gap:20px}
+
+/* page head */
+.pagehead{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.pagehead h1{margin:0;font-size:20px;font-weight:700;letter-spacing:-.02em}
+.pagehead p{margin:2px 0 0;font-size:13px;color:var(--ink-3)}
+.sel{height:36px;border:1px solid var(--line);border-radius:6px;background:var(--bg-elev);padding:0 10px;
+  font-size:12.5px;color:var(--foreground);font-family:inherit}
+.btn{display:inline-flex;align-items:center;gap:6px;height:36px;border:1px solid var(--line);border-radius:6px;
+  background:var(--bg-elev);padding:0 12px;font:500 12px/1 'Inter',sans-serif;color:var(--ink-2);cursor:pointer}
+.btn:hover{background:var(--bg-sunken)}
+.btn.pri{border-color:var(--primary);background:var(--primary);color:var(--primary-fg)}
+.btn.pri:hover{opacity:.9;background:var(--primary)}
+.btn.sm{height:32px;padding:0 10px;font-size:11.5px}
+.btn.dash{border-style:dashed}
+.btn[disabled]{opacity:.45;cursor:not-allowed}
+
+/* tabs */
+.tabsbar{border-bottom:1px solid var(--line);overflow-x:auto}
+.tabsbar nav{display:flex;gap:4px;margin-bottom:-1px}
+.tab{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;border:0;border-bottom:2px solid transparent;
+  background:none;padding:8px 12px;font:500 12.5px/1.4 'Inter',sans-serif;color:var(--ink-3);cursor:pointer;
+  transition:color .15s,border-color .15s}
+.tab:hover{color:var(--foreground);border-bottom-color:var(--line-strong)}
+.tab.on{color:var(--primary);border-bottom-color:var(--primary)}
+.newdot{width:5px;height:5px;border-radius:999px;background:var(--warn)}
+
+/* cards, kpis, secciones */
+.card{border:1px solid var(--line);border-radius:8px;background:var(--bg-elev);overflow:hidden}
+.kpirow{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:10px}
+.kpi{border:1px solid var(--line);border-top:2px solid var(--zinc-400);border-radius:6px;background:var(--bg-elev);padding:10px 12px}
+.kpi .l{font-family:'JetBrains Mono',monospace;font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-4);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kpi .v{margin-top:4px;font-family:'JetBrains Mono',monospace;font-size:17px;font-weight:700;font-variant-numeric:tabular-nums;
+  letter-spacing:-.02em;line-height:1.2}
+.kpi .s{margin-top:2px;font-size:10px;color:var(--ink-4);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.k-blue{border-top-color:var(--primary)} .k-blue .v{color:var(--primary)}
+.k-em{border-top-color:var(--emerald-600)} .k-em .v{color:var(--emerald-600)}
+.k-rose{border-top-color:var(--rose-600)} .k-rose .v{color:var(--rose-600)}
+.k-amber{border-top-color:var(--amber-600)} .k-amber .v{color:var(--amber-700)}
+.k-violet{border-top-color:var(--violet-600)} .k-violet .v{color:var(--violet-600)}
+.sechead{display:flex;align-items:center;gap:10px;padding-top:4px}
+.sechead .sq{width:8px;height:8px;border-radius:2px;flex-shrink:0}
+.sechead .tx{font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em}
+.sechead .rule{flex:1;height:1px;background:var(--line)}
+.s-blue .sq{background:var(--primary)} .s-blue .tx{color:var(--primary)}
+.s-em .sq{background:var(--emerald-600)} .s-em .tx{color:var(--emerald-600)}
+.s-rose .sq{background:var(--rose-600)} .s-rose .tx{color:var(--rose-600)}
+.s-amber .sq{background:var(--amber-600)} .s-amber .tx{color:var(--amber-700)}
+.s-violet .sq{background:var(--violet-600)} .s-violet .tx{color:var(--violet-600)}
+
+/* chips */
+.chip{display:inline-flex;align-items:center;gap:4px;border-radius:4px;padding:2px 8px;font-family:'JetBrains Mono',monospace;
+  font-size:10px;font-weight:500;text-transform:uppercase;letter-spacing:.05em;background:var(--bg-sunken);color:var(--ink-3)}
+.chip.blue{background:var(--primary-soft);color:var(--primary-ink)}
+.chip.amber{background:var(--warn-soft);color:var(--warn-ink)}
+.chip.green{background:var(--ok-soft);color:var(--ok-ink)}
+.chip.red{background:var(--destructive-soft);color:var(--destructive)}
+.chip.violet{background:#f3e8ff;color:#6d28d9}
+
+/* tablas */
+.tablewrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{text-align:left;padding:8px 12px;border-bottom:1px solid var(--line);white-space:nowrap;
+  font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:500;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-4)}
+td{padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:middle}
+tbody tr:last-child td{border-bottom:0}
+tbody tr:hover{background:var(--bg-sunken)}
+td.r,th.r{text-align:right;font-variant-numeric:tabular-nums}
+.toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid var(--line)}
+.toolbar .ttl{font-size:12.5px;font-weight:600}
+.toolbar .cnt{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-4)}
+.grow{flex:1}
+.inp{height:32px;border:1px solid var(--line);border-radius:6px;background:var(--bg-elev);padding:0 10px;font-size:12px;
+  color:var(--foreground);font-family:inherit;width:100%}
+.inp::placeholder{color:var(--ink-4)}
+.inp.ro{background:var(--bg-sunken);color:var(--ink-3)}
+
+/* nota de decisión */
+.note{border:1px solid var(--line);border-radius:8px;background:var(--bg-elev);padding:11px 13px;font-size:12px;color:var(--ink-2)}
+.note .hd{display:flex;align-items:center;gap:8px;margin-bottom:5px}
+.note q{color:var(--ink-3);font-style:italic}
+.note b{font-weight:600}
+.notegrid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+
+/* modal */
+.ov{position:fixed;inset:0;z-index:50;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.5);padding:16px}
+.ov.on{display:flex}
+.modal{display:flex;width:100%;max-width:672px;max-height:88vh;flex-direction:column;overflow:hidden;
+  border:1px solid var(--line);border-radius:12px;background:var(--bg-elev);box-shadow:0 25px 50px -12px rgba(0,0,0,.25)}
+.modal.wide{max-width:1000px}
+.modal.xwide{max-width:1120px}
+.modal>header{display:flex;flex-shrink:0;align-items:center;justify-content:space-between;gap:10px;
+  border-bottom:1px solid var(--line);padding:14px 20px}
+.modal>header h2{margin:0;font-size:16px;font-weight:700;letter-spacing:-.01em}
+.modal>header .sub{font-size:11px;color:var(--ink-4);margin-top:2px}
+.modal>.bd{flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:14px;background:hsl(60 8% 93% / .4)}
+.modal>footer{display:flex;flex-shrink:0;align-items:center;gap:10px;border-top:1px solid var(--line);padding:12px 20px}
+.hint{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--warn-ink)}
+.secbox{border:1px solid var(--line);border-radius:8px;background:var(--bg-elev);padding:14px}
+.secbox>.t{font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;text-transform:uppercase;
+  letter-spacing:.08em;color:var(--ink-4);margin-bottom:10px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.fields{display:flex;flex-direction:column;gap:12px}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.g3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+label.f{display:block}
+label.f>.lb{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+label.f>.lb>span:first-child{font-family:'JetBrains Mono',monospace;font-size:10.5px;text-transform:uppercase;
+  letter-spacing:.05em;color:var(--ink-4)}
+label.f>.lb>.opt{font-size:9.5px;color:var(--ink-4);font-style:italic}
+label.f>.ct{margin-top:4px}
+.seg{display:flex;gap:8px}
+.seg button{flex:1;border:1px solid var(--line);border-radius:6px;background:var(--bg-elev);padding:6px 0;
+  font:400 11.5px/1.3 'Inter',sans-serif;color:var(--ink-2);cursor:pointer;transition:background-color .15s,border-color .15s}
+.seg button:hover{background:var(--bg-sunken)}
+.seg button.on{border-color:var(--primary);background:hsl(230 68% 55% / .05);font-weight:600}
+.pick{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.pick button{border:1px solid var(--line);border-radius:6px;background:var(--bg-elev);padding:8px;text-align:left;
+  font:400 11.5px/1.35 'Inter',sans-serif;color:var(--foreground);cursor:pointer;transition:background-color .15s,border-color .15s}
+.pick button:hover{background:var(--bg-sunken)}
+.pick button.on{border-color:var(--rose-600);background:var(--rose-50)}
+.pick b{display:block;font-weight:600}
+.pick span{display:block;font-size:10px;color:var(--ink-4);margin-top:1px}
+.ckline{display:flex;align-items:center;gap:6px;font-size:11.5px;cursor:pointer}
+.tot{display:grid;grid-template-columns:1fr auto;gap:5px 20px;font-size:12.5px}
+.tot .k{color:var(--ink-3)}
+.tot .v{font-family:'JetBrains Mono',monospace;font-variant-numeric:tabular-nums;text-align:right}
+.tot .big{font-weight:700;font-size:15px}
+.dz{border:1.5px dashed var(--line-strong);border-radius:8px;background:var(--bg-sunken);padding:26px;text-align:center;
+  font-size:12px;color:var(--ink-3)}
+.dz b{display:block;font-size:13px;color:var(--foreground);margin-bottom:3px}
+
+/* progreso de secciones en el header del modal */
+.steps{display:flex;align-items:center;gap:3px;flex-wrap:wrap;margin-top:5px}
+.step{display:inline-flex;align-items:center;gap:5px;border:0;background:none;border-radius:4px;padding:3px 7px;cursor:pointer;
+  font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:500;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-4)}
+.step:hover{background:var(--bg-sunken)}
+.step .mk{width:13px;height:13px;border-radius:999px;border:1.5px solid var(--line-strong);flex-shrink:0;
+  display:inline-flex;align-items:center;justify-content:center;font-size:8px;line-height:1}
+.step.ok{color:var(--ok-ink)}   .step.ok .mk{border-color:var(--ok);background:var(--ok);color:#fff}
+.step.warn{color:var(--warn-ink)} .step.warn .mk{border-color:var(--warn);background:var(--warn);color:#fff}
+.step .sep{color:var(--line-2)}
+
+/* dos columnas: captura + panel de totales */
+.cols{display:grid;grid-template-columns:minmax(0,1fr) 292px;gap:14px;align-items:start}
+.cols>.mn{display:flex;flex-direction:column;gap:14px;min-width:0}
+.side{position:sticky;top:0;display:flex;flex-direction:column;gap:10px}
+.side .box{border:1px solid var(--line);border-radius:8px;background:var(--bg-elev);padding:12px}
+.side .box>.t{font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;text-transform:uppercase;
+  letter-spacing:.08em;color:var(--ink-4);margin-bottom:9px}
+.side .tot{font-size:12px}
+.side .rule{height:1px;background:var(--line);margin:7px 0;grid-column:1 / -1}
+
+/* puerta de entrada */
+.entry3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.entry3 button{border:2px solid var(--line);border-radius:8px;background:var(--bg-elev);padding:9px 11px;text-align:left;
+  cursor:pointer;font-family:inherit;transition:background-color .15s,border-color .15s}
+.entry3 button:hover{background:var(--bg-sunken)}
+.entry3 b{display:block;font-size:13px;font-weight:700;color:var(--foreground)}
+.entry3 span{display:block;font-size:10px;color:var(--ink-4);margin-top:2px;line-height:1.35}
+.entry3 button.on.ro{border-color:var(--rose-600);background:var(--rose-50)}
+.entry3 button.on.ro b{color:var(--rose-700)}
+.entry3 button.on.bl{border-color:var(--primary);background:hsl(230 68% 55% / .08)}
+.entry3 button.on.bl b{color:var(--primary)}
+
+/* grilla de lineas tipo hoja de calculo */
+.lines{border:1px solid var(--line);border-radius:6px;overflow-x:auto}
+.lines table{font-size:11.5px}
+.lines th{padding:6px 8px}
+.lines td{padding:4px 8px}
+.lines tbody tr:hover{background:transparent}
+.lines .inp{height:28px;padding:0 7px;font-size:11.5px}
+.lines .inp.mono{font-family:'JetBrains Mono',monospace;font-variant-numeric:tabular-nums}
+.lines td.ck{text-align:center}
+.lines tr.inv td{background:hsl(38 100% 48% / .05)}
+.linefoot{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center}
+.kbdh{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-4)}
+.kbdh kbd{border:1px solid var(--line-2);border-radius:3px;background:var(--bg-sunken);padding:1px 4px;font-size:9.5px}
+
+/* avisos */
+.inote{border:1px solid var(--line-2);border-radius:6px;background:var(--bg-sunken);padding:8px 10px;font-size:11.5px;
+  color:var(--ink-2);display:flex;gap:7px;align-items:flex-start;line-height:1.45}
+.inote svg{flex-shrink:0;margin-top:1px}
+.inote.warn{border-color:var(--warn);background:var(--warn-soft);color:var(--warn-ink)}
+.inote.ok{border-color:var(--ok);background:var(--ok-soft);color:var(--ok-ink)}
+.inote.bad{border-color:var(--destructive);background:var(--destructive-soft);color:var(--destructive)}
+
+/* árbol del plan de cuentas */
+.tree{font-family:'JetBrains Mono',monospace;font-size:12px}
+.tree .nd{display:flex;align-items:center;gap:8px;padding:5px 12px;border-bottom:1px solid var(--line)}
+.tree .nd:last-child{border-bottom:0}
+.tree .nd:hover{background:var(--bg-sunken)}
+.tree .cod{font-weight:600;min-width:88px}
+.tree .des{font-family:'Inter',sans-serif;color:var(--ink-2);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tree .lv1{padding-left:12px;background:var(--bg-sunken)} .tree .lv1 .cod{color:var(--foreground)}
+.tree .lv2{padding-left:28px}
+.tree .lv3{padding-left:44px}
+.tree .lv4{padding-left:60px} .tree .lv4 .cod{color:var(--primary)}
+.tree .sal{font-variant-numeric:tabular-nums;color:var(--ink-3);min-width:110px;text-align:right}
+.addline{display:flex;align-items:center;gap:8px;padding:6px 12px 6px 60px;border-top:1px dashed var(--line-strong);
+  color:var(--primary);font-size:11.5px;cursor:pointer;background:hsl(230 68% 55% / .03)}
+
+/* asiento debe/haber */
+.asiento td.dr,.asiento th.dr{text-align:right;font-variant-numeric:tabular-nums}
+.asiento tfoot td{font-weight:700;border-top:2px solid var(--line-strong);background:var(--bg-sunken)}
+
+@media(max-width:1280px){.kpirow{grid-template-columns:repeat(4,minmax(0,1fr))}.notegrid{grid-template-columns:1fr 1fr}}
+@media(max-width:1150px){.cols{grid-template-columns:1fr}.side{position:static}}
+@media(max-width:860px){aside{display:none}.kpirow{grid-template-columns:repeat(2,minmax(0,1fr))}.g2,.g3{grid-template-columns:1fr}.entry3{grid-template-columns:1fr}.notegrid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <aside>
+    <div class="brand">
+      <div class="tile">MM</div>
+      <div class="nm"><b>MMHIGHMETRIK</b><span>Engineers ERP</span></div>
+      <button class="iconbtn" title="Colapsar"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg></button>
+    </div>
+    <nav>
+      <div class="navgrp"><div class="lbl">Operación</div><div class="navitems">
+        <a class="navitem"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg><span class="txt">Dashboard</span></a>
+        <a class="navitem"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg><span class="txt">Licitaciones</span></a>
+        <a class="navitem"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"/><path d="M5 21V7l7-4 7 4v14"/><path d="M9 21v-6h6v6"/></svg><span class="txt">Proyectos</span><span class="bdg">5</span></a>
+        <a class="navitem"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 17 6-6 4 4 8-8"/><path d="M17 7h4v4"/></svg><span class="txt">Inversiones</span><span class="bdg">2</span></a>
+      </div></div>
+      <div class="navgrp"><div class="lbl">Administración</div><div class="navitems">
+        <a class="navitem on" id="nav-fin" onclick="goPage('fin')"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg><span class="txt">Finanzas</span></a>
+        <a class="navitem" id="nav-conta" onclick="goPage('conta')"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 22h16"/><path d="M6 2h12v20H6z"/><path d="M9 6h6M9 10h6M9 14h6"/></svg><span class="txt">Contabilidad</span></a>
+        <a class="navitem"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 17h4V5H2v12h3"/><path d="M20 17h2v-3.34a4 4 0 0 0-1.17-2.83L19 9h-5v8h1"/><circle cx="7.5" cy="17.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/></svg><span class="txt">Logística</span></a>
+        <a class="navitem"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg><span class="txt">Inventario</span></a>
+        <a class="navitem"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg><span class="txt">Personal</span></a>
+      </div></div>
+      <div class="navgrp"><div class="lbl">Archivos</div><div class="navitems">
+        <a class="navitem"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/><path d="M14 2v5h6"/></svg><span class="txt">Documentos</span></a>
+      </div></div>
+    </nav>
+    <div class="asidefoot">
+      <button class="avmenu">
+        <span class="av">KG</span>
+        <span class="nm"><b>Kelly García</b><span>MM · CONTABILIDAD</span></span>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--ink-4)"><path d="m18 15-6-6-6 6"/></svg>
+      </button>
+    </div>
+  </aside>
+
+  <main>
+    <div class="topbar">
+      <button class="iconbtn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/></svg></button>
+      <div class="crumbs"><span>Principal</span><span>/</span><span class="cur" id="crumb">Finanzas</span></div>
+      <div class="search">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        Buscar proveedor, factura, cuenta, N° operación...
+        <span class="kbd">⌘K</span>
+      </div>
+      <button class="iconbtn bell"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/></svg><span class="dot">14</span></button>
+      <button class="copilot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/></svg>Copiloto IA</button>
+    </div>
+
+    <div class="scrollarea">
+
+    <!-- ═══════════════════════ PÁGINA FINANZAS ═══════════════════════ -->
+    <div class="stack a-page" id="page-fin">
+
+      <div class="pagehead">
+        <div>
+          <h1>Finanzas</h1>
+          <p>Compras · ventas · bancos · cajas · todo con cuenta contable manual y N° de operación</p>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span class="chip amber">Versión definitiva · propuesta</span>
+          <select class="sel" style="width:240px"><option>Todos los proyectos</option><option>PG0001 · Famesa Chancay</option><option>PG0004 · Colegios San Ignacio</option><option>PG0005 · Crematorio Surco</option><option>OF0001 · Oficina</option></select>
+          <button class="btn pri" onclick="openM('m-compra')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14M12 5v14"/></svg>Registrar</button>
+        </div>
+      </div>
+
+      <div class="tabsbar"><nav class="tabs" data-page="fin">
+        <button class="tab on" data-p="fin-resumen">Resumen</button>
+        <button class="tab" data-p="fin-compras">Compras</button>
+        <button class="tab" data-p="fin-ventas">Ventas</button>
+        <button class="tab" data-p="fin-bancos">Bancos</button>
+        <button class="tab" data-p="fin-cajas">Cajas</button>
+        <button class="tab" data-p="fin-movimientos">Movimientos</button>
+        <button class="tab" data-p="fin-conciliacion">Conciliación</button>
+        <button class="tab" data-p="fin-reportes">Reportes</button>
+      </nav></div>
+
+      <!-- ══════ FIN · RESUMEN ══════ -->
+      <div class="panel a-data" id="p-fin-resumen" style="display:flex;flex-direction:column;gap:20px">
+        <div class="kpirow">
+          <div class="kpi k-em"><div class="l">Ingresos del mes</div><div class="v">S/ 71,226.91</div><div class="s">3 facturas emitidas</div></div>
+          <div class="kpi k-rose"><div class="l">Gastos del mes</div><div class="v">S/ 48,310.55</div><div class="s">compras + planilla</div></div>
+          <div class="kpi k-amber"><div class="l">Margen neto</div><div class="v">32.2%</div><div class="s">S/ 22,916.36 utilidad</div></div>
+          <div class="kpi"><div class="l">Por cobrar</div><div class="v">S/ 62,811.29</div><div class="s">cuenta 12 · 2 clientes</div></div>
+          <div class="kpi k-rose"><div class="l">Por pagar</div><div class="v">S/ 807,341.89</div><div class="s">cuentas 42+45+41</div></div>
+          <div class="kpi k-blue"><div class="l">Posición de caja</div><div class="v">S/ 1,397,918.14</div><div class="s">todo el elemento 1</div></div>
+          <div class="kpi k-violet"><div class="l">Detracc. por pagar</div><div class="v">S/ 4,431.00</div><div class="s">2 constancias pend.</div></div>
+        </div>
+
+        <div class="sechead s-blue"><span class="sq"></span><span class="tx">Tesorería · una tarjeta por divisionaria del elemento 1</span><span class="rule"></span></div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+          <div class="card" style="padding:14px">
+            <div style="display:flex;align-items:center;gap:8px"><span class="chip blue">BCP</span><b style="font-size:12.5px">Cuenta Corriente Principal</b></div>
+            <div class="mono" style="font-size:10px;color:var(--ink-4);margin-top:3px">194-9927833-0-39 · PEN</div>
+            <div class="mono" style="font-size:19px;font-weight:700;margin-top:8px">S/ 1,363,738.14</div>
+            <div style="display:flex;justify-content:space-between;margin-top:8px;font-size:10px" class="mono">
+              <span style="color:var(--emerald-600)">ing +S/ 6,453,275.05</span><span style="color:var(--rose-600)">egr −S/ 5,089,536.91</span></div>
+            <div style="display:flex;align-items:center;gap:8px;margin-top:10px">
+              <span class="mono" style="font-size:9px;color:var(--ink-4);text-transform:uppercase;letter-spacing:.08em">Divisionaria</span>
+              <span class="chip blue mono">1041801 · BCP Soles</span></div>
+          </div>
+          <div class="card" style="padding:14px">
+            <div style="display:flex;align-items:center;gap:8px"><span class="chip">BCP</span><b style="font-size:12.5px">Caja Chica</b></div>
+            <div class="mono" style="font-size:10px;color:var(--ink-4);margin-top:3px">998-553-242 · PEN</div>
+            <div class="mono" style="font-size:19px;font-weight:700;margin-top:8px">S/ 0.00</div>
+            <div style="display:flex;justify-content:space-between;margin-top:8px;font-size:10px" class="mono">
+              <span style="color:var(--emerald-600)">ing +S/ 3,800.00</span><span style="color:var(--rose-600)">egr −S/ 3,800.00</span></div>
+            <div style="display:flex;align-items:center;gap:8px;margin-top:10px">
+              <span class="mono" style="font-size:9px;color:var(--ink-4);text-transform:uppercase;letter-spacing:.08em">Divisionaria</span>
+              <span class="chip blue mono">10311 · Caja chica</span></div>
+          </div>
+          <div class="card" style="padding:14px;border-color:var(--warn)">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="chip">BN</span><b style="font-size:12.5px">Detracciones · Banco de la Nación</b></div>
+            <div class="mono" style="font-size:10px;color:var(--ink-4);margin-top:3px">00-041-025896 · PEN · solo paga impuestos</div>
+            <div class="mono" style="font-size:19px;font-weight:700;margin-top:8px">S/ 34,180.00</div>
+            <div style="display:flex;justify-content:space-between;margin-top:8px;font-size:10px" class="mono">
+              <span style="color:var(--emerald-600)">depositado +S/ 41,260.00</span><span style="color:var(--rose-600)">impuestos −S/ 7,080.00</span></div>
+            <div style="display:flex;align-items:center;gap:8px;margin-top:10px">
+              <span class="mono" style="font-size:9px;color:var(--ink-4);text-transform:uppercase;letter-spacing:.08em">Divisionaria</span>
+              <span class="chip amber mono">10711 · Fondos sujetos a restricción</span></div>
+          </div>
+        </div>
+
+        <div class="sechead s-violet"><span class="sq"></span><span class="tx">Por cobrar y por pagar · sale de las cuentas contables</span><span class="rule"></span></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div class="card">
+            <div class="toolbar"><span class="ttl">Por pagar</span><span class="cnt">cuentas 42 · 45 · 41</span><span class="grow"></span><span class="chip red">S/ 807,341.89</span></div>
+            <table><thead><tr><th>Cuenta</th><th>Tercero</th><th class="r">Docs</th><th class="r">Saldo</th></tr></thead><tbody>
+              <tr><td class="mono">4212</td><td>EKONO DRYWALL SAC</td><td class="r mono">4</td><td class="r mono" style="color:var(--rose-600)">14,160.00</td></tr>
+              <tr><td class="mono">4212</td><td>MAVEGSA DRYWALL S.A.C.</td><td class="r mono">2</td><td class="r mono">3,180.00</td></tr>
+              <tr><td class="mono">45112</td><td>Préstamo BCP · cuota 14/36</td><td class="r mono">1</td><td class="r mono">22,600.00</td></tr>
+              <tr><td class="mono">4111</td><td>Planilla setiembre por pagar</td><td class="r mono">1</td><td class="r mono">30,942.00</td></tr>
+            </tbody></table>
+          </div>
+          <div class="card">
+            <div class="toolbar"><span class="ttl">Por cobrar</span><span class="cnt">cuenta 12</span><span class="grow"></span><span class="chip green">S/ 62,811.29</span></div>
+            <table><thead><tr><th>Cuenta</th><th>Cliente · proyecto</th><th class="r">Docs</th><th class="r">Saldo</th></tr></thead><tbody>
+              <tr><td class="mono">1212</td><td>ZANE CONSTRUCCION · PG0001</td><td class="r mono">1</td><td class="r mono">19,775.62</td></tr>
+              <tr><td class="mono">1212</td><td>CONSTRUCTORA TENORIO · PG0002</td><td class="r mono">2</td><td class="r mono">43,035.67</td></tr>
+            </tbody></table>
+          </div>
+        </div>
+
+        <div class="sechead s-amber"><span class="sq"></span><span class="tx">Decisiones de la reunión · por qué es así</span><span class="rule"></span></div>
+        <div class="notegrid">
+          <div class="note"><div class="hd"><span class="chip amber">Kelly</span><b>Cuenta contable manual en todo</b></div>
+            <q>«Yo quiero mandarlas manualmente… a veces hago el análisis de distinta forma»</q> — ingreso, egreso, compra, gasto: la cuenta la asigna ella, el sistema solo sugiere la última usada.</div>
+          <div class="note"><div class="hd"><span class="chip amber">Kelly</span><b>Documento nunca condicional</b></div>
+            <q>«Hay ingresos que no van a tener factura»</q> — comprobante opcional en bancos: se acepta N° de contrato o solo glosa. El N° de operación sí es obligatorio.</div>
+          <div class="note"><div class="hd"><span class="chip amber">Kelly</span><b>Reportes desde cuentas</b></div>
+            <q>«Prefiero sacarlos por cuentas contables»</q> — CxP = toda la 42, préstamos = 45, sueldos = 41, CxC = 12. Export Excel plano, ella arma su formato.</div>
+        </div>
+      </div>
+
+      <!-- ══════ FIN · COMPRAS ══════ -->
+      <div class="panel" id="p-fin-compras" style="display:none;flex-direction:column;gap:20px">
+        <div class="kpirow" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+          <div class="kpi k-rose"><div class="l">Total compras del mes</div><div class="v">S/ 46,310.55</div><div class="s">con IGV</div></div>
+          <div class="kpi"><div class="l">Base imponible</div><div class="v">S/ 39,246.23</div><div class="s">sin IGV · crédito fiscal 7,064.32</div></div>
+          <div class="kpi k-amber"><div class="l">Detracciones pendientes</div><div class="v">S/ 2,590.00</div><div class="s">3 sin constancia</div></div>
+          <div class="kpi k-blue"><div class="l">Con saldo por pagar</div><div class="v">S/ 22,240.00</div><div class="s">6 facturas → cuenta 42</div></div>
+        </div>
+
+        <div class="sechead s-rose"><span class="sq"></span><span class="tx">Registro de compras · alimenta CxP, inventario, detracciones y SIRE</span><span class="rule"></span></div>
+        <div class="card">
+          <div class="toolbar">
+            <span class="ttl">Compras</span><span class="cnt">1,576</span>
+            <span class="grow"></span>
+            <input class="inp" style="width:220px" placeholder="Proveedor, serie, número, cuenta...">
+            <select class="sel" style="height:32px;font-size:11.5px"><option>2026</option></select>
+            <select class="sel" style="height:32px;font-size:11.5px"><option>Enero</option></select>
+            <button class="btn sm" onclick="openM('m-txt')"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m8 11 4 4 4-4"/><path d="M8 21h8"/></svg>TXT SIRE</button>
+            <button class="btn sm" onclick="openM('m-xml')">Bandeja CPE <span class="chip amber">4</span></button>
+            <button class="btn sm pri" onclick="openM('m-compra')"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14M12 5v14"/></svg>Nueva compra</button>
+          </div>
+          <div class="tablewrap"><table>
+            <thead><tr>
+              <th>Emisión</th><th>Proveedor</th><th>Comprobante</th><th>Obra</th><th>Cuenta</th>
+              <th class="r">Base</th><th class="r">IGV</th><th class="r">Total</th>
+              <th class="r">Detracción</th><th class="r">Pagado</th><th class="r">Saldo</th><th>Estado</th>
+            </tr></thead>
+            <tbody>
+              <tr>
+                <td class="mono">2026-01-14</td><td>EKONO DRYWALL SAC</td><td class="mono">F013-35799</td>
+                <td class="mono">PG0001</td><td class="mono">602111</td>
+                <td class="r mono">12,000.00</td><td class="r mono">2,160.00</td><td class="r mono">14,160.00</td>
+                <td class="r mono">566.40</td><td class="r mono">7,080.00</td><td class="r mono" style="color:var(--rose-600)">7,080.00</td>
+                <td><span class="chip amber">Parcial 50%</span></td>
+              </tr>
+              <tr>
+                <td class="mono">2026-01-12</td><td>FERRETERIA ANDREA CRISTINA S.R.L.</td><td class="mono">FF01-33331</td>
+                <td class="mono">PG0004</td><td class="mono">602111</td>
+                <td class="r mono">2,691.53</td><td class="r mono">484.47</td><td class="r mono">3,176.00</td>
+                <td class="r mono" style="color:var(--ink-4)">—</td><td class="r mono">3,176.00</td><td class="r mono">0.00</td>
+                <td><span class="chip green">Pagada</span></td>
+              </tr>
+              <tr>
+                <td class="mono">2026-01-22</td><td>CONTAFEL SERVICIOS SAC</td><td class="mono">E001-0070</td>
+                <td class="mono">OF0001</td><td class="mono">632211</td>
+                <td class="r mono">847.46</td><td class="r mono">152.54</td><td class="r mono">1,000.00</td>
+                <td class="r mono" style="color:var(--warn-ink)">120.00</td><td class="r mono">0.00</td><td class="r mono" style="color:var(--rose-600)">1,000.00</td>
+                <td><span class="chip red">Sin constancia</span></td>
+              </tr>
+              <tr>
+                <td class="mono">2026-01-24</td><td>DOBLE S CG S.A.C.</td><td class="mono">NC E001-10</td>
+                <td class="mono">OF0002</td><td class="mono">602111</td>
+                <td class="r mono" style="color:var(--rose-600)">−2,135.59</td><td class="r mono" style="color:var(--rose-600)">−384.41</td><td class="r mono" style="color:var(--rose-600)">−2,520.00</td>
+                <td class="r mono" style="color:var(--ink-4)">—</td><td class="r mono">0.00</td><td class="r mono">0.00</td>
+                <td><span class="chip violet">Nota de crédito</span></td>
+              </tr>
+              <tr>
+                <td class="mono">2026-01-27</td><td>QUISPE HUAMANÍ ROSA · RxH</td><td class="mono">E001-0114</td>
+                <td class="mono">PG0001</td><td class="mono">632911</td>
+                <td class="r mono">2,400.00</td><td class="r mono" style="color:var(--ink-4)">—</td><td class="r mono">2,400.00</td>
+                <td class="r mono" style="color:var(--ink-4)">ret. 4ta 192.00</td><td class="r mono">2,208.00</td><td class="r mono">0.00</td>
+                <td><span class="chip green">Pagada</span></td>
+              </tr>
+            </tbody>
+          </table></div>
+        </div>
+
+        <div class="note"><div class="hd"><span class="chip amber">Kelly</span><b>El inventario nace en la compra</b></div>
+          <q>«Registré la factura… hemos comprado cinco taladros… ahí sí debería registrarse el inventario»</q> — en el detalle por línea se marca <b>→ INV</b> y los ítems se crean con código, valor unitario y proyecto. En bancos ya no se registra inventario.</div>
+      </div>
+
+      <!-- ══════ FIN · VENTAS ══════ -->
+      <div class="panel" id="p-fin-ventas" style="display:none;flex-direction:column;gap:20px">
+        <div class="kpirow" style="grid-template-columns:repeat(5,minmax(0,1fr))">
+          <div class="kpi k-em"><div class="l">Ventas del mes</div><div class="v">S/ 71,226.91</div><div class="s">3 comprobantes</div></div>
+          <div class="kpi k-amber"><div class="l">Detracción retenida</div><div class="v">S/ 4,431.00</div><div class="s">cliente deposita al BN</div></div>
+          <div class="kpi k-violet"><div class="l">Retención IGV 3%</div><div class="v">S/ 593.27</div><div class="s">1 comprobante de retención</div></div>
+          <div class="kpi"><div class="l">Por cobrar</div><div class="v">S/ 62,811.29</div><div class="s">2 clientes</div></div>
+          <div class="kpi k-blue"><div class="l">Débito fiscal IGV</div><div class="v">S/ 10,865.12</div><div class="s">vs crédito 7,064.32</div></div>
+        </div>
+
+        <div class="sechead s-em"><span class="sq"></span><span class="tx">Registro de ventas · valorización, servicio o venta directa</span><span class="rule"></span></div>
+        <div class="card">
+          <div class="toolbar"><span class="ttl">Ventas</span><span class="cnt">3</span><span class="grow"></span>
+            <button class="btn sm" onclick="openM('m-txt')">TXT SIRE</button>
+            <button class="btn sm" onclick="openM('m-xml')">Bandeja CPE</button>
+            <button class="btn sm pri" onclick="openM('m-venta')">Nueva venta</button></div>
+          <div class="tablewrap"><table>
+            <thead><tr><th>Emisión</th><th>Cliente</th><th>Comprobante</th><th>Origen</th><th>Cuenta</th>
+              <th class="r">Base</th><th class="r">IGV</th><th class="r">Total</th><th class="r">Detracción</th><th class="r">Ret. 3%</th><th class="r">Cobrado</th><th>Estado</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">2026-01-09</td><td>ZANE CONSTRUCCION S.A.C</td><td class="mono">E001-89</td><td class="mono">Contrato geomalla</td><td class="mono">70411</td>
+                <td class="r mono">16,758.15</td><td class="r mono">3,017.47</td><td class="r mono">19,775.62</td>
+                <td class="r mono">2,373.00</td><td class="r mono" style="color:var(--violet-600)">593.27</td><td class="r mono">0.00</td><td><span class="chip amber">Por cobrar</span></td></tr>
+              <tr><td class="mono">2026-02-24</td><td>CONSTRUCTORA Y CONSULTORA TENORIO</td><td class="mono">E001-91</td><td class="mono">Adic. polvorín 250 TN</td><td class="mono">70411</td>
+                <td class="r mono">36,471.25</td><td class="r mono">6,564.83</td><td class="r mono">43,036.08</td>
+                <td class="r mono">1,721.00</td><td class="r mono" style="color:var(--ink-4)">—</td><td class="r mono">0.00</td><td><span class="chip amber">Por cobrar</span></td></tr>
+              <tr><td class="mono">2026-02-24</td><td>CONSTRUCTORA Y CONSULTORA TENORIO</td><td class="mono">E001-90</td><td class="mono">Adic. molino de pólvora</td><td class="mono">70411</td>
+                <td class="r mono">7,131.53</td><td class="r mono">1,283.68</td><td class="r mono">8,415.21</td>
+                <td class="r mono">337.00</td><td class="r mono" style="color:var(--ink-4)">—</td><td class="r mono">8,078.21</td><td><span class="chip green">Cobrada</span></td></tr>
+            </tbody>
+          </table></div>
+        </div>
+
+        <div class="note"><div class="hd"><span class="chip amber">Kelly</span><b>Registro estilo Nubefac, sin facturar todavía</b></div>
+          <q>«No para facturar, sino para registrar… ítems, cantidades, valor, IGV, si hay anticipos»</q> — el formulario captura el detalle completo de la factura ya emitida. La emisión electrónica queda para una fase posterior.</div>
+      </div>
+
+      <!-- ══════ FIN · BANCOS ══════ -->
+      <div class="panel" id="p-fin-bancos" style="display:none;flex-direction:column;gap:20px">
+        <div class="sechead s-blue"><span class="sq"></span><span class="tx">Libro banco · N° de operación obligatorio · cada salida apunta a su documento</span><span class="rule"></span></div>
+        <div class="card">
+          <div class="toolbar"><span class="ttl">Movimientos bancarios</span><span class="cnt">3,657</span><span class="grow"></span>
+            <select class="sel" style="height:32px;font-size:11.5px">
+              <option>1041801 · BCP Soles · 194-9927833-0-39</option>
+              <option>10311 · Caja Chica BCP · 998-553-242</option>
+              <option>10711 · BN Detracciones · 00-041-025896</option>
+            </select>
+            <button class="btn sm">Importar extracto</button>
+            <button class="btn sm pri" onclick="openM('m-pago')">Registrar movimiento</button></div>
+          <div class="tablewrap"><table>
+            <thead><tr><th>Fecha</th><th>Descripción</th><th>N° operación</th><th>Cuenta</th><th>Aplicado a</th><th class="r">Cargo</th><th class="r">Abono</th><th class="r">Saldo</th><th>Conc.</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">2026-01-20</td><td>TRANSF EKONO DRYWALL SAC</td><td class="mono">5401882</td><td class="mono">4212</td>
+                <td class="mono" style="color:var(--primary)">F013-35799 · 50%</td><td class="r mono">7,080.00</td><td class="r mono" style="color:var(--ink-4)">—</td><td class="r mono">1,391,638.14</td>
+                <td><span class="chip green">Sí</span></td></tr>
+              <tr><td class="mono">2026-01-20</td><td>DEPÓSITO DETRACCIÓN 030</td><td class="mono">5401883</td><td class="mono">42411</td>
+                <td class="mono" style="color:var(--primary)">Const. 2026-000418</td><td class="r mono">566.40</td><td class="r mono" style="color:var(--ink-4)">—</td><td class="r mono">1,391,071.74</td>
+                <td><span class="chip green">Sí</span></td></tr>
+              <tr><td class="mono">2026-01-15</td><td>ENTREGA CAJA NAYELLI</td><td class="mono">5404001</td><td class="mono">14111</td>
+                <td class="mono" style="color:var(--primary)">Caja REND-NAYELLI</td><td class="r mono">3,000.00</td><td class="r mono" style="color:var(--ink-4)">—</td><td class="r mono">1,394,638.14</td>
+                <td><span class="chip green">Sí</span></td></tr>
+              <tr><td class="mono">2026-01-12</td><td>PAGO PERSONAL POR FUERA</td><td class="mono">5403114</td><td class="mono">632911</td>
+                <td class="mono" style="color:var(--ink-4)">sin documento · glosa</td><td class="r mono">1,800.00</td><td class="r mono" style="color:var(--ink-4)">—</td><td class="r mono">1,397,638.14</td>
+                <td><span class="chip green">Sí</span></td></tr>
+              <tr><td class="mono">2026-01-09</td><td>ABONO ZANE CONSTRUCCION</td><td class="mono">4477102</td><td class="mono">1212</td>
+                <td class="mono" style="color:var(--primary)">E001-89 · neto detracción</td><td class="r mono" style="color:var(--ink-4)">—</td><td class="r mono">17,402.62</td><td class="r mono">1,399,438.14</td>
+                <td><span class="chip green">Sí</span></td></tr>
+              <tr><td class="mono">2026-01-08</td><td>COMISION MANTENIMIENTO BCP</td><td class="mono">36382033</td><td class="mono">63911</td>
+                <td class="mono" style="color:var(--primary)">FN01-36382033 · auto</td><td class="r mono">35.00</td><td class="r mono" style="color:var(--ink-4)">—</td><td class="r mono">1,382,035.52</td>
+                <td><span class="chip green">Sí</span></td></tr>
+            </tbody>
+          </table></div>
+        </div>
+
+        <div class="notegrid">
+          <div class="note"><div class="hd"><span class="chip amber">Kelly</span><b>Proveedor → jala sus facturas</b></div>
+            <q>«Pongo el proveedor y me jala la factura con todos los datos»</q> — al registrar un pago se elige el proveedor y aparecen sus facturas pendientes; se aplica total o parcial.</div>
+          <div class="note"><div class="hd"><span class="chip amber">Kelly</span><b>N° de operación siempre</b></div>
+            <q>«Cuando saco mi libro de caja para compararlo, tiene que estar con el N° de operación»</q> — campo obligatorio en todo movimiento bancario; sale en el libro caja-bancos 1.2.</div>
+          <div class="note"><div class="hd"><span class="chip amber">Kelly</span><b>Comisiones auto-detectadas</b></div>
+            <q>«Comisiones y todo eso automáticamente la conciliación bancaria lo va a detectar»</q> — al importar el extracto, las comisiones BCP (FN01) se proponen ya clasificadas a la 63911.</div>
+        </div>
+      </div>
+
+      <!-- ══════ FIN · CAJAS ══════ -->
+      <div class="panel" id="p-fin-cajas" style="display:none;flex-direction:column;gap:20px">
+        <div class="sechead s-amber"><span class="sq"></span><span class="tx">Cajas por proyecto · entregado contra rendido, cruzado con el egreso bancario</span><span class="rule"></span></div>
+        <div class="card">
+          <div class="toolbar"><span class="ttl">Cajas</span><span class="cnt">3</span><span class="grow"></span>
+            <button class="btn sm pri" onclick="openM('m-caja')">Nueva entrega</button></div>
+          <div class="tablewrap"><table>
+            <thead><tr><th>Caja</th><th>Proyecto</th><th>Encargado</th><th>Origen del fondo</th><th class="r">Entregado</th><th class="r">Rendido</th><th class="r">Saldo</th><th class="r">Docs</th><th>Estado</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">CAJA-2026-014</td><td class="mono">PG0001</td><td>Andrea García</td><td class="mono">BCP · op. 5404001</td>
+                <td class="r mono">3,000.00</td><td class="r mono">2,820.00</td><td class="r mono" style="color:var(--warn-ink)">180.00</td><td class="r mono">12</td>
+                <td><span class="chip amber">Abierta</span></td></tr>
+              <tr><td class="mono">CAJA-2026-013</td><td class="mono">PG0005</td><td>Nayelli Ramos</td><td class="mono">BCP · op. 5399710</td>
+                <td class="r mono">800.00</td><td class="r mono">800.00</td><td class="r mono" style="color:var(--ink-4)">0.00</td><td class="r mono">6</td>
+                <td><span class="chip green">Rendida</span></td></tr>
+              <tr><td class="mono">CAJA-2026-012</td><td class="mono">PG0004</td><td>Jonathan Challco</td><td class="mono">BCP · op. 5391220</td>
+                <td class="r mono">1,500.00</td><td class="r mono">1,412.50</td><td class="r mono" style="color:var(--emerald-600)">87.50 devuelto</td><td class="r mono">9</td>
+                <td><span class="chip green">Cerrada</span></td></tr>
+            </tbody>
+          </table></div>
+        </div>
+
+        <div class="note"><div class="hd"><span class="chip amber">Kelly</span><b>La rendición jala facturas, no las repite</b></div>
+          <q>«En vez de jalar factura por factura para pago… agarro, busco el proveedor y jalo la factura»</q> — dentro de la caja se agregan documentos buscando por proveedor; cada uno queda cruzado con la entrega (N° de operación) y ningún comprobante queda suelto en la conciliación.</div>
+      </div>
+
+      <!-- ══════ FIN · MOVIMIENTOS ══════ -->
+      <div class="panel" id="p-fin-movimientos" style="display:none;flex-direction:column;gap:20px">
+        <div class="kpirow" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+          <div class="kpi k-em"><div class="l">Ingresos del mes</div><div class="v">S/ 25,480.83</div><div class="s">todas las cuentas</div></div>
+          <div class="kpi k-rose"><div class="l">Egresos del mes</div><div class="v">S/ 13,481.40</div><div class="s">bancos + cajas</div></div>
+          <div class="kpi k-blue"><div class="l">Flujo neto</div><div class="v">S/ +11,999.43</div><div class="s">enero 2026</div></div>
+          <div class="kpi"><div class="l">Saldo consolidado</div><div class="v">S/ 1,397,918.14</div><div class="s">elemento 1 completo</div></div>
+        </div>
+        <div class="sechead s-em"><span class="sq"></span><span class="tx">Flujo de movimientos · todos los ingresos y egresos, de todas las cuentas y cajas</span><span class="rule"></span></div>
+        <div class="card">
+          <div class="toolbar"><span class="ttl">Movimientos</span><span class="cnt">3,657</span><span class="grow"></span>
+            <div class="seg" style="width:220px"><button class="on">Todos</button><button>Ingresos</button><button>Egresos</button></div>
+            <select class="sel" style="height:32px;font-size:11.5px"><option>Todas las cuentas y cajas</option><option>1041801 · BCP Soles</option><option>10711 · BN Detracciones</option><option>CAJA-2026-014</option></select>
+            <select class="sel" style="height:32px;font-size:11.5px"><option>Todos los proyectos</option><option>PG0001</option></select>
+            <button class="btn sm">Exportar Excel plano</button></div>
+          <div class="tablewrap"><table>
+            <thead><tr><th>Fecha</th><th>Tipo</th><th>Cuenta / caja</th><th>N° operación</th><th>Tercero · glosa</th><th>Referencia</th><th>Obra</th><th class="r">Monto</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">2026-01-28</td><td><span class="chip red">Egreso</span></td><td class="mono">1041801</td><td class="mono">5406618</td><td>CONTAFEL · honorarios sin factura</td><td class="mono" style="color:var(--violet-600)">Provisión 4811</td><td class="mono">OF0001</td><td class="r mono" style="color:var(--rose-600)">−1,800.00</td></tr>
+              <tr><td class="mono">2026-01-20</td><td><span class="chip red">Egreso</span></td><td class="mono">1041801</td><td class="mono">5401882</td><td>EKONO DRYWALL SAC</td><td class="mono" style="color:var(--primary)">F013-35799 · 50%</td><td class="mono">PG0001</td><td class="r mono" style="color:var(--rose-600)">−7,080.00</td></tr>
+              <tr><td class="mono">2026-01-20</td><td><span class="chip red">Egreso</span></td><td class="mono">1041801</td><td class="mono">5401883</td><td>SUNAT · depósito detracción 030</td><td class="mono" style="color:var(--primary)">Const. 2026-000418</td><td class="mono">PG0001</td><td class="r mono" style="color:var(--rose-600)">−566.40</td></tr>
+              <tr><td class="mono">2026-01-17</td><td><span class="chip red">Egreso</span></td><td class="mono">CAJA-2026-014</td><td class="mono">—</td><td>PLAZA VEA · refrigerio cuadrilla</td><td class="mono" style="color:var(--primary)">B045-0091122</td><td class="mono">PG0001</td><td class="r mono" style="color:var(--rose-600)">−120.00</td></tr>
+              <tr><td class="mono">2026-01-15</td><td><span class="chip red">Egreso</span></td><td class="mono">1041801</td><td class="mono">5404001</td><td>Entrega caja Andrea García</td><td class="mono" style="color:var(--primary)">CAJA-2026-014</td><td class="mono">PG0001</td><td class="r mono" style="color:var(--rose-600)">−3,000.00</td></tr>
+              <tr><td class="mono">2026-01-12</td><td><span class="chip red">Egreso</span></td><td class="mono">1041801</td><td class="mono">5403114</td><td>Pago personal por fuera</td><td class="mono" style="color:var(--ink-4)">glosa · sin documento</td><td class="mono">PG0004</td><td class="r mono" style="color:var(--rose-600)">−1,800.00</td></tr>
+              <tr><td class="mono">2026-01-09</td><td><span class="chip green">Ingreso</span></td><td class="mono">1041801</td><td class="mono">4477102</td><td>ZANE CONSTRUCCION S.A.C</td><td class="mono" style="color:var(--primary)">E001-89 · neto</td><td class="mono">PG0001</td><td class="r mono" style="color:var(--emerald-600)">+16,809.35</td></tr>
+              <tr><td class="mono">2026-01-09</td><td><span class="chip green">Ingreso</span></td><td class="mono">10711</td><td class="mono">BN-88213</td><td>Detracción recibida de ZANE</td><td class="mono" style="color:var(--primary)">E001-89 · 12%</td><td class="mono">PG0001</td><td class="r mono" style="color:var(--emerald-600)">+2,373.00</td></tr>
+            </tbody>
+          </table></div>
+        </div>
+        <div class="note"><div class="hd"><span class="chip blue">Diseño</span><b>Movimientos vs Bancos vs Conciliación</b></div>
+          Bancos es el libro de <b>una</b> cuenta; esta vista consolida ingresos y egresos de <b>todas</b> las cuentas y cajas (el registro de movimientos del Excel de Kelly). Conciliación es lo mismo pero enfrentado al extracto. Los tres leen los mismos movimientos: registrar una vez, ver tres formas.</div>
+      </div>
+
+      <!-- ══════ FIN · CONCILIACIÓN ══════ -->
+      <div class="panel" id="p-fin-conciliacion" style="display:none;flex-direction:column;gap:20px">
+        <div class="kpirow" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+          <div class="kpi k-em"><div class="l">Conciliado</div><div class="v">96.4%</div><div class="s">3,526 de 3,657</div></div>
+          <div class="kpi k-amber"><div class="l">Pendientes</div><div class="v">131</div><div class="s">sin referencia</div></div>
+          <div class="kpi"><div class="l">Diferencia</div><div class="v">S/ 0.00</div><div class="s">extracto vs sistema</div></div>
+          <div class="kpi k-blue"><div class="l">Último extracto</div><div class="v">Ene 2026</div><div class="s">BCP · importado</div></div>
+        </div>
+        <div class="sechead s-blue"><span class="sq"></span><span class="tx">Extracto vs sistema · todo referido a factura, caja o glosa</span><span class="rule"></span></div>
+        <div class="card">
+          <div class="toolbar"><span class="ttl">Conciliación BCP · enero 2026</span><span class="grow"></span>
+            <button class="btn sm">Importar extracto</button><button class="btn sm pri">Auto-conciliar</button></div>
+          <div class="tablewrap"><table>
+            <thead><tr><th>Extracto</th><th>N° operación</th><th class="r">Monto</th><th>Sistema</th><th>Referencia</th><th>Estado</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">20/01 TRANSF. CTA TERC</td><td class="mono">5401882</td><td class="r mono">−7,080.00</td><td>Pago EKONO DRYWALL</td><td class="mono" style="color:var(--primary)">F013-35799</td><td><span class="chip green">Match</span></td></tr>
+              <tr><td class="mono">15/01 TRANSF. CTA TERC</td><td class="mono">5404001</td><td class="r mono">−3,000.00</td><td>Entrega caja</td><td class="mono" style="color:var(--primary)">CAJA-2026-014</td><td><span class="chip green">Match</span></td></tr>
+              <tr><td class="mono">12/01 TRANSF. CTA TERC</td><td class="mono">5403114</td><td class="r mono">−1,800.00</td><td>Pago por fuera</td><td class="mono" style="color:var(--ink-4)">glosa · personal externo</td><td><span class="chip green">Match</span></td></tr>
+              <tr><td class="mono">27/01 CONSUMO TARJETA</td><td class="mono">797585</td><td class="r mono">−272.50</td><td style="color:var(--ink-4)">sin registrar</td><td class="mono" style="color:var(--ink-4)">—</td><td><button class="btn sm pri" style="height:26px">Registrar desde extracto</button></td></tr>
+              <tr><td class="mono">08/01 COMISION MANTENIM.</td><td class="mono">36382033</td><td class="r mono">−35.00</td><td>Comisión bancaria</td><td class="mono" style="color:var(--primary)">FN01-36382033 · auto</td><td><span class="chip green">Match auto</span></td></tr>
+            </tbody>
+          </table></div>
+        </div>
+        <div class="notegrid">
+          <div class="note"><div class="hd"><span class="chip blue">Diseño</span><b>Match por N° de operación</b></div>
+            Por eso el N° de operación es obligatorio: la conciliación cruza extracto ↔ sistema por N° op + monto y el match es automático. Fecha y glosa solo desempatan.</div>
+          <div class="note"><div class="hd"><span class="chip blue">Diseño</span><b>Registrar desde extracto</b></div>
+            Lo que está en el banco y no en el sistema no se digita de cero: el botón abre el formulario prellenado (fecha, monto, N° op, glosa) y Kelly solo pone cuenta y destino.</div>
+          <div class="note"><div class="hd"><span class="chip blue">Diseño</span><b>La BN también se concilia</b></div>
+            La cuenta de detracciones tiene su propio extracto: depósitos recibidos de clientes contra constancias, y salidas solo contra pagos de impuestos.</div>
+        </div>
+      </div>
+
+      <!-- ══════ FIN · REPORTES ══════ -->
+      <div class="panel" id="p-fin-reportes" style="display:none;flex-direction:column;gap:20px">
+        <div class="sechead s-violet"><span class="sq"></span><span class="tx">Todo reporte sale por cuenta contable · con auxiliar por tercero · filtro por proyecto</span><span class="rule"></span></div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">
+          <button class="btn" style="height:auto;padding:12px;flex-direction:column;align-items:flex-start;gap:4px"><b>Cuentas por pagar</b><span class="mono" style="font-size:10px;color:var(--ink-4)">42 proveedores · 45 bancos · 41 sueldos</span></button>
+          <button class="btn" style="height:auto;padding:12px;flex-direction:column;align-items:flex-start;gap:4px"><b>Cuentas por cobrar</b><span class="mono" style="font-size:10px;color:var(--ink-4)">12 por cliente y por proyecto</span></button>
+          <button class="btn" style="height:auto;padding:12px;flex-direction:column;align-items:flex-start;gap:4px"><b>Detracciones</b><span class="mono" style="font-size:10px;color:var(--ink-4)">por depositar y retenidas</span></button>
+          <button class="btn" style="height:auto;padding:12px;flex-direction:column;align-items:flex-start;gap:4px"><b>Utilidad por proyecto</b><span class="mono" style="font-size:10px;color:var(--ink-4)">ingresos − CD − GG por obra</span></button>
+        </div>
+        <div class="card">
+          <div class="toolbar">
+            <span class="ttl">Análisis de cuenta</span>
+            <select class="sel" style="height:32px;font-size:11.5px;width:320px">
+              <option>4212 · Facturas por pagar a terceros</option>
+              <option>45112 · Préstamos BCP</option>
+              <option>4111 · Remuneraciones por pagar</option>
+              <option>1212 · Facturas por cobrar a terceros</option>
+              <option>42411 · Detracciones por depositar</option>
+              <option>4811 · Provisiones de gastos</option>
+            </select>
+            <label class="ckline"><input type="checkbox" checked> Auxiliar por tercero</label>
+            <select class="sel" style="height:32px;font-size:11.5px"><option>Todos los proyectos</option><option>PG0001</option></select>
+            <span class="grow"></span>
+            <button class="btn sm">Exportar Excel plano</button>
+          </div>
+          <div class="tablewrap"><table>
+            <thead><tr><th>Tercero</th><th>RUC</th><th class="r">Corriente</th><th class="r">1 a 30</th><th class="r">31 a 60</th><th class="r">61 a 90</th><th class="r">+90</th><th class="r">Saldo</th></tr></thead>
+            <tbody>
+              <tr><td>EKONO DRYWALL SAC</td><td class="mono">20601234567</td>
+                <td class="r mono" style="color:var(--ink-4)">0.00</td><td class="r mono">7,080.00</td><td class="r mono" style="color:var(--ink-4)">0.00</td><td class="r mono" style="color:var(--ink-4)">0.00</td><td class="r mono" style="color:var(--ink-4)">0.00</td><td class="r mono">7,080.00</td></tr>
+              <tr><td>CONTAFEL SERVICIOS SAC</td><td class="mono">20551234321</td>
+                <td class="r mono">1,000.00</td><td class="r mono" style="color:var(--ink-4)">0.00</td><td class="r mono" style="color:var(--ink-4)">0.00</td><td class="r mono" style="color:var(--ink-4)">0.00</td><td class="r mono" style="color:var(--ink-4)">0.00</td><td class="r mono">1,000.00</td></tr>
+              <tr><td>MAVEGSA DRYWALL S.A.C.</td><td class="mono">20546034951</td>
+                <td class="r mono" style="color:var(--ink-4)">0.00</td><td class="r mono" style="color:var(--ink-4)">0.00</td><td class="r mono">2,340.00</td><td class="r mono" style="color:var(--ink-4)">0.00</td><td class="r mono" style="color:var(--ink-4)">0.00</td><td class="r mono">2,340.00</td></tr>
+            </tbody>
+          </table></div>
+        </div>
+        <div class="note"><div class="hd"><span class="chip blue">Mario</span><b>Vista móvil por proyecto</b></div>
+          <q>«Pico el proyecto… monto del contrato, cuánto vamos gastando, cuánto vamos valorizando»</q> — el resumen y utilidad por proyecto se ven desde el celular; incluye monto del inversionista cuando el proyecto tiene préstamo de socios (módulo Inversiones).</div>
+      </div>
+
+    </div><!-- /page-fin -->
+
+    <!-- ═══════════════════════ PÁGINA CONTABILIDAD ═══════════════════════ -->
+    <div class="stack a-page" id="page-conta" style="display:none">
+
+      <div class="pagehead">
+        <div>
+          <h1>Contabilidad</h1>
+          <p>Plan de cuentas con divisionarias · asientos y provisiones · libros y SIRE · detracciones</p>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span class="chip amber">Versión definitiva · propuesta</span>
+          <select class="sel"><option>Período 2026-01</option><option>2025-12</option></select>
+          <button class="btn pri" onclick="openM('m-asiento')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14M12 5v14"/></svg>Nuevo asiento</button>
+        </div>
+      </div>
+
+      <div class="tabsbar"><nav class="tabs" data-page="conta">
+        <button class="tab on" data-p="co-plan">Plan de cuentas</button>
+        <button class="tab" data-p="co-diario">Libro diario</button>
+        <button class="tab" data-p="co-provisiones">Provisiones</button>
+        <button class="tab" data-p="co-libros">Libros y SIRE</button>
+        <button class="tab" data-p="co-detracciones">Detracciones</button>
+        <button class="tab" data-p="co-eeff">EE.FF.</button>
+      </nav></div>
+
+      <!-- ══════ CONTA · PLAN ══════ -->
+      <div class="panel a-data" id="p-co-plan" style="display:flex;flex-direction:column;gap:20px">
+        <div class="sechead s-blue"><span class="sq"></span><span class="tx">Plan contable · Kelly crea divisionarias desde la cuenta madre</span><span class="rule"></span></div>
+        <div class="card">
+          <div class="toolbar">
+            <span class="ttl">Plan de cuentas</span><span class="cnt">184 cuentas · 31 divisionarias propias</span>
+            <span class="grow"></span>
+            <input class="inp" style="width:200px" placeholder="Buscar cuenta...">
+            <button class="btn sm" onclick="openM('m-dinamica')">Subir dinámica</button>
+            <button class="btn sm pri" onclick="openM('m-divisionaria')">Nueva divisionaria</button>
+          </div>
+          <div class="tree">
+            <div class="nd lv1"><span class="cod">10</span><span class="des">Efectivo y equivalentes de efectivo</span><span class="sal">1,397,918.14</span></div>
+            <div class="nd lv2"><span class="cod">104</span><span class="des">Cuentas corrientes en instituciones financieras</span><span class="sal">1,363,738.14</span></div>
+            <div class="nd lv3"><span class="cod">1041</span><span class="des">Cuentas corrientes operativas</span><span class="sal">1,363,738.14</span></div>
+            <div class="nd lv4"><span class="cod">1041801</span><span class="des">BCP Soles · 194-9927833-0-39</span><span class="chip green">Vinculada a banco</span><span class="sal">1,363,738.14</span></div>
+            <div class="nd lv4"><span class="cod">1041802</span><span class="des">BCP Dólares</span><span class="chip">Sin movimientos</span><span class="sal">0.00</span></div>
+            <div class="nd lv4"><span class="cod">1041803</span><span class="des">BBVA Soles</span><span class="chip">Sin movimientos</span><span class="sal">0.00</span></div>
+            <div class="nd lv2"><span class="cod">107</span><span class="des">Fondos sujetos a restricción</span><span class="sal">34,180.00</span></div>
+            <div class="nd lv4"><span class="cod">10711</span><span class="des">BN Detracciones · 00-041-025896</span><span class="chip amber">Solo impuestos</span><span class="sal">34,180.00</span></div>
+            <div class="nd lv1"><span class="cod">45</span><span class="des">Obligaciones financieras</span><span class="sal">22,600.00</span></div>
+            <div class="nd lv3"><span class="cod">4511</span><span class="des">Préstamos de instituciones financieras</span><span class="sal">22,600.00</span></div>
+            <div class="nd lv4"><span class="cod">45112</span><span class="des">Préstamo BCP capital de trabajo</span><span class="chip green">Divisionaria propia</span><span class="sal">22,600.00</span></div>
+            <div class="nd lv1"><span class="cod">48</span><span class="des">Provisiones</span><span class="sal">5,340.00</span></div>
+            <div class="nd lv4"><span class="cod">4811</span><span class="des">Provisión de gastos sin factura</span><span class="chip violet">3 abiertas</span><span class="sal">5,340.00</span></div>
+            <div class="addline" onclick="openM('m-divisionaria')">+ crear divisionaria bajo la cuenta seleccionada</div>
+          </div>
+        </div>
+        <div class="notegrid">
+          <div class="note"><div class="hd"><span class="chip amber">Kelly</span><b>Divisionarias libres</b></div>
+            <q>«A partir de la 1041 en adelante yo creo: 1041801 BCP soles, BCP dólares, BBVA…»</q> — cualquier cuenta del plan admite hijas; la divisionaria hereda naturaleza y elemento de la madre.</div>
+          <div class="note"><div class="hd"><span class="chip amber">Kelly</span><b>Dinámica contable como base</b></div>
+            <q>«Te paso la dinámica… solo subes lo necesario y en adelante yo creo divisionarias»</q> — se importa su libro (solo las hojas útiles) y desde ahí ella extiende.</div>
+          <div class="note"><div class="hd"><span class="chip amber">Kelly</span><b>Bancos = todo el elemento 1</b></div>
+            <q>«Jálame todo el elemento 1, todas las cuentas 10»</q> — el selector de cuenta en Bancos lista toda divisionaria del elemento 1 vinculada a una cuenta bancaria o caja.</div>
+        </div>
+      </div>
+
+      <!-- ══════ CONTA · DIARIO ══════ -->
+      <div class="panel" id="p-co-diario" style="display:none;flex-direction:column;gap:20px">
+        <div class="sechead s-em"><span class="sq"></span><span class="tx">Libro diario · asientos automáticos de los registros + asientos manuales de Kelly</span><span class="rule"></span></div>
+        <div class="card">
+          <div class="toolbar"><span class="ttl">Asientos · enero 2026</span><span class="cnt">1,204</span><span class="grow"></span>
+            <select class="sel" style="height:32px;font-size:11.5px"><option>Todos</option><option>Automáticos</option><option>Manuales</option><option>Provisiones</option></select>
+            <button class="btn sm">Exportar 5.1</button>
+            <button class="btn sm pri" onclick="openM('m-asiento')">Nuevo asiento manual</button></div>
+          <div class="tablewrap"><table>
+            <thead><tr><th>N°</th><th>Fecha</th><th>Glosa</th><th>Origen</th><th class="r">Debe</th><th class="r">Haber</th><th>Tipo</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">A-000114</td><td class="mono">2026-01-14</td><td>Compra EKONO F013-35799 · drywall PG0001</td><td class="mono" style="color:var(--primary)">Compras</td><td class="r mono">14,160.00</td><td class="r mono">14,160.00</td><td><span class="chip blue">Auto</span></td></tr>
+              <tr><td class="mono">A-000118</td><td class="mono">2026-01-20</td><td>Pago parcial EKONO · op. 5401882</td><td class="mono" style="color:var(--primary)">Bancos</td><td class="r mono">7,080.00</td><td class="r mono">7,080.00</td><td><span class="chip blue">Auto</span></td></tr>
+              <tr><td class="mono">A-000121</td><td class="mono">2026-01-31</td><td>Provisión honorarios estudio contable · sin factura</td><td class="mono" style="color:var(--violet-600)">Provisión</td><td class="r mono">1,800.00</td><td class="r mono">1,800.00</td><td><span class="chip violet">Manual</span></td></tr>
+              <tr><td class="mono">A-000122</td><td class="mono">2026-01-31</td><td>Reclasificación EPPs reposición → gasto planilla</td><td class="mono">Manual</td><td class="r mono">640.00</td><td class="r mono">640.00</td><td><span class="chip violet">Manual</span></td></tr>
+            </tbody>
+          </table></div>
+        </div>
+        <div class="note"><div class="hd"><span class="chip amber">Kelly</span><b>El asiento automático es comparable, no sagrado</b></div>
+          <q>«Acá voy a hacer un manejo en mi orden… para hacer comparación con el estudio contable»</q> — todo registro genera su asiento con las cuentas que ella asignó; los manuales conviven en el mismo diario y se distinguen por tipo.</div>
+      </div>
+
+      <!-- ══════ CONTA · PROVISIONES ══════ -->
+      <div class="panel" id="p-co-provisiones" style="display:none;flex-direction:column;gap:20px">
+        <div class="sechead s-violet"><span class="sq"></span><span class="tx">Cuenta 48 · gasto pagado sin factura · se limpia cuando llega el comprobante</span><span class="rule"></span></div>
+        <div class="card">
+          <div class="toolbar"><span class="ttl">Provisiones abiertas</span><span class="cnt">3 · S/ 5,340.00</span><span class="grow"></span>
+            <button class="btn sm pri" onclick="openM('m-asiento')">Nueva provisión</button></div>
+          <div class="tablewrap"><table>
+            <thead><tr><th>Fecha</th><th>Glosa</th><th>Tercero</th><th>Cuenta gasto</th><th class="r">Monto</th><th>Pagado por</th><th>Estado</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">2026-01-31</td><td>Honorarios estudio contable enero</td><td>CONTAFEL SERVICIOS SAC</td><td class="mono">632211</td><td class="r mono">1,800.00</td><td class="mono">BCP op. 5406618</td><td><span class="chip amber">Espera factura</span></td></tr>
+              <tr><td class="mono">2026-01-28</td><td>Alquiler almacén Chancay</td><td>INMOB. SAN JOSÉ</td><td class="mono">635211</td><td class="r mono">2,500.00</td><td class="mono">BCP op. 5405102</td><td><span class="chip amber">Espera factura</span></td></tr>
+              <tr><td class="mono">2026-01-25</td><td>Servicio topografía PG0004</td><td>GEODESIA PERU EIRL</td><td class="mono">632911</td><td class="r mono">1,040.00</td><td class="mono">BCP op. 5404890</td><td><span class="chip amber">Espera factura</span></td></tr>
+              <tr><td class="mono">2025-12-30</td><td>Combustible flota diciembre</td><td>COESTI S.A.</td><td class="mono">603111</td><td class="r mono">960.00</td><td class="mono">BCP op. 5388012</td><td><span class="chip green">Factura llegó · extornada</span></td></tr>
+            </tbody>
+          </table></div>
+        </div>
+        <div class="note"><div class="hd"><span class="chip amber">Kelly</span><b>Cierre mensual con la 48</b></div>
+          <q>«Hago mi cierre contable y el siguiente mes tengo un montón de 48: reviso a quién pagué y cuántas facturas me faltan»</q> — el pago bancario se registra sin factura contra la 48; cuando llega el comprobante se registra la compra y la provisión se extorna sola.</div>
+      </div>
+
+      <!-- ══════ CONTA · LIBROS Y SIRE ══════ -->
+      <div class="panel" id="p-co-libros" style="display:none;flex-direction:column;gap:20px">
+        <div class="sechead s-blue"><span class="sq"></span><span class="tx">Libros electrónicos · generados desde los registros, listos para SIRE</span><span class="rule"></span></div>
+        <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px">
+          <div class="card" style="padding:14px">
+            <div style="display:flex;align-items:center;gap:8px"><b style="font-size:13px">8.1 · Registro de compras</b><span class="chip green">Cuadra con SIRE</span></div>
+            <p style="margin:6px 0 10px;font-size:11.5px;color:var(--ink-3)">1,576 comprobantes de enero · base 39,246.23 · IGV 7,064.32. Mismo formato que la propuesta SUNAT.</p>
+            <div style="display:flex;gap:8px"><button class="btn sm pri" onclick="openM('m-txt')">Generar TXT</button><button class="btn sm">Ver registro</button><button class="btn sm">Comparar vs propuesta SIRE</button></div>
+          </div>
+          <div class="card" style="padding:14px">
+            <div style="display:flex;align-items:center;gap:8px"><b style="font-size:13px">14.1 · Registro de ventas</b><span class="chip green">3 comprobantes</span></div>
+            <p style="margin:6px 0 10px;font-size:11.5px;color:var(--ink-3)">Serie/número reales capturados al registrar la venta · detracción y NC incluidas.</p>
+            <div style="display:flex;gap:8px"><button class="btn sm pri" onclick="openM('m-txt')">Generar TXT</button><button class="btn sm">Ver registro</button></div>
+          </div>
+          <div class="card" style="padding:14px">
+            <div style="display:flex;align-items:center;gap:8px"><b style="font-size:13px">1.2 · Libro caja y bancos</b><span class="chip blue">N° operación</span></div>
+            <p style="margin:6px 0 10px;font-size:11.5px;color:var(--ink-3)">Cada movimiento con su N° de operación, cuenta divisionaria y referencia al documento.</p>
+            <div style="display:flex;gap:8px"><button class="btn sm">Exportar</button></div>
+          </div>
+          <div class="card" style="padding:14px">
+            <div style="display:flex;align-items:center;gap:8px"><b style="font-size:13px">5.1 / 6.1 · Diario y mayor</b><span class="chip">Export</span></div>
+            <p style="margin:6px 0 10px;font-size:11.5px;color:var(--ink-3)">Asientos automáticos y manuales, exportables por período para el estudio contable.</p>
+            <div style="display:flex;gap:8px"><button class="btn sm">Exportar</button></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ══════ CONTA · DETRACCIONES ══════ -->
+      <div class="panel" id="p-co-detracciones" style="display:none;flex-direction:column;gap:20px">
+        <div class="sechead s-amber"><span class="sq"></span><span class="tx">Catálogo completo de detracciones · la tabla de Kelly, no 4 códigos</span><span class="rule"></span></div>
+        <div class="card">
+          <div class="toolbar"><span class="ttl">Tabla de detracciones</span><span class="cnt">48 códigos cargados</span><span class="grow"></span>
+            <input class="inp" style="width:200px" placeholder="Buscar código o descripción...">
+            <button class="btn sm">Actualizar tasas</button></div>
+          <div class="tablewrap"><table>
+            <thead><tr><th>Código</th><th>Descripción</th><th class="r">Tasa</th><th>Vigencia</th><th class="r">Usos 2026</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">001</td><td>Azúcar y melaza de caña</td><td class="r mono">10%</td><td><span class="chip green">Vigente</span></td><td class="r mono" style="color:var(--ink-4)">0</td></tr>
+              <tr><td class="mono">004</td><td>Recursos hidrobiológicos</td><td class="r mono">4%</td><td><span class="chip green">Vigente</span></td><td class="r mono" style="color:var(--ink-4)">0</td></tr>
+              <tr><td class="mono">009</td><td>Arena y piedra</td><td class="r mono">10%</td><td><span class="chip green">Vigente</span></td><td class="r mono">2</td></tr>
+              <tr><td class="mono">012</td><td>Intermediación laboral y tercerización</td><td class="r mono">12%</td><td><span class="chip green">Vigente</span></td><td class="r mono">1</td></tr>
+              <tr><td class="mono">019</td><td>Arrendamiento de bienes</td><td class="r mono">10%</td><td><span class="chip green">Vigente</span></td><td class="r mono">3</td></tr>
+              <tr><td class="mono">020</td><td>Mantenimiento y reparación de bienes muebles</td><td class="r mono">12%</td><td><span class="chip green">Vigente</span></td><td class="r mono">1</td></tr>
+              <tr><td class="mono">022</td><td>Otros servicios empresariales</td><td class="r mono">12%</td><td><span class="chip green">Vigente</span></td><td class="r mono">4</td></tr>
+              <tr><td class="mono">030</td><td>Contratos de construcción</td><td class="r mono">4%</td><td><span class="chip green">Vigente</span></td><td class="r mono">11</td></tr>
+              <tr><td class="mono">037</td><td>Demás servicios gravados con el IGV</td><td class="r mono">12%</td><td><span class="chip green">Vigente</span></td><td class="r mono">6</td></tr>
+            </tbody>
+          </table></div>
+          <div style="padding:8px 14px;border-top:1px solid var(--line);font-size:11px;color:var(--ink-4)">… 39 códigos más · fuente: tabla enviada por Kelly (vigencia 2025-2026)</div>
+        </div>
+        <div class="notegrid">
+          <div class="note"><div class="hd"><span class="chip amber">Kelly</span><b>Retención IGV 3%</b></div>
+            <q>«La retención no solo es… es 3%»</q> — retención de IGV 3% cuando aplica régimen de retenciones; se marca en la compra y descuenta del neto a pagar.</div>
+          <div class="note"><div class="hd"><span class="chip amber">Kelly</span><b>Renta de 4ta 8%</b></div>
+            <q>«La retención va en honorarios»</q> — RxH retiene 8% salvo suspensión (Form. 1609); el pago sale neto y la retención va a la 40172.</div>
+          <div class="note"><div class="hd"><span class="chip amber">Kelly</span><b>Detracción mensual</b></div>
+            <q>«Todos los meses recibimos detracciones»</q> — en ventas el sistema calcula lo que el cliente retiene; el saldo de la cuenta BN solo se usa contra impuestos.</div>
+        </div>
+      </div>
+
+      <!-- ══════ CONTA · EEFF ══════ -->
+      <div class="panel" id="p-co-eeff" style="display:none;flex-direction:column;gap:20px">
+        <div class="card"><div style="padding:34px;text-align:center">
+          <b style="font-size:14px">Estados financieros · en pausa deliberada</b>
+          <p style="max-width:520px;margin:8px auto 0;font-size:12px;color:var(--ink-3)">
+            Kelly: <i>«Prefiero ver estados financieros una vez lo revise con el estudio y definamos con qué NIIF vamos a trabajar»</i>.
+            Mientras tanto el sistema entrega el balance de comprobación y los reportes por cuenta; los EE.FF. formales siguen con el estudio contable externo.</p>
+          <div style="margin-top:14px"><button class="btn sm">Balance de comprobación</button></div>
+        </div></div>
+      </div>
+
+    </div><!-- /page-conta -->
+
+    </div>
+  </main>
+</div>
+
+<!-- ══════ MODAL · NUEVA COMPRA ══════ -->
+<div class="ov a-backdrop" id="m-compra">
+  <div class="modal xwide a-pop">
+    <header>
+      <div>
+        <h2>Registrar compra</h2>
+        <div class="steps">
+          <button class="step ok" onclick="irA('s-doc')"><span class="mk">✓</span>Documento</button><span class="sep">/</span>
+          <button class="step ok" onclick="irA('s-prov')"><span class="mk">✓</span>Proveedor</button><span class="sep">/</span>
+          <button class="step ok" onclick="irA('s-det')"><span class="mk">✓</span>Detalle · 3</button><span class="sep">/</span>
+          <button class="step warn" onclick="irA('s-trib')"><span class="mk">!</span>Tributos</button><span class="sep">/</span>
+          <button class="step ok" onclick="irA('s-pago')"><span class="mk">✓</span>Pago</button><span class="sep">/</span>
+          <button class="step ok" onclick="irA('s-dest')"><span class="mk">✓</span>Destino</button>
+        </div>
+      </div>
+      <button class="iconbtn" onclick="closeM(this)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+    </header>
+    <div class="bd">
+     <div class="cols">
+      <div class="mn">
+
+      <div class="entry3">
+        <button class="ro on"><b>Compra</b><span>Con comprobante · va al Registro de Compras y al SIRE</span></button>
+        <button class="ro"><b>Gasto</b><span>Sin comprobante fiscal · movilidad, pago por fuera, caja</span></button>
+        <button class="bl"><b>Bancario</b><span>Transferencia, préstamo, impuestos, detracción</span></button>
+      </div>
+
+      <div class="secbox" id="s-doc">
+        <div class="t">Documento</div>
+        <div class="fields">
+          <div class="g3">
+            <label class="f"><span class="lb"><span>Tipo</span></span><div class="ct"><select class="inp"><option>01 · Factura</option><option>03 · Boleta</option><option>07 · Nota de crédito</option><option>08 · Nota de débito</option><option>02 · Recibo por honorarios</option><option>00 · Sin comprobante</option></select></div></label>
+            <label class="f"><span class="lb"><span>Serie</span></span><div class="ct"><input class="inp mono" value="F013"></div></label>
+            <label class="f"><span class="lb"><span>Número</span></span><div class="ct"><input class="inp mono" value="35799"></div></label>
+          </div>
+          <div class="g3">
+            <label class="f"><span class="lb"><span>Fecha de emisión</span></span><div class="ct"><input class="inp mono" value="2026-01-14"></div></label>
+            <label class="f"><span class="lb"><span>Vencimiento</span></span><div class="ct"><input class="inp mono" value="2026-02-13"></div></label>
+            <label class="f"><span class="lb"><span>Período contable</span><span class="opt">≠ emisión · hasta 12 meses</span></span><div class="ct"><select class="inp"><option>202601 · mismo mes</option><option>202602</option><option>202603</option></select></div></label>
+          </div>
+          <div class="g3">
+            <label class="f"><span class="lb"><span>Moneda / TC</span><span class="opt">venta SUNAT de la fecha</span></span><div class="ct"><div style="display:flex;gap:6px"><select class="inp" style="width:70px"><option>PEN</option><option>USD</option></select><input class="inp mono ro" value="3.7250 · SUNAT"></div></div></label>
+            <label class="f"><span class="lb"><span>Documento que modifica</span><span class="opt">si es NC o ND</span></span><div class="ct"><input class="inp mono" placeholder="F013-35412" disabled></div></label>
+            <label class="f"><span class="lb"><span>Orden de compra</span><span class="opt">jala sus líneas al detalle</span></span><div class="ct"><select class="inp"><option>OC-2026-0031 · EKONO</option><option>sin OC</option></select></div></label>
+          </div>
+          <div class="g3">
+            <label class="f"><span class="lb"><span>Adjunto</span></span><div class="ct"><button class="btn sm dash" style="width:100%;justify-content:center">Subir PDF o XML</button></div></label>
+            <div style="grid-column:span 2;display:flex;align-items:flex-end"><div class="inote ok" style="width:100%">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 6 9 17l-5-5"/></svg>
+              <span>Sin duplicados: no existe otra F013-35799 del RUC 20601234567.</span></div></div>
+          </div>
+          <div class="inote warn">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4M12 17h.01"/></svg>
+            <span>Si eliges <b>03 · Boleta</b>: no entra al Registro de Compras ni da crédito fiscal. Se guarda como gasto con documento (regla de Kelly).</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="secbox" id="s-prov">
+        <div class="t">Proveedor</div>
+        <div class="fields">
+          <div class="g3">
+            <label class="f"><span class="lb"><span>RUC</span></span><div class="ct"><input class="inp mono" value="20601234567"></div></label>
+            <label class="f" style="grid-column:span 2"><span class="lb"><span>Razón social</span></span><div class="ct"><input class="inp" value="EKONO DRYWALL SAC"></div></label>
+          </div>
+          <div class="g3">
+            <label class="f"><span class="lb"><span>Estado SUNAT</span></span><div class="ct"><div style="display:flex;align-items:center;height:32px"><span class="chip green">Activo · habido</span></div></div></label>
+            <label class="f"><span class="lb"><span>Agente de retención</span></span><div class="ct"><div style="display:flex;align-items:center;height:32px"><span class="chip">No</span></div></div></label>
+            <label class="f"><span class="lb"><span>Cuenta sugerida</span><span class="opt">solo sugiere · Kelly decide</span></span><div class="ct"><input class="inp mono ro" value="602111 · última usada"></div></label>
+          </div>
+        </div>
+      </div>
+
+      <div class="secbox" id="s-det">
+        <div class="t">Detalle por línea · cuenta contable manual por línea <span class="chip blue">Líneas jaladas de OC-2026-0031 · editables</span></div>
+        <div class="lines">
+          <table>
+            <thead><tr><th>Descripción</th><th>Und.</th><th class="r">Cant.</th><th class="r">P. unit.</th><th>Partida</th><th>Cuenta</th><th class="ck">→ INV</th><th class="r">Importe</th><th></th></tr></thead>
+            <tbody>
+              <tr>
+                <td><input class="inp" style="min-width:205px" value="Plancha drywall 1/2 ST 1.22x2.44"></td>
+                <td><input class="inp mono" style="width:52px" value="UND"></td>
+                <td class="r"><input class="inp mono" style="width:56px;text-align:right" value="200"></td>
+                <td class="r"><input class="inp mono" style="width:72px;text-align:right" value="45.00"></td>
+                <td><select class="inp" style="min-width:148px"><option>02.01 · Muros y tabiques</option><option>03.02 · Cielo raso</option></select></td>
+                <td><input class="inp mono" style="width:76px" value="602111"></td>
+                <td class="ck"><input type="checkbox"></td>
+                <td class="r mono">9,000.00</td>
+                <td><button class="iconbtn" style="height:24px;width:24px" title="Quitar línea"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button></td>
+              </tr>
+              <tr>
+                <td><input class="inp" value="Perfil omega galvanizado 3m"></td>
+                <td><input class="inp mono" style="width:52px" value="UND"></td>
+                <td class="r"><input class="inp mono" style="width:56px;text-align:right" value="150"></td>
+                <td class="r"><input class="inp mono" style="width:72px;text-align:right" value="20.00"></td>
+                <td><select class="inp"><option>02.01 · Muros y tabiques</option></select></td>
+                <td><input class="inp mono" style="width:76px" value="602111"></td>
+                <td class="ck"><input type="checkbox"></td>
+                <td class="r mono">3,000.00</td>
+                <td><button class="iconbtn" style="height:24px;width:24px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button></td>
+              </tr>
+              <tr class="inv">
+                <td><input class="inp" value="Amoladora angular Bosch GWS 900"></td>
+                <td><input class="inp mono" style="width:52px" value="UND"></td>
+                <td class="r"><input class="inp mono" style="width:56px;text-align:right" value="5"></td>
+                <td class="r"><input class="inp mono" style="width:72px;text-align:right" value="800.00"></td>
+                <td><select class="inp"><option>Sin partida · herramienta</option></select></td>
+                <td><input class="inp mono" style="width:76px" value="334111"></td>
+                <td class="ck"><input type="checkbox" checked></td>
+                <td class="r mono">4,000.00</td>
+                <td><button class="iconbtn" style="height:24px;width:24px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="linefoot">
+          <button class="btn sm dash">Agregar línea</button>
+          <button class="btn sm">Aplicar la cuenta a todas</button>
+          <span class="grow"></span>
+          <span class="kbdh"><kbd>Tab</kbd> avanza · <kbd>Enter</kbd> agrega fila</span>
+        </div>
+        <div style="border:1px solid var(--warn);border-radius:6px;background:hsl(38 100% 48% / .05);padding:12px;margin-top:10px">
+          <div style="font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--warn-ink);margin-bottom:9px">
+            Ítems que entran a inventario · 5 · códigos HER-0042 a 0046
+          </div>
+          <div class="g3">
+            <label class="f"><span class="lb"><span>Serializable</span></span><div class="ct"><div class="seg"><button class="on">Sí · 1 código c/u</button><button>No · lote</button></div></div></label>
+            <label class="f"><span class="lb"><span>Almacén destino</span></span><div class="ct"><select class="inp"><option>Almacén central</option><option>Obra Famesa Chancay</option></select></div></label>
+            <label class="f"><span class="lb"><span>Responsable</span></span><div class="ct"><select class="inp"><option>Sin asignar</option><option>Nayelli Ramos</option></select></div></label>
+          </div>
+        </div>
+      </div>
+
+      <div class="secbox" id="s-trib">
+        <div class="t">Tributos y retenciones · tabla completa de Kelly</div>
+        <div class="fields">
+          <div class="g2">
+            <label class="f"><span class="lb"><span>Código de detracción</span><span class="opt">catálogo de 48</span></span><div class="ct">
+              <select class="inp">
+                <option>030 · Contratos de construcción · 4%</option>
+                <option>037 · Demás servicios gravados con IGV · 12%</option>
+                <option>022 · Otros servicios empresariales · 12%</option>
+                <option>020 · Mantenimiento y reparación · 12%</option>
+                <option>019 · Arrendamiento de bienes · 10%</option>
+                <option>012 · Intermediación laboral · 12%</option>
+                <option>009 · Arena y piedra · 10%</option>
+                <option>No sujeta a detracción</option>
+              </select></div></label>
+            <div class="g2">
+              <label class="f"><span class="lb"><span>Tasa</span></span><div class="ct"><input class="inp mono ro" value="4.00 %"></div></label>
+              <label class="f"><span class="lb"><span>Monto</span></span><div class="ct"><input class="inp mono ro" value="755.20"></div></label>
+            </div>
+          </div>
+          <div class="inote ok">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 6 9 17l-5-5"/></svg>
+            <span>Comprobante de S/ 18,880.00 · supera el mínimo de S/ 700, corresponde detracción. El IGV 18% se detectó automáticamente.</span>
+          </div>
+          <div class="g2">
+            <label class="f"><span class="lb"><span>Destino del crédito fiscal</span><span class="opt">columnas DG / DGNG / DNG del SIRE</span></span><div class="ct">
+              <select class="inp">
+                <option>Gravado · destino gravado (DG)</option>
+                <option>Gravado · destino mixto (DGNG)</option>
+                <option>Gravado · destino no gravado (DNG)</option>
+                <option>Exonerada / inafecta · sin IGV</option>
+              </select></div></label>
+            <label class="f"><span class="lb"><span>Crédito fiscal usable</span><span class="opt">condicionado a la constancia</span></span><div class="ct"><input class="inp mono ro" value="2,880.00 · diferido"></div></label>
+          </div>
+          <div class="inote warn">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4M12 17h.01"/></svg>
+            <span>Sin constancia de depósito, el crédito fiscal de S/ 2,880.00 se difiere al período en que se deposite la detracción.</span>
+          </div>
+          <div class="g3">
+            <label class="f"><span class="lb"><span>N° de constancia</span></span><div class="ct"><input class="inp mono" placeholder="2026-000418" style="border-color:var(--warn)"></div></label>
+            <label class="f"><span class="lb"><span>Fecha de depósito</span></span><div class="ct"><input class="inp mono" placeholder="2026-01-20"></div></label>
+            <label class="f"><span class="lb"><span>Constancia</span></span><div class="ct"><button class="btn sm dash" style="width:100%;justify-content:center">Adjuntar</button></div></label>
+          </div>
+          <div class="g3">
+            <label class="f"><span class="lb"><span>Retención IGV 3%</span></span><div class="ct"><select class="inp"><option>No aplica</option><option>Aplica · 3%</option></select></div></label>
+            <label class="f"><span class="lb"><span>Percepción IGV</span></span><div class="ct"><select class="inp"><option>No aplica</option><option>Aplica · 2%</option></select></div></label>
+            <label class="f"><span class="lb"><span>Retención 4ta 8%</span><span class="opt">si es RxH</span></span><div class="ct"><select class="inp"><option>No aplica</option><option>Retener 8%</option><option>Suspensión · Form. 1609</option></select></div></label>
+          </div>
+        </div>
+      </div>
+
+      <div class="secbox" id="s-pago">
+        <div class="t">Pago · parcial permitido</div>
+        <div class="fields">
+          <label class="f"><span class="lb"><span>Estado</span></span><div class="ct"><div class="seg">
+            <button>Pagado</button><button class="on">Parcial</button><button>Pendiente</button></div></div></label>
+          <div class="g3">
+            <label class="f"><span class="lb"><span>Importe pagado</span></span><div class="ct"><input class="inp mono" value="10,000.00"></div></label>
+            <label class="f"><span class="lb"><span>Saldo pendiente</span><span class="opt">→ cuenta 42</span></span><div class="ct"><input class="inp mono ro" value="8,124.80" style="color:var(--rose-600);font-weight:600"></div></label>
+            <label class="f"><span class="lb"><span>Medio de pago</span></span><div class="ct"><select class="inp"><option>003 · Transferencia</option><option>001 · Depósito en cuenta</option><option>008 · Efectivo</option><option>Yape / Plin</option></select></div></label>
+          </div>
+          <div class="g2">
+            <label class="f"><span class="lb"><span>Sale de</span><span class="opt">elemento 1</span></span><div class="ct"><select class="inp"><option>1041801 · BCP Soles</option><option>10311 · Caja Chica</option><option>Caja CAJA-2026-014</option></select></div></label>
+            <label class="f"><span class="lb"><span>N° de operación</span><span class="opt">obligatorio</span></span><div class="ct"><input class="inp mono" value="5401882"></div></label>
+          </div>
+          <div class="g2">
+            <label class="f"><span class="lb"><span>Anticipo aplicado</span><span class="opt">cuenta 422 del proveedor</span></span><div class="ct"><select class="inp"><option>Sin anticipo</option><option>ANT-2026-003 · EKONO · saldo 5,000.00</option></select></div></label>
+            <label class="f"><span class="lb"><span>Diferencia de cambio</span><span class="opt">auto si USD · 776 / 676</span></span><div class="ct"><input class="inp mono ro" value="no aplica · PEN"></div></label>
+          </div>
+        </div>
+      </div>
+
+      <div class="secbox" id="s-dest">
+        <div class="t">Destino</div>
+        <div class="fields">
+          <div class="g2">
+            <label class="f"><span class="lb"><span>Proyecto</span></span><div class="ct"><select class="inp"><option>PG0001 · Famesa Chancay</option><option>PG0004 · Colegios</option><option>PG0005 · Crematorio Surco</option><option>Oficina / general</option></select></div></label>
+            <label class="f"><span class="lb"><span>Clase derivada de la cuenta</span><span class="opt">no editable</span></span><div class="ct">
+              <div style="display:flex;align-items:center;height:32px"><span class="chip green">CD · costo directo</span></div></div></label>
+          </div>
+          <label class="ckline"><input type="checkbox"> Repartir entre varias obras (prorrateo)</label>
+        </div>
+      </div>
+
+      </div><!-- /.mn -->
+
+      <div class="side">
+        <div class="box">
+          <div class="t">Totales</div>
+          <div class="tot">
+            <span class="k">Valor de venta</span><span class="v">16,000.00</span>
+            <span class="k">IGV 18% · auto</span><span class="v">2,880.00</span>
+            <span class="rule"></span>
+            <span class="k big">Total comprobante</span><span class="v big">18,880.00</span>
+            <span class="rule"></span>
+            <span class="k" style="color:var(--warn-ink)">Detracción 4%</span><span class="v" style="color:var(--warn-ink)">755.20</span>
+            <span class="k" style="color:var(--emerald-700);font-weight:600">Neto a pagar</span><span class="v" style="color:var(--emerald-700);font-weight:700">18,124.80</span>
+            <span class="rule"></span>
+            <span class="k">Pagado</span><span class="v">10,000.00</span>
+            <span class="k" style="color:var(--rose-600)">Saldo</span><span class="v" style="color:var(--rose-600);font-weight:600">8,124.80</span>
+          </div>
+        </div>
+        <div class="box">
+          <div class="t">Se registra</div>
+          <div style="display:flex;flex-direction:column;gap:6px;font-size:11.5px;color:var(--ink-2)">
+            <div>1 compra en el Registro de Compras → SIRE</div>
+            <div>3 líneas con cuenta contable propia</div>
+            <div>5 ítems de inventario <span class="chip amber">HER-0042 a 0046</span></div>
+            <div>1 cuenta por pagar (4212) de <span class="mono">8,124.80</span></div>
+            <div>1 detracción por depositar (42411)</div>
+            <div>1 asiento automático en el diario</div>
+          </div>
+        </div>
+      </div>
+
+     </div><!-- /.cols -->
+    </div>
+    <footer>
+      <span class="hint">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4M12 17h.01"/></svg>
+        Falta el N° de constancia de detracción
+      </span>
+      <span class="grow"></span>
+      <span class="kbdh"><kbd>⌘S</kbd> guardar · <kbd>⌘↵</kbd> guardar y nuevo</span>
+      <button class="btn" onclick="closeM(this)">Cancelar</button>
+      <button class="btn">Guardar y nuevo</button>
+      <button class="btn pri">Registrar compra</button>
+    </footer>
+  </div>
+</div>
+
+<!-- ══════ MODAL · REGISTRAR PAGO (proveedor jala facturas) ══════ -->
+<div class="ov a-backdrop" id="m-pago">
+  <div class="modal wide a-pop">
+    <header>
+      <div><h2>Registrar movimiento bancario</h2><div class="sub">El proveedor jala sus facturas pendientes · un pago cubre varias, una factura recibe varios</div></div>
+      <button class="iconbtn" onclick="closeM(this)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+    </header>
+    <div class="bd">
+      <div class="secbox">
+        <div class="t">Movimiento</div>
+        <div class="g3">
+          <label class="f"><span class="lb"><span>Tipo</span></span><div class="ct"><div class="seg"><button>Ingreso</button><button class="on">Egreso</button></div></div></label>
+          <label class="f"><span class="lb"><span>Fecha</span></span><div class="ct"><input class="inp mono" value="2026-01-28"></div></label>
+          <label class="f"><span class="lb"><span>N° de operación</span><span class="opt">obligatorio</span></span><div class="ct"><input class="inp mono" value="5406618"></div></label>
+        </div>
+        <div class="g3" style="margin-top:12px">
+          <label class="f"><span class="lb"><span>Sale de</span></span><div class="ct"><select class="inp"><option>1041801 · BCP Soles</option><option>10311 · Caja Chica</option><option>10711 · BN Detracciones</option></select></div></label>
+          <label class="f"><span class="lb"><span>Importe</span></span><div class="ct"><input class="inp mono" value="10,000.00"></div></label>
+          <label class="f"><span class="lb"><span>Cuenta contable</span><span class="opt">manual · Kelly</span></span><div class="ct"><input class="inp mono" value="4212"></div></label>
+        </div>
+      </div>
+      <div class="secbox">
+        <div class="t">Proveedor → facturas pendientes <span class="chip green">jala automático</span></div>
+        <label class="f" style="margin-bottom:10px"><span class="lb"><span>Proveedor</span></span><div class="ct"><input class="inp" value="EKONO DRYWALL SAC · 20601234567"></div></label>
+        <div class="tablewrap" style="border:1px solid var(--line);border-radius:6px">
+          <table>
+            <thead><tr><th class="ck"></th><th>Documento</th><th>Vence</th><th class="r">Total</th><th class="r">Saldo</th><th class="r">Aplicar</th></tr></thead>
+            <tbody>
+              <tr><td style="text-align:center"><input type="checkbox" checked></td><td class="mono">F013-35799</td><td class="mono">2026-02-13</td><td class="r mono">18,880.00</td><td class="r mono">18,124.80</td><td class="r"><input class="inp mono" style="width:96px;text-align:right" value="10,000.00"></td></tr>
+              <tr><td style="text-align:center"><input type="checkbox"></td><td class="mono">F013-36102</td><td class="mono">2026-02-20</td><td class="r mono">6,430.00</td><td class="r mono">6,430.00</td><td class="r"><input class="inp mono" style="width:96px;text-align:right" value="0.00"></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="inote ok" style="margin-top:10px">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 6 9 17l-5-5"/></svg>
+          <span>Aplicado 10,000.00. F013-35799 queda con saldo 8,124.80 y estado <b>Parcial</b>. Sin documento también se puede guardar: solo glosa + N° de operación.</span>
+        </div>
+      </div>
+    </div>
+    <footer>
+      <span class="hint">Sin aplicar: 0.00</span>
+      <span class="grow"></span>
+      <button class="btn" onclick="closeM(this)">Cancelar</button>
+      <button class="btn pri">Registrar movimiento</button>
+    </footer>
+  </div>
+</div>
+
+<!-- ══════ MODAL · CAJA ══════ -->
+<div class="ov a-backdrop" id="m-caja">
+  <div class="modal wide a-pop">
+    <header>
+      <div><h2>Caja · entrega y rendición</h2><div class="sub">Cruce del dinero entregado (egreso bancario) contra los documentos rendidos</div></div>
+      <button class="iconbtn" onclick="closeM(this)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+    </header>
+    <div class="bd">
+      <div class="secbox">
+        <div class="t">Entrega</div>
+        <div class="g3">
+          <label class="f"><span class="lb"><span>Encargado</span><span class="opt">del maestro de personal</span></span><div class="ct"><select class="inp"><option>Andrea García</option><option>Nayelli Ramos</option><option>Jonathan Challco</option></select></div></label>
+          <label class="f"><span class="lb"><span>Proyecto</span><span class="opt">obligatorio</span></span><div class="ct"><select class="inp"><option>PG0001 · Famesa Chancay</option><option>PG0005 · Crematorio Surco</option></select></div></label>
+          <label class="f"><span class="lb"><span>Monto entregado</span></span><div class="ct"><input class="inp mono" value="3,000.00"></div></label>
+        </div>
+        <div class="g2" style="margin-top:12px">
+          <label class="f"><span class="lb"><span>Origen del fondo</span></span><div class="ct"><select class="inp"><option>1041801 · BCP Soles</option><option>Efectivo</option></select></div></label>
+          <label class="f"><span class="lb"><span>N° de operación del egreso</span><span class="opt">cruza con bancos</span></span><div class="ct"><input class="inp mono" value="5404001"></div></label>
+        </div>
+      </div>
+      <div class="secbox">
+        <div class="t">Rendición · se jalan documentos por proveedor</div>
+        <div class="tablewrap" style="border:1px solid var(--line);border-radius:6px">
+          <table>
+            <thead><tr><th>Fecha</th><th>Proveedor</th><th>Documento</th><th>Cuenta</th><th class="r">Importe</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">2026-01-16</td><td>SODIMAC PERU SA</td><td class="mono" style="color:var(--primary)">B002-118203 · jalada</td><td class="mono">602111</td><td class="r mono">385.00</td></tr>
+              <tr><td class="mono">2026-01-17</td><td>PLAZA VEA</td><td class="mono" style="color:var(--primary)">B045-0091122 · jalada</td><td class="mono">637111</td><td class="r mono">120.00</td></tr>
+              <tr><td class="mono">2026-01-19</td><td>Movilidad · sin documento</td><td class="mono" style="color:var(--ink-4)">glosa</td><td class="mono">631111</td><td class="r mono">45.00</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="linefoot">
+          <button class="btn sm dash">Buscar proveedor y jalar factura</button>
+          <button class="btn sm dash">Gasto sin documento</button>
+        </div>
+      </div>
+      <div class="secbox">
+        <div class="t">Cierre</div>
+        <div class="tot">
+          <span class="k">Entregado · op. 5404001</span><span class="v">3,000.00</span>
+          <span class="k">Rendido · 12 documentos</span><span class="v">2,820.00</span>
+          <span class="k big">Saldo por rendir</span><span class="v big" style="color:var(--rose-600)">180.00</span>
+        </div>
+        <div class="inote" style="margin-top:10px">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+          <span>Al cerrar: el saldo se devuelve al banco (nuevo N° de operación) o se registra como gasto. En conciliación el egreso 5404001 aparece referido a esta caja, no suelto.</span>
+        </div>
+      </div>
+    </div>
+    <footer>
+      <span class="grow"></span>
+      <button class="btn" onclick="closeM(this)">Cancelar</button>
+      <button class="btn">Guardar avance</button>
+      <button class="btn pri">Cerrar caja</button>
+    </footer>
+  </div>
+</div>
+
+<!-- ══════ MODAL · VENTA ══════ -->
+<div class="ov a-backdrop" id="m-venta">
+  <div class="modal wide a-pop">
+    <header>
+      <div><h2>Registrar venta</h2><div class="sub">Factura ya emitida · estilo Nubefac: ítems, IGV, detracción, anticipos · alimenta 14.1 y SIRE</div></div>
+      <button class="iconbtn" onclick="closeM(this)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+    </header>
+    <div class="bd">
+      <div class="secbox">
+        <div class="t">Documento</div>
+        <div class="fields">
+          <div class="g3">
+            <label class="f"><span class="lb"><span>Tipo</span></span><div class="ct"><select class="inp"><option>01 · Factura</option><option>07 · Nota de crédito</option><option>08 · Nota de débito</option></select></div></label>
+            <label class="f"><span class="lb"><span>Serie</span></span><div class="ct"><input class="inp mono" value="E001"></div></label>
+            <label class="f"><span class="lb"><span>Número</span></span><div class="ct"><input class="inp mono" value="89"></div></label>
+          </div>
+          <div class="g3">
+            <label class="f"><span class="lb"><span>Emisión</span></span><div class="ct"><input class="inp mono" value="2026-01-09"></div></label>
+            <label class="f"><span class="lb"><span>Vencimiento</span></span><div class="ct"><input class="inp mono" value="2026-02-08"></div></label>
+            <label class="f"><span class="lb"><span>Cliente</span></span><div class="ct"><input class="inp" value="ZANE CONSTRUCCION S.A.C"></div></label>
+          </div>
+        </div>
+      </div>
+      <div class="secbox">
+        <div class="t">Origen · documento no condicional</div>
+        <div class="g3">
+          <label class="f"><span class="lb"><span>Tipo de origen</span></span><div class="ct"><select class="inp"><option>Contrato / servicio</option><option>Valorización de obra</option><option>Venta directa</option><option>Sin origen</option></select></div></label>
+          <label class="f"><span class="lb"><span>N° de contrato</span><span class="opt">si no hay valo</span></span><div class="ct"><input class="inp mono" value="CT-2026-004"></div></label>
+          <label class="f"><span class="lb"><span>Proyecto</span></span><div class="ct"><select class="inp"><option>PG0001 · Famesa Chancay</option></select></div></label>
+        </div>
+      </div>
+      <div class="secbox">
+        <div class="t">Detalle</div>
+        <div class="lines">
+          <table>
+            <thead><tr><th>Descripción</th><th class="r">Cant.</th><th class="r">V. unit.</th><th>Cuenta</th><th class="r">Importe</th></tr></thead>
+            <tbody>
+              <tr><td><input class="inp" style="min-width:260px" value="Personal técnico + equipo trabajo vertical · geomalla Costa Verde"></td>
+                <td class="r"><input class="inp mono" style="width:52px;text-align:right" value="1"></td>
+                <td class="r"><input class="inp mono" style="width:96px;text-align:right" value="16,758.15"></td>
+                <td><input class="inp mono" style="width:76px" value="70411"></td>
+                <td class="r mono">16,758.15</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="linefoot"><button class="btn sm dash">Agregar línea</button>
+          <label class="ckline" style="margin-left:8px"><input type="checkbox"> Tiene anticipo aplicado</label></div>
+      </div>
+      <div class="secbox">
+        <div class="t">Retenciones del cliente y forma de pago <span class="chip amber">Gap corregido</span></div>
+        <div class="fields">
+          <div class="g3">
+            <label class="f"><span class="lb"><span>Retención IGV 3%</span><span class="opt">cliente agente de retención</span></span><div class="ct"><select class="inp"><option>Aplica · cliente retiene 3%</option><option>No aplica</option></select></div></label>
+            <label class="f"><span class="lb"><span>Comprobante de retención</span></span><div class="ct"><input class="inp mono" value="R001-0045"></div></label>
+            <label class="f"><span class="lb"><span>Monto retenido</span><span class="opt">→ 40114 crédito</span></span><div class="ct"><input class="inp mono ro" value="593.27"></div></label>
+          </div>
+          <div class="g3">
+            <label class="f"><span class="lb"><span>Forma de pago</span><span class="opt">RVIE</span></span><div class="ct"><div class="seg"><button>Contado</button><button class="on">Crédito</button></div></div></label>
+            <label class="f"><span class="lb"><span>Cuotas</span></span><div class="ct"><input class="inp mono" value="1 cuota · 2026-02-08"></div></label>
+            <label class="f"><span class="lb"><span>Retención de garantía</span></span><div class="ct"><input class="inp mono" value="0.00"></div></label>
+          </div>
+        </div>
+      </div>
+      <div class="secbox">
+        <div class="t">Totales</div>
+        <div class="g2">
+          <div class="tot">
+            <span class="k">Valor de venta</span><span class="v">16,758.15</span>
+            <span class="k">IGV 18% · auto</span><span class="v">3,017.47</span>
+            <span class="k big">Total factura</span><span class="v big">19,775.62</span>
+          </div>
+          <div class="tot">
+            <span class="k" style="color:var(--warn-ink)">Detracción 037 · 12%</span><span class="v" style="color:var(--warn-ink)">2,373.00</span>
+            <span class="k" style="color:var(--violet-600)">Retención IGV 3%</span><span class="v" style="color:var(--violet-600)">593.27</span>
+            <span class="k" style="color:var(--emerald-700);font-weight:600">Neto a cobrar</span><span class="v" style="color:var(--emerald-700);font-weight:700">16,809.35</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <footer>
+      <span class="kbdh"><kbd>⌘S</kbd> guardar</span>
+      <span class="grow"></span>
+      <button class="btn" onclick="closeM(this)">Cancelar</button>
+      <button class="btn pri">Registrar venta</button>
+    </footer>
+  </div>
+</div>
+
+<!-- ══════ MODAL · ASIENTO MANUAL / PROVISIÓN ══════ -->
+<div class="ov a-backdrop" id="m-asiento">
+  <div class="modal wide a-pop">
+    <header>
+      <div><h2>Nuevo asiento</h2><div class="sub">Manual o provisión · debe = haber para guardar</div></div>
+      <button class="iconbtn" onclick="closeM(this)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+    </header>
+    <div class="bd">
+      <div class="secbox">
+        <div class="t">Cabecera</div>
+        <div class="g3">
+          <label class="f"><span class="lb"><span>Tipo</span></span><div class="ct"><div class="seg"><button>Manual</button><button class="on">Provisión (48)</button></div></div></label>
+          <label class="f"><span class="lb"><span>Fecha</span></span><div class="ct"><input class="inp mono" value="2026-01-31"></div></label>
+          <label class="f"><span class="lb"><span>Proyecto</span><span class="opt">opcional</span></span><div class="ct"><select class="inp"><option>Oficina / general</option><option>PG0001</option></select></div></label>
+        </div>
+        <label class="f" style="margin-top:12px"><span class="lb"><span>Glosa</span></span><div class="ct"><input class="inp" value="Provisión honorarios estudio contable enero · pagado sin factura"></div></label>
+      </div>
+      <div class="secbox">
+        <div class="t">Detalle debe / haber</div>
+        <div class="lines">
+          <table class="asiento">
+            <thead><tr><th>Cuenta</th><th>Descripción</th><th>Tercero</th><th class="dr">Debe</th><th class="dr">Haber</th><th></th></tr></thead>
+            <tbody>
+              <tr>
+                <td><input class="inp mono" style="width:88px" value="632211"></td>
+                <td><input class="inp" value="Honorarios contables enero"></td>
+                <td><input class="inp" style="min-width:140px" value="CONTAFEL SAC"></td>
+                <td class="dr"><input class="inp mono" style="width:96px;text-align:right" value="1,800.00"></td>
+                <td class="dr"><input class="inp mono" style="width:96px;text-align:right" value="0.00"></td>
+                <td><button class="iconbtn" style="height:24px;width:24px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button></td>
+              </tr>
+              <tr>
+                <td><input class="inp mono" style="width:88px" value="4811"></td>
+                <td><input class="inp" value="Provisión de gastos"></td>
+                <td><input class="inp" value="CONTAFEL SAC"></td>
+                <td class="dr"><input class="inp mono" style="width:96px;text-align:right" value="0.00"></td>
+                <td class="dr"><input class="inp mono" style="width:96px;text-align:right" value="1,800.00"></td>
+                <td><button class="iconbtn" style="height:24px;width:24px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button></td>
+              </tr>
+            </tbody>
+            <tfoot><tr><td colspan="3">Totales</td><td class="dr mono">1,800.00</td><td class="dr mono">1,800.00</td><td></td></tr></tfoot>
+          </table>
+        </div>
+        <div class="linefoot"><button class="btn sm dash">Agregar línea</button></div>
+        <div class="inote ok" style="margin-top:10px">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 6 9 17l-5-5"/></svg>
+          <span>Cuadrado. Al registrarse la factura de CONTAFEL, esta provisión aparecerá para extornar con un clic.</span>
+        </div>
+      </div>
+    </div>
+    <footer>
+      <span class="grow"></span>
+      <button class="btn" onclick="closeM(this)">Cancelar</button>
+      <button class="btn pri">Guardar asiento</button>
+    </footer>
+  </div>
+</div>
+
+<!-- ══════ MODAL · NUEVA DIVISIONARIA ══════ -->
+<div class="ov a-backdrop" id="m-divisionaria">
+  <div class="modal a-pop">
+    <header>
+      <div><h2>Nueva divisionaria</h2><div class="sub">Hija de una cuenta del plan · hereda naturaleza y elemento</div></div>
+      <button class="iconbtn" onclick="closeM(this)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+    </header>
+    <div class="bd">
+      <div class="secbox">
+        <div class="fields">
+          <label class="f"><span class="lb"><span>Cuenta madre</span></span><div class="ct"><select class="inp"><option>1041 · Cuentas corrientes operativas</option><option>4511 · Préstamos de instituciones financieras</option><option>4212 · Facturas por pagar</option></select></div></label>
+          <div class="g2">
+            <label class="f"><span class="lb"><span>Código</span></span><div class="ct"><input class="inp mono" value="1041804"></div></label>
+            <label class="f"><span class="lb"><span>Naturaleza</span><span class="opt">heredada</span></span><div class="ct"><input class="inp ro" value="Activo · deudora"></div></label>
+          </div>
+          <label class="f"><span class="lb"><span>Descripción</span></span><div class="ct"><input class="inp" value="BBVA Dólares · cuenta nueva"></div></label>
+          <label class="ckline"><input type="checkbox" checked> Vincular a una cuenta bancaria (aparece en Bancos y Tesorería)</label>
+          <div class="g2">
+            <label class="f"><span class="lb"><span>Banco</span></span><div class="ct"><select class="inp"><option>BBVA</option><option>BCP</option><option>Banco de la Nación</option></select></div></label>
+            <label class="f"><span class="lb"><span>N° de cuenta</span></span><div class="ct"><input class="inp mono" placeholder="0011-0057-..."></div></label>
+          </div>
+        </div>
+      </div>
+    </div>
+    <footer>
+      <span class="grow"></span>
+      <button class="btn" onclick="closeM(this)">Cancelar</button>
+      <button class="btn pri">Crear divisionaria</button>
+    </footer>
+  </div>
+</div>
+
+<!-- ══════ MODAL · SUBIR DINÁMICA ══════ -->
+<div class="ov a-backdrop" id="m-dinamica">
+  <div class="modal a-pop">
+    <header>
+      <div><h2>Subir dinámica contable</h2><div class="sub">El libro de Kelly · se importan solo las hojas del plan</div></div>
+      <button class="iconbtn" onclick="closeM(this)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+    </header>
+    <div class="bd">
+      <div class="dz"><b>Suelta aquí el Excel de la dinámica</b>se leen código, descripción y naturaleza · lo demás se ignora</div>
+      <div class="inote">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+        <span>Las cuentas existentes no se duplican: se actualiza la descripción y se agregan las nuevas. Las divisionarias creadas a mano se conservan.</span>
+      </div>
+    </div>
+    <footer>
+      <span class="grow"></span>
+      <button class="btn" onclick="closeM(this)">Cancelar</button>
+      <button class="btn pri">Importar</button>
+    </footer>
+  </div>
+</div>
+
+<!-- ══════ MODAL · TXT SIRE ══════ -->
+<div class="ov a-backdrop" id="m-txt">
+  <div class="modal a-pop">
+    <header>
+      <div><h2>Generar TXT para SIRE</h2><div class="sub">Formato RCE/RVIE · listo para cargar en SUNAT</div></div>
+      <button class="iconbtn" onclick="closeM(this)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+    </header>
+    <div class="bd">
+      <div class="secbox">
+        <div class="fields">
+          <div class="g2">
+            <label class="f"><span class="lb"><span>Libro</span></span><div class="ct"><select class="inp"><option>RCE · Registro de compras</option><option>RVIE · Registro de ventas</option></select></div></label>
+            <label class="f"><span class="lb"><span>Período</span></span><div class="ct"><select class="inp"><option>202601</option><option>202512</option></select></div></label>
+          </div>
+          <div class="inote ok">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 6 9 17l-5-5"/></svg>
+            <span>1,576 comprobantes · 0 observados · archivo <b class="mono">LE2061063976420260100080100001111.txt</b></span>
+          </div>
+          <div class="inote warn">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4M12 17h.01"/></svg>
+            <span>3 compras sin cuenta contable asignada: salen en el TXT igual, pero no aparecerán en los reportes por cuenta hasta asignarla.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <footer>
+      <span class="grow"></span>
+      <button class="btn" onclick="closeM(this)">Cancelar</button>
+      <button class="btn pri">Descargar TXT</button>
+    </footer>
+  </div>
+</div>
+
+<!-- ══════ MODAL · BANDEJA CPE ══════ -->
+<div class="ov a-backdrop" id="m-xml">
+  <div class="modal wide a-pop">
+    <header>
+      <div><h2>Bandeja de comprobantes XML</h2><div class="sub">Kelly suelta los XML en masa · el lector UBL 2.1 los clasifica y quedan como borradores para completar cuenta y destino</div></div>
+      <button class="iconbtn" onclick="closeM(this)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+    </header>
+    <div class="bd">
+      <div class="dz"><b>Suelta aquí los XML (facturas, boletas, NC, RxH)</b>varios a la vez · también un ZIP del buzón SOL</div>
+      <div class="secbox">
+        <div class="t">Leídos · 5 archivos</div>
+        <div class="tablewrap" style="border:1px solid var(--line);border-radius:6px">
+          <table>
+            <thead><tr><th>Comprobante</th><th>Emisor</th><th class="r">Total</th><th>Clasificado como</th><th>Falta</th><th></th></tr></thead>
+            <tbody>
+              <tr><td class="mono">01 · E001-702</td><td>IMPORT DINAMIC SAC</td><td class="r mono">4,248.00</td><td><span class="chip red">Borrador de compra</span></td><td class="mono" style="color:var(--warn-ink)">cuenta · destino · detracción</td><td><button class="btn sm pri">Completar</button></td></tr>
+              <tr><td class="mono">01 · FF01-33331</td><td>FERRETERIA ANDREA CRISTINA</td><td class="r mono">3,176.00</td><td><span class="chip red">Borrador de compra</span></td><td class="mono" style="color:var(--warn-ink)">cuenta · destino</td><td><button class="btn sm pri">Completar</button></td></tr>
+              <tr><td class="mono">03 · B002-118203</td><td>SODIMAC PERU SA</td><td class="r mono">385.00</td><td><span class="chip amber">Gasto con boleta</span></td><td class="mono" style="color:var(--warn-ink)">cuenta · sale de</td><td><button class="btn sm pri">Completar</button></td></tr>
+              <tr><td class="mono">07 · E001-10</td><td>DOBLE S CG S.A.C.</td><td class="r mono">−2,520.00</td><td><span class="chip violet">NC · vincula FN01-40974459</span></td><td class="mono" style="color:var(--ok-ink)">nada · lista</td><td><button class="btn sm">Revisar</button></td></tr>
+              <tr><td class="mono">01 · F013-35799</td><td>EKONO DRYWALL SAC</td><td class="r mono">18,880.00</td><td><span class="chip">Duplicado · ya registrada</span></td><td class="mono" style="color:var(--ink-4)">se descarta</td><td><button class="btn sm" disabled>Omitir</button></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="inote" style="margin-top:10px">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+          <span>Facturas → borrador de compra. Boletas → gasto (no entran al RCE, regla de Kelly). NC → se vinculan al documento que modifican. Duplicados (RUC + serie + número) se rechazan. Los borradores quedan en la bandeja hasta que Kelly les asigne cuenta contable.</span>
+        </div>
+      </div>
+    </div>
+    <footer>
+      <span class="hint">5 leídos · 1 duplicado rechazado · 4 borradores pendientes</span>
+      <span class="grow"></span>
+      <button class="btn" onclick="closeM(this)">Cerrar</button>
+      <button class="btn pri">Completar el primero</button>
+    </footer>
+  </div>
+</div>
+
+<script>
+// páginas Finanzas / Contabilidad
+function goPage(p){
+  document.getElementById('page-fin').style.display = p==='fin' ? '' : 'none';
+  document.getElementById('page-conta').style.display = p==='conta' ? '' : 'none';
+  document.getElementById('nav-fin').classList.toggle('on', p==='fin');
+  document.getElementById('nav-conta').classList.toggle('on', p==='conta');
+  document.getElementById('crumb').textContent = p==='fin' ? 'Finanzas' : 'Contabilidad';
+}
+// tabs por página
+document.querySelectorAll('.tabs').forEach(function(nav){
+  nav.querySelectorAll('.tab').forEach(function(b){
+    b.addEventListener('click', function(){
+      nav.querySelectorAll('.tab').forEach(function(x){ x.classList.toggle('on', x===b); });
+      var page = nav.closest('.stack');
+      page.querySelectorAll('.panel').forEach(function(p){
+        var on = p.id === 'p-' + b.dataset.p;
+        p.style.display = on ? 'flex' : 'none';
+        if(on){ p.classList.remove('a-data'); void p.offsetWidth; p.classList.add('a-data'); }
+      });
+    });
+  });
+});
+function openM(id){ document.getElementById(id).classList.add('on'); }
+function closeM(el){ el.closest('.ov').classList.remove('on'); }
+function irA(id){ var el=document.getElementById(id); if(el) el.scrollIntoView({behavior:'smooth',block:'start'}); }
+document.querySelectorAll('.seg').forEach(function(s){
+  s.querySelectorAll('button').forEach(function(b){
+    b.addEventListener('click', function(){ s.querySelectorAll('button').forEach(function(x){ x.classList.toggle('on', x===b); }); });
+  });
+});
+document.querySelectorAll('.lines td.ck input').forEach(function(c){
+  c.addEventListener('change', function(){ c.closest('tr').classList.toggle('inv', c.checked); });
+});
+document.querySelectorAll('.ov').forEach(function(ov){
+  ov.addEventListener('click', function(e){ if(e.target===ov) ov.classList.remove('on'); });
+});
+document.addEventListener('keydown', function(e){
+  if(e.key==='Escape') document.querySelectorAll('.ov.on').forEach(function(o){ o.classList.remove('on'); });
+});
+</script>
+</body>
+</html>
