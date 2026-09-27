@@ -2240,6 +2240,43 @@ export const ocAprobaciones = pgTable(
   }),
 );
 
+// ─── F2.3 · Bandeja CPE · borradores del lector XML (migración 0024) ──
+// Kelly sube XML en masa; cada uno queda como borrador clasificado (factura/boleta/nc/nd/venta)
+// hasta que le asigne cuenta/destino y se registre como compra, o se descarte. Dedup por hash.
+export const cpeBandeja = pgTable(
+  'cpe_bandeja',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    empresaId: integer('empresa_id').notNull().default(1),
+    rol: varchar('rol', { length: 10 }).notNull(), // compra | venta
+    clasificacion: varchar('clasificacion', { length: 12 }).notNull(), // factura | boleta | nc | nd | venta
+    tipoCpe: varchar('tipo_cpe', { length: 4 }),
+    serie: varchar('serie', { length: 10 }),
+    numero: varchar('numero', { length: 20 }),
+    emisorRuc: varchar('emisor_ruc', { length: 15 }),
+    emisorRazon: varchar('emisor_razon', { length: 300 }),
+    clienteRuc: varchar('cliente_ruc', { length: 15 }),
+    fechaEmision: date('fecha_emision'),
+    moneda: varchar('moneda', { length: 3 }).notNull().default('PEN'),
+    total: decimal('total', { precision: 14, scale: 2 }),
+    payload: jsonb('payload').notNull(), // CpeLeido completo
+    detraccionInfo: jsonb('detraccion_info'),
+    estado: varchar('estado', { length: 12 }).notNull().default('pendiente'), // pendiente | registrado | descartado
+    motivo: varchar('motivo', { length: 200 }),
+    gastoId: uuid('gasto_id').references(() => gastos.id, { onDelete: 'set null' }),
+    nombreArchivo: varchar('nombre_archivo', { length: 255 }),
+    hash: varchar('hash', { length: 64 }).notNull().unique(),
+    createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+    updatedAt: timestamp('updated_at'),
+  },
+  (t) => ({
+    estadoIdx: index('cpe_bandeja_estado_idx').on(t.estado, t.rol),
+    docIdx: index('cpe_bandeja_doc_idx').on(t.emisorRuc, t.serie, t.numero),
+  }),
+);
+export type CpeBandeja = typeof cpeBandeja.$inferSelect;
+
 // ─── Correlativos globales (OC, RQ por año) ──────────────────
 export const correlativos = pgTable('correlativos', {
   clave: varchar('clave', { length: 50 }).primaryKey(), // 'OC-2026', 'REQ-2026'

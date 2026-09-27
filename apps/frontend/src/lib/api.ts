@@ -746,6 +746,23 @@ export const api = {
       req<EstadosFinancieros>(`/api/contabilidad/estados-financieros${anio ? `?anio=${anio}${uit ? `&uit=${uit}` : ''}` : ''}`),
   },
 
+  // F2.3 · Bandeja CPE (borradores del lector XML UBL 2.1)
+  cpe: {
+    subirBandeja: async (files: File[]) => {
+      const fd = new FormData();
+      for (const f of files) fd.append('files', f);
+      const res = await fetch(`${API_BASE}/api/cpe/bandeja`, { method: 'POST', credentials: 'include', body: fd });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? 'Error al subir XML');
+      return res.json() as Promise<{ resultados: { archivo: string; estado: string; clasificacion?: string; comprobante?: string; error?: string }[]; resumen: { nuevos: number; rechazados: number } }>;
+    },
+    listBandeja: (rol?: 'compra' | 'venta') =>
+      req<{ borradores: CpeBorrador[] }>(`/api/cpe/bandeja${rol ? `?rol=${rol}` : ''}`),
+    descartar: (id: string, motivo?: string) =>
+      req<{ borrador: CpeBorrador }>(`/api/cpe/bandeja/${id}/descartar`, { method: 'POST', body: JSON.stringify({ motivo }) }),
+    marcarRegistrado: (id: string, gastoId: string) =>
+      req<{ borrador: CpeBorrador }>(`/api/cpe/bandeja/${id}/registrado`, { method: 'POST', body: JSON.stringify({ gastoId }) }),
+  },
+
   // H3 · Conciliación bancaria
   conciliacion: {
     importar: async (file: File, opts: { cuentaId?: string; banco?: string; moneda?: string }) => {
@@ -1837,6 +1854,26 @@ export type GastoInput = {
   prorrateable?: boolean;
   cuentaContable?: string | null; // WS1 · cuenta contable manual (Kelly). CD/GG se deriva de ella.
   cuentaContableOrigen?: 'USUARIO' | 'SUGERIDO' | null;
+  // Fase 1 · extras del alta de compra (gastoCompraSchema): líneas + fechas + tributos
+  fechaVencimiento?: string | null;
+  lineas?: { descripcion: string; unidad?: string | null; cantidad: number; valorUnitario: number; descuento?: number; afectacionIgv?: string; cuentaContable?: string | null; aInventario?: boolean }[];
+  detraccion?: { codigo: string; montoDeclarado?: number | null } | null;
+};
+// F2.3 · borrador de la bandeja CPE
+export type CpeBorrador = {
+  id: string; rol: 'compra' | 'venta'; clasificacion: 'factura' | 'boleta' | 'nc' | 'nd' | 'venta';
+  tipoCpe: string | null; serie: string | null; numero: string | null;
+  emisorRuc: string | null; emisorRazon: string | null; clienteRuc: string | null;
+  fechaEmision: string | null; moneda: string; total: string | null;
+  payload: {
+    fechaVencimiento?: string | null;
+    totales: { valorVenta: number; igv: number; total: number };
+    lineas: { descripcion: string; cantidad: number; unidad: string | null; valorUnitario: number | null; valorVenta: number; igv: number; afectacionIgv: string | null }[];
+    detraccion: { codigo: string; porcentaje: number; monto: number } | null;
+    modifica: { serieNumero: string } | null;
+  };
+  detraccionInfo: unknown; estado: 'pendiente' | 'registrado' | 'descartado'; motivo: string | null;
+  gastoId: string | null; nombreArchivo: string | null; createdAt: string;
 };
 // WS1 · fila del autocomplete de plan contable (GET /contabilidad/plan?q=)
 export type PlanCuentaBusqueda = { codigo: string; descripcion: string; tipo: string; nivel: number; esDivisionaria: boolean; empresaId: number | null; activa: boolean; clasificable: boolean | null; claseObra: 'CD' | 'GG_OBRA' | null };

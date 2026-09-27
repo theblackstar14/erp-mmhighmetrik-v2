@@ -550,8 +550,10 @@ router.get('/movimientos', async (req, res) => {
   const { proyectoId } = req.query as { proyectoId?: string };
   const list = await db.select().from(schema.movimientos).where(proyectoId ? eq(schema.movimientos.proyectoId, proyectoId) : undefined).orderBy(desc(schema.movimientos.fecha));
   const pm = await proyectoMap();
-  const ingresos = list.filter((m) => m.tipoMovimiento === 'Ingreso').reduce((s, m) => s + Number(m.monto), 0);
-  const egresos = list.filter((m) => m.tipoMovimiento === 'Egreso').reduce((s, m) => s + Number(m.monto), 0);
+  // los anulados se listan (historial) pero NO cuentan en los totales
+  const vivos = list.filter((m) => !m.anulado);
+  const ingresos = vivos.filter((m) => m.tipoMovimiento === 'Ingreso').reduce((s, m) => s + Number(m.monto), 0);
+  const egresos = vivos.filter((m) => m.tipoMovimiento === 'Egreso').reduce((s, m) => s + Number(m.monto), 0);
   res.json({ movimientos: list.map((m) => ({ ...m, proyectoCodigo: m.proyectoId ? pm.get(m.proyectoId)?.codigo ?? null : null })), stats: { count: list.length, ingresos, egresos, neto: ingresos - egresos } });
 });
 router.post('/movimientos', async (req, res) => {

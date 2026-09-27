@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { Suspense, lazy, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { type FinanzasResumen, type MovimientoInput, type GastoInput, type ConciliacionResumen, type PartidaConcil, type PlanCuentaBusqueda, api } from '@/lib/api.js';
+import { type FinanzasResumen, type MovimientoInput, type GastoInput, type ConciliacionResumen, type PartidaConcil, type PlanCuentaBusqueda, type CpeBorrador, api } from '@/lib/api.js';
 import { cn, fmtPEN } from '@/lib/utils.js';
 import { CuentaContableSelect, claseDerivadaUI } from '@/components/contabilidad/CuentaContableSelect.js';
 import { invalidateResumen } from '@/lib/invalidate.js';
@@ -591,9 +591,9 @@ function GlobalLedger({ proyectoId, proyectos, kind }: { proyectoId: string; pro
                     const ing = m.tipoMovimiento === 'Ingreso';
                     const comp = [m.serie, m.numero].filter(Boolean).join('-');
                     return (
-                      <tr key={m.id} className="border-b border-line hover:bg-bg-sunken/30">
+                      <tr key={m.id} className={cn('border-b border-line hover:bg-bg-sunken/30', m.anulado && 'opacity-50 line-through')}>
                         <td className="px-3 py-1.5 text-[11px] font-mono tabular-nums whitespace-nowrap">{m.fecha}</td>
-                        <td className="px-3 py-1.5"><span className={cn('inline-flex items-center gap-0.5 text-[10.5px] font-medium px-1.5 py-0.5 rounded', ing ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700')}>{ing ? 'Ingreso' : 'Egreso'}</span></td>
+                        <td className="px-3 py-1.5"><span className={cn('inline-flex items-center gap-0.5 text-[10.5px] font-medium px-1.5 py-0.5 rounded', m.anulado ? 'bg-bg-sunken text-ink-4' : ing ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700')}>{m.anulado ? 'Anulado' : ing ? 'Ingreso' : 'Egreso'}</span></td>
                         <td className="px-3 py-1.5 text-[11px] text-ink-3 whitespace-nowrap">{comp || '—'}</td>
                         <td className="px-3 py-1.5 text-[11.5px] max-w-[240px] truncate">{m.descripcion ?? '—'}<div className="text-[10px] text-ink-4">{m.fuenteMovimiento ?? ''}</div></td>
                         <td className="px-3 py-1.5 text-[11.5px] text-ink-3 max-w-[150px] truncate">{m.clienteNombre ?? '—'}</td>
@@ -708,18 +708,199 @@ function SegTabs<T extends string>({ value, onChange, opts }: { value: T; onChan
   );
 }
 
-// ─── Tab Compras · segmentos: Registro · Órdenes por aprobar/pagar (+ Bandeja CPE en F2.3) ──
+// ─── Tab Compras · segmentos: Registro · Órdenes por aprobar/pagar · Bandeja CPE (F2.3) ──
 function ComprasHub({ proyectoId, proyectos }: { proyectoId: string; proyectos: { id: string; codigo: string; nombre: string }[] }) {
-  const [vista, setVista] = useState<'registro' | 'ordenes'>('registro');
+  const [vista, setVista] = useState<'registro' | 'ordenes' | 'bandeja'>('registro');
+  const bandejaQ = useQuery({ queryKey: ['cpe-bandeja', 'compra'], queryFn: () => api.cpe.listBandeja('compra') });
+  const pendientes = bandejaQ.data?.borradores.length ?? 0;
   return (
     <div className="space-y-3">
       <SegTabs value={vista} onChange={setVista} opts={[
         { v: 'registro', l: 'Registro' },
         { v: 'ordenes', l: 'Órdenes por aprobar/pagar' },
+        { v: 'bandeja', l: 'Bandeja CPE', n: pendientes },
       ] as const} />
       {vista === 'registro' && <GlobalLedger proyectoId={proyectoId} proyectos={proyectos} kind="gastos" />}
       {vista === 'ordenes' && <FinanzasOcQueue proyectoId={proyectoId} />}
+      {vista === 'bandeja' && <BandejaCpeView proyectos={proyectos} />}
     </div>
+  );
+}
+
+// ─── F2.3 · Bandeja CPE · XML masivo → borradores → completar (cuenta + destino) o descartar ──
+const TIPO_CPE_LABEL: Record<string, string> = { '01': 'Factura', '03': 'Boleta', '07': 'Nota de Crédito', '08': 'Nota de Débito' };
+const CLASIF_CHIP: Record<string, { l: string; c: string }> = {
+  factura: { l: 'Borrador de compra', c: 'bg-red-50 text-red-700' },
+  boleta: { l: 'Gasto con boleta · no entra al RCE', c: 'bg-amber-50 text-amber-700' },
+  nc: { l: 'Nota de crédito', c: 'bg-violet-50 text-violet-700' },
+  nd: { l: 'Nota de débito', c: 'bg-violet-50 text-violet-700' },
+  venta: { l: 'Venta · llega con F3.1', c: 'bg-bg-sunken text-ink-3' },
+};
+
+function BandejaCpeView({ proyectos }: { proyectos: { id: string; codigo: string; nombre: string }[] }) {
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ['cpe-bandeja', 'compra'], queryFn: () => api.cpe.listBandeja('compra') });
+  const borradores = q.data?.borradores ?? [];
+  const [subiendo, setSubiendo] = useState(false);
+  const [resultado, setResultado] = useState<string | null>(null);
+  const [completar, setCompletar] = useState<CpeBorrador | null>(null);
+  const inval = () => { qc.invalidateQueries({ queryKey: ['cpe-bandeja'] }); qc.invalidateQueries({ queryKey: ['gas-global'] }); };
+  const subir = async (files: FileList | null) => {
+    if (!files?.length) return;
+    setSubiendo(true); setResultado(null);
+    try {
+      const r = await api.cpe.subirBandeja([...files]);
+      const detalles = r.resultados.filter((x) => x.estado !== 'nuevo').map((x) => `${x.archivo}: ${x.estado}${x.error ? ` (${x.error})` : ''}`);
+      setResultado(`${r.resumen.nuevos} nuevo(s) en bandeja${r.resumen.rechazados ? ` · ${r.resumen.rechazados} no entraron: ${detalles.join(' · ')}` : ''}`);
+      inval();
+    } catch (e) {
+      setResultado((e as Error).message);
+    } finally {
+      setSubiendo(false);
+    }
+  };
+  const descartar = useMutation({
+    mutationFn: (id: string) => api.cpe.descartar(id),
+    onSuccess: () => inval(),
+  });
+  return (
+    <div className="space-y-3">
+      <label className={cn('block rounded-lg border-2 border-dashed border-line-strong bg-bg-sunken px-4 py-6 text-center cursor-pointer hover:bg-bg-elev transition-colors', subiendo && 'opacity-60 pointer-events-none')}>
+        <input type="file" accept=".xml" multiple className="hidden" onChange={(e) => { subir(e.target.files); e.target.value = ''; }} />
+        <div className="text-[13px] font-semibold">{subiendo ? 'Leyendo XML…' : 'Suelta aquí los XML o haz click para elegirlos'}</div>
+        <div className="text-[11.5px] text-ink-3 mt-0.5">Facturas → borrador de compra · Boletas → gasto (no entran al RCE) · NC → vincula el documento · duplicados se rechazan</div>
+      </label>
+      {resultado && <div className="rounded-md border border-line bg-bg-elev px-3 py-2 text-[11.5px] text-ink-2">{resultado}</div>}
+      <div className="rounded-lg border border-line bg-bg-elev overflow-hidden">
+        <div className="flex items-center gap-2 border-b border-line px-3 py-2.5">
+          <h3 className="text-[13px] font-semibold">Borradores pendientes <span className="text-ink-4 font-normal">{borradores.length}</span></h3>
+        </div>
+        {q.isLoading ? <SkelRows rows={4} />
+          : borradores.length === 0 ? <div className="text-center py-8 text-[12px] text-ink-3">Bandeja vacía · sube los XML del buzón SOL o del proveedor</div>
+          : (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead><tr className="border-b border-line bg-bg-sunken">{['Comprobante', 'Emisor', 'Emisión', 'Total', 'Detracción', 'Clasificación', ''].map((h, i) => <th key={i} className={cn('px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-ink-4', i === 3 || i === 4 ? 'text-right' : 'text-left')}>{h}</th>)}</tr></thead>
+              <tbody>
+                {borradores.map((b) => (
+                  <tr key={b.id} className="border-b border-line hover:bg-bg-sunken/30">
+                    <td className="px-3 py-1.5 text-[11px] font-mono whitespace-nowrap">{TIPO_CPE_LABEL[b.tipoCpe ?? ''] ?? b.tipoCpe} {[b.serie, b.numero].filter(Boolean).join('-')}</td>
+                    <td className="px-3 py-1.5 text-[11.5px] max-w-[220px] truncate">{b.emisorRazon ?? b.emisorRuc ?? '—'}<div className="font-mono text-[10px] text-ink-4">{b.emisorRuc ?? ''}</div></td>
+                    <td className="px-3 py-1.5 text-[11px] font-mono tabular-nums whitespace-nowrap">{b.fechaEmision ?? '—'}</td>
+                    <td className="px-3 py-1.5 text-[11px] font-mono tabular-nums text-right font-semibold">{b.total != null ? fmtPEN(Number(b.total)) : '—'} <span className="text-[9.5px] text-ink-4">{b.moneda !== 'PEN' ? b.moneda : ''}</span></td>
+                    <td className="px-3 py-1.5 text-[11px] font-mono tabular-nums text-right text-amber-700">{b.payload.detraccion ? fmtPEN(b.payload.detraccion.monto) : '—'}</td>
+                    <td className="px-3 py-1.5"><span className={cn('text-[10.5px] font-medium px-1.5 py-0.5 rounded', CLASIF_CHIP[b.clasificacion]?.c)}>{CLASIF_CHIP[b.clasificacion]?.l ?? b.clasificacion}</span></td>
+                    <td className="px-3 py-1.5 whitespace-nowrap text-right">
+                      <button onClick={() => setCompletar(b)} className="h-7 px-2.5 rounded-md bg-primary text-primary-foreground text-[11px] font-medium hover:opacity-90 mr-1.5">Completar</button>
+                      <button onClick={() => { if (confirm(`¿Descartar ${b.serie}-${b.numero}?`)) descartar.mutate(b.id); }} className="h-7 px-2 rounded-md border border-line text-[11px] text-ink-3 hover:bg-bg-sunken">Descartar</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+      {completar && <CompletarCpeModal borrador={completar} proyectos={proyectos} onClose={() => setCompletar(null)} onDone={() => { setCompletar(null); inval(); }} />}
+    </div>
+  );
+}
+
+// ─── F2.3 · Completar borrador CPE → compra registrada (cuenta manual de Kelly + destino) ──
+function CompletarCpeModal({ borrador: b, proyectos, onClose, onDone }: { borrador: CpeBorrador; proyectos: { id: string; codigo: string; nombre: string }[]; onClose: () => void; onDone: () => void }) {
+  const [proyectoId, setProyectoId] = useState('');
+  const [tipoGasto, setTipoGasto] = useState('Compra Materiales');
+  const [cuenta, setCuenta] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const p = b.payload;
+  const registrar = useMutation({
+    mutationFn: async () => {
+      const { gasto } = await api.finanzas.createGastoGlobal({
+        fecha: b.fechaEmision ?? new Date().toISOString().slice(0, 10),
+        proyectoId: proyectoId || null,
+        proveedorRuc: b.emisorRuc, proveedorRazon: b.emisorRazon,
+        tipoComprobante: TIPO_CPE_LABEL[b.tipoCpe ?? ''] ?? 'Factura',
+        serie: b.serie, numero: b.numero, moneda: b.moneda,
+        subtotal: p.totales.valorVenta, igv: p.totales.igv, total: b.clasificacion === 'nc' ? -Math.abs(p.totales.total) : p.totales.total,
+        tipoGasto, destino: proyectoId ? 'proyecto' : 'corporativo',
+        cuentaContable: cuenta, cuentaContableOrigen: cuenta ? 'USUARIO' : null,
+        fechaVencimiento: p.fechaVencimiento ?? null,
+        lineas: p.lineas.length
+          ? p.lineas.map((l) => ({
+              descripcion: l.descripcion, unidad: l.unidad, cantidad: l.cantidad || 1,
+              valorUnitario: l.valorUnitario ?? (l.cantidad ? l.valorVenta / l.cantidad : l.valorVenta),
+              afectacionIgv: l.afectacionIgv ?? '10', cuentaContable: cuenta,
+            }))
+          : undefined,
+        detraccion: p.detraccion ? { codigo: p.detraccion.codigo, montoDeclarado: p.detraccion.monto } : null,
+        ...(b.clasificacion === 'nc' && p.modifica ? { docModifica: { serie: p.modifica.serieNumero.split('-')[0] ?? '', numero: p.modifica.serieNumero.split('-').slice(1).join('-') } } : {}),
+      } as GastoInput & { proyectoId?: string | null; docModifica?: { serie: string; numero: string } });
+      if (gasto) await api.cpe.marcarRegistrado(b.id, gasto.id);
+    },
+    onSuccess: onDone,
+    onError: (e: Error) => setError(e.message),
+  });
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 animate-backdropIn" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="w-full max-w-xl max-h-[88vh] overflow-hidden rounded-xl border border-line bg-bg-elev shadow-2xl flex flex-col animate-modalPop">
+        <div className="shrink-0 flex items-center justify-between border-b border-line px-5 py-3.5">
+          <div>
+            <h2 className="text-[15px] font-bold">Completar {TIPO_CPE_LABEL[b.tipoCpe ?? ''] ?? 'CPE'} {b.serie}-{b.numero}</h2>
+            <p className="text-[11px] text-ink-4">{b.emisorRazon ?? b.emisorRuc} · {fmtPEN(Number(b.total ?? 0))} · {p.lineas.length} línea(s) del XML</p>
+          </div>
+          <button onClick={onClose} className="h-8 w-8 rounded-md inline-flex items-center justify-center text-ink-3 hover:bg-bg-sunken"><X className="h-4 w-4" /></button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-5 space-y-3.5 bg-bg-sunken/40">
+          <SecBox title="Lo que Kelly asigna · el resto viene del XML">
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Proyecto / destino">
+                <select className="h-9 w-full px-2.5 rounded-md border border-line bg-bg-elev text-[12px]" value={proyectoId} onChange={(e) => setProyectoId(e.target.value)}>
+                  <option value="">Oficina / general</option>
+                  {proyectos.map((pr) => <option key={pr.id} value={pr.id}>{pr.codigo} · {pr.nombre.slice(0, 38)}</option>)}
+                </select>
+              </Field>
+              <Field label="Tipo de gasto">
+                <select className="h-9 w-full px-2.5 rounded-md border border-line bg-bg-elev text-[12px]" value={tipoGasto} onChange={(e) => setTipoGasto(e.target.value)}>
+                  {TIPOS_GASTO.map((t) => <option key={t}>{t}</option>)}
+                </select>
+              </Field>
+            </div>
+            <Field label="Cuenta contable · manual">
+              <CuentaContableSelect value={cuenta} onChange={(cod) => setCuenta(cod)} />
+            </Field>
+            {p.detraccion && <div className="text-[11.5px] text-amber-700">Detracción {p.detraccion.codigo} · {p.detraccion.porcentaje}% = {fmtPEN(p.detraccion.monto)} (leída del XML · la constancia se completa en la compra)</div>}
+            {b.clasificacion === 'boleta' && <div className="text-[11.5px] text-amber-700">Boleta: se registra como gasto, no entra al Registro de Compras ni da crédito fiscal.</div>}
+            {b.clasificacion === 'nc' && p.modifica && <div className="text-[11.5px] text-violet-600">Nota de crédito de {p.modifica.serieNumero}: al registrarla devuelve el saldo a esa factura.</div>}
+          </SecBox>
+          <SecBox title={`Detalle del XML · ${p.lineas.length} línea(s)`}>
+            <div className="max-h-44 overflow-y-auto rounded-md border border-line">
+              <table className="w-full">
+                <tbody>
+                  {p.lineas.slice(0, 30).map((l, i) => (
+                    <tr key={i} className="border-b border-line last:border-0">
+                      <td className="px-2.5 py-1 text-[11px] max-w-[260px] truncate">{l.descripcion}</td>
+                      <td className="px-2.5 py-1 text-[10.5px] font-mono text-ink-3 text-right whitespace-nowrap">{l.cantidad} {l.unidad ?? ''}</td>
+                      <td className="px-2.5 py-1 text-[11px] font-mono tabular-nums text-right">{fmtPEN(l.valorVenta)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </SecBox>
+        </div>
+        <div className="shrink-0 border-t border-line bg-bg-elev px-5 py-3">
+          {error && <div className="mb-2 rounded-md border border-destructive/30 bg-destructive-soft px-3 py-1.5 text-[11.5px] text-destructive">{error}</div>}
+          <div className="flex items-center gap-3">
+            <span className="text-[11px] text-ink-3 mr-auto">Se registra: compra con {p.lineas.length || 1} línea(s), CxP{p.detraccion ? ' y detracción' : ''}.</span>
+            <button onClick={onClose} className="h-9 px-4 rounded-md border border-line text-[12px] hover:bg-bg-sunken">Cancelar</button>
+            <button disabled={registrar.isPending} onClick={() => { setError(null); registrar.mutate(); }} className="inline-flex items-center gap-1.5 h-9 px-4 rounded-md bg-primary text-primary-foreground text-[12px] font-medium hover:opacity-90 disabled:opacity-50">
+              <Check className="h-3.5 w-3.5" /> {registrar.isPending ? 'Registrando…' : 'Registrar compra'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 
