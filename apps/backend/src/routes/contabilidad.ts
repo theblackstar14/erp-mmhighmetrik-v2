@@ -794,6 +794,8 @@ router.post('/generar', async (req, res) => {
   const corrPref = `AS-${periodo.replace('-', '')}-`;
   const corrRows = await db.select({ c: schema.asientos.correlativo }).from(schema.asientos).where(dsql`${schema.asientos.correlativo} LIKE ${corrPref + '%'}`);
   let corrN = corrRows.reduce((m, r) => Math.max(m, Number(r.c.slice(corrPref.length)) || 0), 0);
+  // F1.1 · retención de garantía segregada: asegura la divisionaria 12122 (hija de 1212) · idempotente
+  await db.insert(schema.planContable).values({ codigo: '12122', descripcion: 'Retención de garantía por cobrar', tipo: 'activo', parentCodigo: '1212', nivel: 4, esDivisionaria: true }).onConflictDoNothing();
   const planCodes = new Set((await db.select({ codigo: schema.planContable.codigo }).from(schema.planContable)).map((r) => r.codigo));
   const derivarCtx = await cargarDerivarCtx(); // WS1 · preload clasificable+mapa 1 vez (deriva clase sin N queries)
   const asientoBase = { nextCorrelativo: () => `${corrPref}${String(++corrN).padStart(4, '0')}`, skipPeriodoCheck: true as const, validCuentas: planCodes, userId: req.user!.id, derivarCtx };
@@ -877,6 +879,8 @@ router.post('/generar', async (req, res) => {
         const sinIgv = Number(v.montoCd);
         const igv = Number(v.montoIgv);
         const total = Number(v.montoTotalConIgv ?? v.montoTotal);
+        // F1.1 · la retención de garantía nace segregada en 12122; la 1212 queda solo con lo exigible.
+        const retGar = Math.min(Math.max(Number(v.montoRetencion ?? 0), 0), total);
         await gen({
           fecha: String(v.fechaEmision),
           glosa: `Valorización N°${v.numero} devengada`,
@@ -884,7 +888,8 @@ router.post('/generar', async (req, res) => {
           origenId: v.id,
           proyectoId: v.proyectoId,
           lineas: [
-            { cuenta: '1212', descripcion: `Val N°${v.numero}`, debe: total, haber: 0, obraId: null },
+            { cuenta: '1212', descripcion: `Val N°${v.numero}`, debe: total - retGar, haber: 0, obraId: null },
+            { cuenta: '12122', descripcion: `Retención garantía Val N°${v.numero}`, debe: retGar, haber: 0, obraId: null },
             // WS1 · cuenta de ingreso: la que Kelly confirmó (default fuerte 7041). Deriva clase (70x → null).
             {
               cuenta: v.cuentaContable ?? '7041', descripcion: 'Servicios de construcción', debe: 0, haber: sinIgv,
@@ -903,7 +908,9 @@ router.post('/generar', async (req, res) => {
     // usa la fecha real de cobro · la sutileza emisión-vs-cobro se valida en el parallel-run/reporte sombra).
     if (v.status === 'cobrada' && !yaSet.has(`cobro_valo:${v.id}`) && legacyOwns(String(v.fechaEmision).slice(0, 10))) {
       try {
-        const total = Number(v.totalContratista ?? v.montoTotalConIgv ?? v.montoTotal);
+        // F1.1 · sin totalContratista el fallback resta la retención: el cliente nunca paga la garantía
+        // en el cobro normal, y acreditar el bruto sobre-cancelaba la 1212.
+        const total = Number(v.totalContratista ?? (Number(v.montoTotalConIgv ?? v.montoTotal) - Math.min(Math.max(Number(v.montoRetencion ?? 0), 0), Number(v.montoTotalConIgv ?? v.montoTotal))));
         await gen({
           fecha: String(v.fechaEmision),
           glosa: `Cobro valorización N°${v.numero}`,
@@ -1011,6 +1018,8 @@ router.post('/generar', async (req, res) => {
     } else {
       const nat = (m.naturalezaContable ?? '') as NaturalezaContable;
       // contrapartida: doc-link la infiere (pago→4212 · cobro→1212); suelta usa el catálogo; fallback 759/659
+      // F1.1 · liberación de retención de garantía: Kelly registra el cobro final con cuenta manual 12122
+      // (m.cuentaContable manda sobre la inferida, abajo) — el motor no puede distinguirlo solo.
       let contra = m.ordenCompraId ? '4212' : m.valorizacionId ? '1212' : (nat in NATURALEZAS_CONTABLES ? cuentaDeNaturaleza(nat) : null);
       if (!contra) contra = m.tipoMovimiento === 'Ingreso' ? '759' : '659';
       // WS1 · Kelly puede fijar la cuenta contra manual → manda sobre la inferida.

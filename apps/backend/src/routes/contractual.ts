@@ -285,7 +285,7 @@ const num = (x: unknown) => Number(x ?? 0);
 
 // Rollup del saldo final desde valos + conciliación con el libro (detecta retención sin segregar).
 async function buildLiquidacion(proyectoId: string) {
-  const [vals, adelantos, ledger] = await Promise.all([
+  const [vals, adelantos, ledger, ledgerGar] = await Promise.all([
     db.select().from(schema.valorizaciones).where(eq(schema.valorizaciones.proyectoId, proyectoId)),
     db.select().from(schema.adelantos).where(eq(schema.adelantos.proyectoId, proyectoId)),
     db
@@ -293,6 +293,12 @@ async function buildLiquidacion(proyectoId: string) {
       .from(schema.asientosLineas)
       .innerJoin(schema.asientos, eq(schema.asientosLineas.asientoId, schema.asientos.id))
       .where(and(eq(schema.asientos.proyectoId, proyectoId), sql`${schema.asientosLineas.cuenta} LIKE '1212%'`)),
+    // F1.1 · saldo de la subcuenta de garantía (12122) · si >0, el motor ya segrega
+    db
+      .select({ debe: sql<string>`COALESCE(SUM(${schema.asientosLineas.debe}),0)`, haber: sql<string>`COALESCE(SUM(${schema.asientosLineas.haber}),0)` })
+      .from(schema.asientosLineas)
+      .innerJoin(schema.asientos, eq(schema.asientosLineas.asientoId, schema.asientos.id))
+      .where(and(eq(schema.asientos.proyectoId, proyectoId), eq(schema.asientosLineas.cuenta, '12122'))),
   ]);
 
   // Base CAJA con-IGV consistente. montoTotalConIgv ya está NETO de deducciones+amortización (aguas arriba
@@ -313,7 +319,9 @@ async function buildLiquidacion(proyectoId: string) {
   // Saldo por cobrar (+) al contratista / por pagar (−) a la entidad. Incluye la retención pendiente.
   const saldoFinal = facturadoConIgv - cobrado;
 
-  const saldo1212 = num(ledger[0]?.debe) - num(ledger[0]?.haber);
+  const saldo1212 = num(ledger[0]?.debe) - num(ledger[0]?.haber); // LIKE 1212% → incluye la 12122 (CxC total)
+  const saldoGarantia = num(ledgerGar[0]?.debe) - num(ledgerGar[0]?.haber); // solo 12122
+  const segrega = num(ledgerGar[0]?.debe) > 0;
 
   return {
     componentes: { facturadoConIgv: round(facturadoConIgv), valorizadoSinIgv: round(valorizadoSinIgv), reajustes: round(reajustes), deducciones: round(deducciones), multas: round(multas), amortizAdelantos: round(amortizAdelantos), retencionAcum: round(retencionAcum), cobrado: round(cobrado) },
@@ -321,10 +329,13 @@ async function buildLiquidacion(proyectoId: string) {
     conciliacion: {
       valorizadoBrutoIgv: round(facturadoConIgv),
       saldo1212: round(saldo1212),
-      retencionMezclada: round(retencionAcum),
+      retencionMezclada: segrega ? 0 : round(retencionAcum),
+      saldoGarantia12122: round(saldoGarantia),
       porCobrarNeto: round(saldoFinal),
-      motorSegregaRetencion: false,
-      nota: 'Retención hoy mezclada dentro del 1212; Fase 2 la segrega en subcuenta garantía. Sin asientos de liquidación aún.',
+      motorSegregaRetencion: segrega,
+      nota: segrega
+        ? 'Retención segregada en la 12122 desde el devengo (F1.1). Asientos previos al fix mantienen la retención dentro de la 1212: regenerar el período si se necesita el desglose retroactivo.'
+        : 'Sin líneas 12122 aún para esta obra: asientos generados antes del fix F1.1 (retención dentro de la 1212) o sin retención. Regenerar el período aplica la segregación.',
     },
     valos: vals.length,
     valosCobradas: vals.filter((v) => v.status === 'cobrada').length,
