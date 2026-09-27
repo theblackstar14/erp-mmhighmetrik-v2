@@ -817,9 +817,67 @@ router.get('/finanzas/resumen', async (req, res) => {
   const codigoOf = (id: string | null) => (id ? pm.get(id)?.codigo ?? null : null);
   const nombreOf = (id: string | null) => (id ? pm.get(id)?.nombre ?? null : null);
 
+  // ── Resumen v2 · inbox de acción + proyección de caja + aging + utilidad por proyecto ──
+  // Empresa-wide (como tesorería): las decisiones del día no se filtran por obra.
+  const hoy = new Date().toISOString().slice(0, 10);
+  const dp = schema.documentoPendiente;
+  const VALO_DEV = ['aprobada', 'conformidad_supervision', 'facturada', 'cobrada'];
+  const [docsAbiertos, detrPend, valosSinCpe, bandejaN, concilN, gastadoPorObra] = await Promise.all([
+    db.select({ tipo: dp.tipo, saldo: dp.saldoPendiente, fechaVenc: dp.fechaVenc, terceroRazon: dp.terceroRazon, docSerie: dp.docSerie, docNumero: dp.docNumero })
+      .from(dp).where(inArray(dp.estado, ['abierto', 'parcial'])),
+    db.select({ monto: schema.detraccionDocumento.monto, docOrigenId: schema.detraccionDocumento.docOrigenId })
+      .from(schema.detraccionDocumento).where(eq(schema.detraccionDocumento.estado, 'pendiente')),
+    db.select({ id: schema.valorizaciones.id, numero: schema.valorizaciones.numero, proyectoId: schema.valorizaciones.proyectoId })
+      .from(schema.valorizaciones)
+      .where(and(inArray(schema.valorizaciones.status, VALO_DEV), isNull(schema.valorizaciones.comprobanteSerie))),
+    db.select({ n: sql<number>`count(*)::int` }).from(schema.cpeBandeja).where(eq(schema.cpeBandeja.estado, 'pendiente')),
+    db.select({ n: sql<number>`count(*)::int` }).from(schema.extractoLineas).where(eq(schema.extractoLineas.estado, 'pendiente')),
+    db.select({ proyectoId: schema.gastos.proyectoId, gastado: sql<number>`coalesce(sum(${schema.gastos.subtotal}),0)::float8` })
+      .from(schema.gastos).where(sql`${schema.gastos.proyectoId} IS NOT NULL`).groupBy(schema.gastos.proyectoId),
+  ]);
+  const sumBy = (rows: typeof docsAbiertos, f: (r: (typeof docsAbiertos)[number]) => boolean) =>
+    rows.filter(f).reduce((s, r) => s + Number(r.saldo), 0);
+  const enDias = (venc: string | null, d: number) => venc != null && venc <= new Date(Date.now() + d * 86400000).toISOString().slice(0, 10);
+  const vencida = (venc: string | null) => venc != null && venc < hoy;
+  const bucket = (tipo: 'cxp' | 'cxc') => {
+    const rows = docsAbiertos.filter((r) => r.tipo === tipo);
+    const corriente = sumBy(rows, (r) => !vencida(r.fechaVenc));
+    const v30 = sumBy(rows, (r) => vencida(r.fechaVenc) && enDias(r.fechaVenc, -0) && !((r.fechaVenc ?? '') < new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10)));
+    const mas30 = sumBy(rows, (r) => (r.fechaVenc ?? '') < new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10) && r.fechaVenc != null);
+    return { corriente, v30, mas30, total: corriente + v30 + mas30 };
+  };
+  const cxpPorVencer7 = docsAbiertos.filter((r) => r.tipo === 'cxp' && !vencida(r.fechaVenc) && enDias(r.fechaVenc, 7));
+  const resumenV2 = {
+    accion: {
+      detraccionesPendientes: { n: detrPend.length, monto: detrPend.reduce((s, x) => s + Number(x.monto), 0) },
+      cxpPorVencer7: {
+        n: cxpPorVencer7.length,
+        monto: cxpPorVencer7.reduce((s, r) => s + Number(r.saldo), 0),
+        items: cxpPorVencer7.slice(0, 3).map((r) => ({ tercero: r.terceroRazon, doc: [r.docSerie, r.docNumero].filter(Boolean).join('-'), saldo: Number(r.saldo), vence: r.fechaVenc })),
+      },
+      valosSinComprobante: { n: valosSinCpe.length, items: valosSinCpe.slice(0, 4).map((v) => ({ numero: v.numero, proyectoCodigo: codigoOf(v.proyectoId) })) },
+      bandejaCpe: bandejaN[0]?.n ?? 0,
+      conciliacionPendiente: concilN[0]?.n ?? 0,
+    },
+    proyeccion: {
+      hoy: 0 as number, // se completa abajo con totalCaja
+      d30: { cobros: sumBy(docsAbiertos, (r) => r.tipo === 'cxc' && enDias(r.fechaVenc, 30)), pagos: sumBy(docsAbiertos, (r) => r.tipo === 'cxp' && enDias(r.fechaVenc, 30)) },
+      d60: { cobros: sumBy(docsAbiertos, (r) => r.tipo === 'cxc' && enDias(r.fechaVenc, 60)), pagos: sumBy(docsAbiertos, (r) => r.tipo === 'cxp' && enDias(r.fechaVenc, 60)) },
+    },
+    aging: { cxc: bucket('cxc'), cxp: bucket('cxp') },
+    utilidadPorProyecto: valos.length || gastadoPorObra.length
+      ? [...new Set([...valos.map((v) => v.proyectoId), ...gastadoPorObra.map((g) => g.proyectoId!)])].map((pid) => {
+          const valorizado = valos.filter((v) => v.proyectoId === pid && VALO_DEV.includes(v.status)).reduce((s, v) => s + Number(v.montoCd), 0);
+          const gastado = Number(gastadoPorObra.find((g) => g.proyectoId === pid)?.gastado ?? 0);
+          return { proyectoId: pid, proyectoCodigo: codigoOf(pid), proyectoNombre: nombreOf(pid), valorizado, gastado, margenPct: valorizado > 0 ? (valorizado - gastado) / valorizado : null };
+        }).filter((x) => x.valorizado > 0 || x.gastado > 0).sort((a, b) => b.valorizado - a.valorizado).slice(0, 5)
+      : [],
+  };
+
   res.json({
     mesActual,
     gastosOficina,
+    resumenV2: { ...resumenV2, proyeccion: { ...resumenV2.proyeccion, hoy: totalCaja } },
     kpis: {
       ingresosMes: mesData.ingresos,
       egresosMes: mesData.egresos,

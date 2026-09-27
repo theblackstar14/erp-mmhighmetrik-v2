@@ -22,7 +22,6 @@ import { invalidateResumen } from '@/lib/invalidate.js';
 import { NATURALEZAS_CONTABLES } from '@erp/shared';
 import { FinanzasTab } from '@/components/proyectos/tabs/FinanzasTab.js';
 
-import { FinanzasOcQueue } from '@/components/finanzas/FinanzasOcQueue.js';
 import { Skel, SkelCards, SkelRows, TabFade } from '@/components/ui/Skeleton.js';
 import { EmittingOverlay } from '@/components/ui/EmittingOverlay.js';
 
@@ -41,7 +40,9 @@ const mesLabel = (m: string | null) => {
 export function FinanzasPage() {
   const [filtro, setFiltro] = useState<string>('todos');
   const [sub, setSub] = useState<Sub>('resumen');
+  const [hubVista, setHubVista] = useState<string | null>(null); // deep-link del inbox al segmento de un hub
   const [movOpen, setMovOpen] = useState(false);
+  const onJump = (s: Sub, vista?: string) => { setSub(s); setHubVista(vista ?? null); };
 
   const proyectosQ = useQuery({ queryKey: ['proyectos-list'], queryFn: () => api.proyectos.list() });
   const proyectos = proyectosQ.data?.proyectos ?? [];
@@ -111,7 +112,7 @@ export function FinanzasPage() {
       <TabFade tabKey={sub}>
         {sub === 'resumen' && (
           <div className="space-y-5">
-            <ResumenView r={r} loading={resumenQ.isLoading} />
+            <ResumenView r={r} loading={resumenQ.isLoading} onJump={onJump} />
             {/* Flujo de caja absorbido: era una tab entera, ahora es la sección gráfica del resumen */}
             <div>
               <h2 className="text-[13px] font-semibold mb-2">Flujo de caja</h2>
@@ -121,11 +122,11 @@ export function FinanzasPage() {
             </div>
           </div>
         )}
-        {sub === 'compras' && <ComprasHub proyectoId={filtro} proyectos={proyectos} />}
+        {sub === 'compras' && <ComprasHub key={hubVista ?? ''} proyectoId={filtro} proyectos={proyectos} initialVista={hubVista === 'bandeja' ? 'bandeja' : 'registro'} />}
         {sub === 'ventas' && <VentasView proyectoId={filtro} />}
         {sub === 'caja' && <CajaBancosHub proyectoId={filtro} proyectos={proyectos} />}
         {sub === 'conciliacion' && <ConciliacionView />}
-        {sub === 'reportes' && <ReportesView />}
+        {sub === 'reportes' && <ReportesView r={r} />}
       </TabFade>
 
       {movOpen && <MovModal proyectos={proyectos} defaultProyecto={filtro} onClose={() => setMovOpen(false)} />}
@@ -134,7 +135,7 @@ export function FinanzasPage() {
 }
 
 // ─── Resumen view ────────────────────────────────────────────
-function ResumenView({ r, loading }: { r: FinanzasResumen | undefined; loading: boolean }) {
+function ResumenView({ r, loading, onJump }: { r: FinanzasResumen | undefined; loading: boolean; onJump: (sub: Sub, vista?: string) => void }) {
   if (loading) return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-2.5">{Array.from({ length: 7 }).map((_, i) => <Skel key={i} className="h-[68px] w-full" />)}</div>
@@ -142,41 +143,171 @@ function ResumenView({ r, loading }: { r: FinanzasResumen | undefined; loading: 
     </div>
   );
   if (!r) return null;
+  const v2 = r.resumenV2;
   const ing = r.kpis.ingresosMes, eg = r.kpis.egresosMes;
   const utilidad = ing - eg;
   const margen = ing > 0 ? (utilidad / ing) * 100 : 0;
-  const kpis = [
-    { lbl: 'Ingresos del mes', val: fmtPEN(ing), sub: mesLabel(r.mesActual), color: 'emerald' as const },
-    { lbl: 'Gastos del mes', val: fmtPEN(eg), sub: 'planilla + compras', color: 'rose' as const },
-    { lbl: 'Margen neto', val: `${margen.toFixed(1)}%`, sub: `${fmtPEN(utilidad)} utilidad`, color: utilidad >= 0 ? 'emerald' as const : 'rose' as const },
-    { lbl: 'Por cobrar', val: fmtPEN(r.totals.porCobrar), sub: `${r.porCobrar.length} valos`, color: 'blue' as const },
-    { lbl: 'Por pagar', val: fmtPEN(r.totals.porPagar), sub: `${r.porPagar.length} OC`, color: 'amber' as const },
-    { lbl: 'Posición de caja', val: fmtPEN(r.tesoreria.totalCaja), sub: `${r.tesoreria.cuentas.length} cuentas`, color: 'blue' as const },
-    { lbl: 'Garantías activas', val: fmtPEN(r.totals.garantias), sub: `${r.garantias.length} cartas fianza`, color: 'violet' as const },
+  // delta vs mes anterior desde el flujo mensual (último = mes actual)
+  const prev = r.flujoMensual.at(-2);
+  const delta = (act: number, ant: number | undefined) => (ant && ant > 0 ? ((act - ant) / ant) * 100 : null);
+  const dIng = delta(ing, prev?.ingresos);
+  const dEg = delta(eg, prev?.egresos);
+  const fmtDelta = (d: number | null, buenoArriba: boolean) => d == null ? null : (
+    <span className={cn('font-semibold', (d >= 0) === buenoArriba ? 'text-emerald-600' : 'text-rose-600')}>{d >= 0 ? '▲' : '▼'} {Math.abs(d).toFixed(0)}%</span>
+  );
+  const heroes: { lbl: string; val: string; det: React.ReactNode; color: keyof typeof ACENTO; spark?: number[] }[] = [
+    { lbl: 'Ingresos del mes', val: fmtPEN(ing), det: <>{fmtDelta(dIng, true)} {dIng != null ? 'vs mes anterior' : mesLabel(r.mesActual)}</>, color: 'emerald', spark: r.flujoMensual.map((m) => m.ingresos) },
+    { lbl: 'Gastos del mes', val: fmtPEN(eg), det: <>{fmtDelta(dEg, false)} {dEg != null ? 'vs mes anterior' : 'planilla + compras'}</>, color: 'rose', spark: r.flujoMensual.map((m) => m.egresos) },
+    { lbl: 'Resultado del mes', val: fmtPEN(utilidad), det: <>margen <b>{margen.toFixed(1)}%</b></>, color: utilidad >= 0 ? 'emerald' : 'rose' },
+    { lbl: 'Por cobrar', val: fmtPEN(v2.aging.cxc.total), det: v2.aging.cxc.v30 + v2.aging.cxc.mas30 > 0 ? <span className="text-rose-600">{fmtPEN(v2.aging.cxc.v30 + v2.aging.cxc.mas30)} vencido</span> : 'todo corriente', color: 'blue' },
+    { lbl: 'Por pagar', val: fmtPEN(v2.aging.cxp.total), det: v2.accion.cxpPorVencer7.n > 0 ? <>{fmtPEN(v2.accion.cxpPorVencer7.monto)} vence en 7 días</> : 'sin vencimientos próximos', color: 'amber' },
+    { lbl: 'Posición de caja', val: fmtPEN(r.tesoreria.totalCaja), det: <>{r.tesoreria.cuentas.length} cuentas</>, color: 'blue' },
   ];
+  const inbox: { tono: string; titulo: string; detalle: string; btn: string; jump: () => void }[] = [];
+  if (v2.accion.detraccionesPendientes.n > 0)
+    inbox.push({ tono: 'bg-destructive', titulo: `${v2.accion.detraccionesPendientes.n} detracción(es) sin constancia de depósito`, detalle: `${fmtPEN(v2.accion.detraccionesPendientes.monto)} · el crédito fiscal queda diferido`, btn: 'Completar', jump: () => onJump('compras', 'registro') });
+  if (v2.accion.cxpPorVencer7.n > 0)
+    inbox.push({ tono: 'bg-destructive', titulo: `${v2.accion.cxpPorVencer7.n} factura(s) por pagar vencen en 7 días`, detalle: v2.accion.cxpPorVencer7.items.map((i) => `${i.tercero ?? ''} ${i.doc} (${fmtPEN(i.saldo)})`).join(' · '), btn: 'Pagar', jump: () => onJump('caja') });
+  if (v2.accion.valosSinComprobante.n > 0)
+    inbox.push({ tono: 'bg-warn', titulo: `${v2.accion.valosSinComprobante.n} valorización(es) sin comprobante`, detalle: `${v2.accion.valosSinComprobante.items.map((i) => `VAL-${i.numero} ${i.proyectoCodigo ?? ''}`).join(' · ')} · sin serie/número el 14.1 sale con placeholder`, btn: 'Registrar', jump: () => onJump('ventas') });
+  if (v2.accion.bandejaCpe > 0)
+    inbox.push({ tono: 'bg-violet-600', titulo: `${v2.accion.bandejaCpe} XML en la bandeja CPE`, detalle: 'falta asignarles cuenta y destino', btn: 'Bandeja', jump: () => onJump('compras', 'bandeja') });
+  if (v2.accion.conciliacionPendiente > 0)
+    inbox.push({ tono: 'bg-primary', titulo: `${v2.accion.conciliacionPendiente} línea(s) de extracto sin conciliar`, detalle: 'match por N° de operación', btn: 'Conciliar', jump: () => onJump('conciliacion') });
+  const urgentes = inbox.filter((i) => i.tono === 'bg-destructive').length;
+  const p30 = v2.proyeccion.hoy + v2.proyeccion.d30.cobros - v2.proyeccion.d30.pagos;
+  const p60 = v2.proyeccion.hoy + v2.proyeccion.d60.cobros - v2.proyeccion.d60.pagos;
   return (
     <div className="space-y-4">
-      {/* Fila de 7 KPIs · borde-top de acento (v1) */}
-      <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-2.5">
-        {kpis.map((k) => <ResumenKpi key={k.lbl} {...k} />)}
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2.5">
+        {heroes.map((k) => (
+          <div key={k.lbl} className={cn('relative rounded-md border border-line border-t-2 bg-bg-elev px-3 py-2.5', ACENTO[k.color].border)}>
+            <div className="font-mono text-[9px] uppercase tracking-[0.08em] text-ink-4 truncate">{k.lbl}</div>
+            <div className={cn('mt-1 text-[16px] font-bold font-mono tabular-nums tracking-[-0.02em] leading-tight', ACENTO[k.color].text)}>{k.val}</div>
+            <div className="text-[10px] text-ink-4 mt-0.5 truncate">{k.det}</div>
+            {k.spark && <Sparkline data={k.spark} className={cn('absolute right-2 top-2.5 opacity-90', ACENTO[k.color].text)} />}
+          </div>
+        ))}
       </div>
 
-      <SectionHeader label="Tesorería · posición de caja en tiempo real" color="blue" />
-      <Tesoreria r={r} />
+      <div className="grid grid-cols-1 lg:grid-cols-[3fr_2fr] gap-4 items-start">
+        {/* Inbox: qué requiere acción hoy · cada fila salta a resolverlo */}
+        <div className="rounded-lg border border-line bg-bg-elev overflow-hidden">
+          <div className="flex items-center gap-2 border-b border-line px-3.5 py-2.5">
+            <b className="text-[12.5px]">Requiere acción</b>
+            <span className="font-mono text-[11px] text-ink-4">{inbox.length} pendiente(s)</span>
+            <span className="flex-1" />
+            {urgentes > 0 && <span className="chip bg-destructive-soft text-destructive">{urgentes} urgente(s)</span>}
+          </div>
+          {inbox.length === 0
+            ? <div className="px-3.5 py-6 text-center text-[12px] text-ink-3">Nada pendiente · todo al día</div>
+            : inbox.map((i) => (
+              <div key={i.titulo} className="flex items-center gap-2.5 px-3.5 py-2 border-b border-line last:border-0">
+                <span className={cn('h-[7px] w-[7px] rounded-full shrink-0', i.tono)} />
+                <div className="flex-1 min-w-0">
+                  <div className="text-[12px] font-semibold truncate">{i.titulo}</div>
+                  <div className="text-[11px] text-ink-4 truncate">{i.detalle}</div>
+                </div>
+                <button onClick={i.jump} className="h-[26px] px-2.5 rounded-md border border-line text-[11px] font-medium hover:bg-bg-sunken shrink-0">{i.btn} →</button>
+              </div>
+            ))}
+        </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <GastosOficinaCard r={r} />
-        <ValosEstadoCard r={r} />
-        <FlujoMini data={r.flujoMensual} cajaActual={r.kpis.totalCaja} />
+        <div className="space-y-4">
+          {/* Proyección: aritmética del sub-mayor por vencimiento, no forecast */}
+          <div className="rounded-lg border border-line bg-bg-elev overflow-hidden">
+            <div className="border-b border-line px-3.5 py-2.5"><b className="text-[12.5px]">Proyección de caja</b> <span className="font-mono text-[10.5px] text-ink-4">saldo + CxC − CxP por vencimiento</span></div>
+            <div className="grid grid-cols-3 divide-x divide-line">
+              {[
+                { h: 'Hoy', n: v2.proyeccion.hoy, rows: null },
+                { h: 'A 30 días', n: p30, rows: v2.proyeccion.d30 },
+                { h: 'A 60 días', n: p60, rows: v2.proyeccion.d60 },
+              ].map((c) => (
+                <div key={c.h} className="px-3 py-2.5">
+                  <div className="font-mono text-[9px] uppercase tracking-[0.08em] text-ink-4">{c.h}</div>
+                  <div className={cn('font-mono text-[14px] font-bold tabular-nums mt-0.5', c.n >= v2.proyeccion.hoy ? 'text-emerald-700' : 'text-rose-600')}>{fmtPEN(c.n)}</div>
+                  {c.rows && (
+                    <div className="text-[10px] text-ink-4 mt-1 space-y-px font-mono tabular-nums">
+                      <div>+ {fmtPEN(c.rows.cobros)}</div>
+                      <div>− {fmtPEN(c.rows.pagos)}</div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+          {/* Aging CxC / CxP */}
+          <div className="rounded-lg border border-line bg-bg-elev px-3.5 py-3">
+            <b className="text-[12.5px]">Antigüedad de saldos</b>
+            <AgingBar label="Por cobrar" a={v2.aging.cxc} />
+            <AgingBar label="Por pagar" a={v2.aging.cxp} />
+            <div className="flex gap-3 mt-2 text-[10px] text-ink-3">
+              <span><i className="inline-block h-2 w-2 rounded-[2px] bg-emerald-600 mr-1" />Corriente</span>
+              <span><i className="inline-block h-2 w-2 rounded-[2px] bg-warn mr-1" />1-30 vencido</span>
+              <span><i className="inline-block h-2 w-2 rounded-[2px] bg-rose-600 mr-1" />+30 vencido</span>
+            </div>
+          </div>
+        </div>
       </div>
 
-      <SectionHeader label="Garantías · cartas fianza vigentes" color="rose" />
-      <Garantias r={r} />
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+        {/* Utilidad por proyecto · la vista de Mario */}
+        <div className="rounded-lg border border-line bg-bg-elev overflow-hidden">
+          <div className="border-b border-line px-3.5 py-2.5"><b className="text-[12.5px]">Utilidad por proyecto</b> <span className="font-mono text-[10.5px] text-ink-4">valorizado − gastado (base sin IGV)</span></div>
+          {v2.utilidadPorProyecto.length === 0 ? <div className="px-3.5 py-6 text-center text-[12px] text-ink-3">Sin proyectos con movimiento</div> : (
+            <table className="w-full">
+              <thead><tr className="border-b border-line bg-bg-sunken">{['Obra', 'Valorizado', 'Gastado', 'Margen'].map((h, i) => <th key={h} className={cn('px-3 py-1.5 font-mono text-[9.5px] uppercase tracking-wider text-ink-4', i > 0 ? 'text-right' : 'text-left')}>{h}</th>)}</tr></thead>
+              <tbody>
+                {v2.utilidadPorProyecto.map((u) => (
+                  <tr key={u.proyectoId} className="border-b border-line last:border-0">
+                    <td className="px-3 py-1.5"><span className="font-mono text-[11px]">{u.proyectoCodigo ?? '—'}</span><div className="text-[10px] text-ink-4 max-w-[180px] truncate">{u.proyectoNombre ?? ''}</div></td>
+                    <td className="px-3 py-1.5 font-mono text-[11px] tabular-nums text-right">{fmtPEN(u.valorizado)}</td>
+                    <td className="px-3 py-1.5 font-mono text-[11px] tabular-nums text-right text-ink-3">{fmtPEN(u.gastado)}</td>
+                    <td className={cn('px-3 py-1.5 font-mono text-[11px] tabular-nums text-right font-semibold', u.margenPct == null ? 'text-ink-4' : u.margenPct >= 0 ? 'text-emerald-700' : 'text-rose-600')}>{u.margenPct != null ? `${(u.margenPct * 100).toFixed(1)}%` : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+        {/* Tesorería compacta · el detalle vive en Caja y bancos */}
+        <div className="rounded-lg border border-line bg-bg-elev overflow-hidden">
+          <div className="flex items-center border-b border-line px-3.5 py-2.5"><b className="text-[12.5px]">Tesorería</b><span className="flex-1" /><button onClick={() => onJump('caja')} className="text-[11px] text-primary hover:underline">Caja y bancos →</button></div>
+          <table className="w-full">
+            <tbody>
+              {r.tesoreria.cuentas.map((c) => (
+                <tr key={c.cuenta.id} className="border-b border-line last:border-0">
+                  <td className="px-3 py-1.5 font-mono text-[11px] text-ink-3">{c.cuenta.cuentaContable ?? '—'}</td>
+                  <td className="px-3 py-1.5 text-[11.5px] max-w-[200px] truncate">{c.cuenta.descripcion ?? c.cuenta.codigo}</td>
+                  <td className={cn('px-3 py-1.5 font-mono text-[11.5px] tabular-nums text-right font-semibold', c.saldo < 0 && 'text-rose-600')}>{fmtPEN(c.saldo)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
 
-      <SectionHeader label="Cuentas por cobrar y pagar" color="violet" />
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <CobrarPagar title="Por cobrar" total={r.totals.porCobrar} tone="ok" accent="blue" rows={r.porCobrar.map((v) => ({ id: v.id, label: `Val. N°${v.numero} — ${v.proyectoNombre ?? v.proyectoCodigo ?? '—'}`, sub: v.mesPeriodo ?? v.status, monto: v.monto, chip: v.status }))} empty="Sin valorizaciones por cobrar" />
-        <CobrarPagar title="Por pagar" total={r.totals.porPagar} tone="warn" accent="amber" rows={r.porPagar.map((o) => ({ id: o.id, label: `${o.numero} — ${o.proyectoNombre ?? o.proyectoCodigo ?? '—'}`, sub: o.estado, monto: o.monto, chip: o.estado }))} empty="Sin órdenes de compra pendientes" />
+// mini tendencia 6 meses · usa currentColor del contenedor
+function Sparkline({ data, className }: { data: number[]; className?: string }) {
+  const pts = data.slice(-6);
+  if (pts.length < 2) return null;
+  const max = Math.max(...pts, 1);
+  const xy = pts.map((v, i) => `${(i / (pts.length - 1)) * 48},${18 - (v / max) * 16}`).join(' ');
+  return <svg width="48" height="20" viewBox="0 0 48 20" className={className}><polyline fill="none" stroke="currentColor" strokeWidth="1.5" points={xy} /></svg>;
+}
+
+function AgingBar({ label, a }: { label: string; a: { corriente: number; v30: number; mas30: number; total: number } }) {
+  const pct = (n: number) => (a.total > 0 ? (n / a.total) * 100 : 0);
+  return (
+    <div className="mt-2">
+      <div className="flex justify-between text-[11px] text-ink-3"><span>{label}</span><span className="font-mono tabular-nums">{fmtPEN(a.total)}</span></div>
+      <div className="flex h-[9px] rounded-[5px] overflow-hidden mt-1 bg-bg-sunken">
+        <div className="bg-emerald-600" style={{ width: `${pct(a.corriente)}%` }} />
+        <div className="bg-warn" style={{ width: `${pct(a.v30)}%` }} />
+        <div className="bg-rose-600" style={{ width: `${pct(a.mas30)}%` }} />
       </div>
     </div>
   );
@@ -190,26 +321,6 @@ const ACENTO = {
   amber: { dot: 'bg-amber-600', border: 'border-t-amber-600', text: 'text-amber-700' },
   violet: { dot: 'bg-violet-600', border: 'border-t-violet-600', text: 'text-violet-600' },
 } satisfies Record<string, { dot: string; border: string; text: string }>;
-
-function SectionHeader({ label, color }: { label: string; color: keyof typeof ACENTO }) {
-  return (
-    <div className="flex items-center gap-2.5 pt-1">
-      <span className={cn('h-2 w-2 rounded-sm shrink-0', ACENTO[color].dot)} />
-      <span className={cn('font-mono text-[10px] font-bold uppercase tracking-[0.08em]', ACENTO[color].text)}>{label}</span>
-      <div className="flex-1 h-px bg-line" />
-    </div>
-  );
-}
-
-function ResumenKpi({ lbl, val, sub, color }: { lbl: string; val: string; sub?: string; color: keyof typeof ACENTO }) {
-  return (
-    <div className={cn('rounded-md border border-line border-t-2 bg-bg-elev px-3 py-2.5', ACENTO[color].border)}>
-      <div className="font-mono text-[9px] uppercase tracking-[0.08em] text-ink-4 truncate">{lbl}</div>
-      <div className={cn('mt-1 text-[17px] font-bold font-mono tabular-nums tracking-[-0.02em] leading-tight', ACENTO[color].text)}>{val}</div>
-      {sub && <div className="text-[10px] text-ink-4 mt-0.5 truncate">{sub}</div>}
-    </div>
-  );
-}
 
 // ─── Gastos de oficina (presupuesto editable vs ejecutado) ───
 const PAL = ['#3b82f6', '#f59e0b', '#8b5cf6', '#14b8a6', '#ef4444', '#10b981', '#ec4899', '#06b6d4'];
@@ -275,73 +386,6 @@ function GastosOficinaCard({ r }: { r: FinanzasResumen }) {
           <span className={cn('font-mono font-semibold tabular-nums', saldo >= 0 ? 'text-ok' : 'text-warn-ink')}>{fmtPEN(saldo)}</span>
         </div>
       )}
-    </div>
-  );
-}
-
-// ─── Valorizaciones · estado de cobro (solo estado, sin vencimiento) ───
-const ESTADO_CHIP: Record<string, string> = {
-  emitida: 'bg-blue-50 text-blue-700',
-  conformidad_supervision: 'bg-violet-50 text-violet-700',
-  aprobada: 'bg-amber-50 text-amber-700',
-  facturada: 'bg-indigo-50 text-indigo-700',
-  cobrada: 'bg-emerald-50 text-emerald-700',
-};
-function ValosEstadoCard({ r }: { r: FinanzasResumen }) {
-  return (
-    <div className="rounded-lg border border-line border-t-2 border-t-primary bg-bg-elev p-4 flex flex-col">
-      <div className="flex items-center justify-between mb-1">
-        <h3 className="text-[11px] font-mono uppercase tracking-wider text-ink-4">Valorizaciones · estado de cobro</h3>
-      </div>
-      <div className="rounded-md bg-primary/5 px-3 py-2 mb-2 flex items-center justify-between">
-        <span className="text-[11px] text-ink-3">Total por cobrar</span>
-        <span className="text-[13px] font-mono font-semibold tabular-nums">{fmtPEN(r.totals.porCobrar)}</span>
-      </div>
-      <div className="space-y-1 flex-1">
-        {r.porCobrar.length === 0 ? (
-          <div className="text-center py-6 text-[11.5px] text-ink-3">Sin valorizaciones por cobrar</div>
-        ) : r.porCobrar.slice(0, 6).map((v) => (
-          <div key={v.id} className="flex items-center gap-2 py-1.5 border-b border-line last:border-0">
-            <div className="min-w-0 flex-1">
-              <div className="text-[12px] font-medium truncate">Val. N°{v.numero} — {v.proyectoNombre ?? v.proyectoCodigo ?? '—'}</div>
-              <span className={cn('text-[9.5px] font-mono uppercase px-1.5 py-0.5 rounded capitalize', ESTADO_CHIP[v.status] ?? 'bg-bg-sunken text-ink-3')}>{v.status.replace(/_/g, ' ')}</span>
-            </div>
-            <span className="font-mono tabular-nums font-semibold text-[12px]">{fmtPEN(v.monto)}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// ─── Flujo mini (Real · Proyectado próximamente) ─────────────
-function FlujoMini({ data, cajaActual }: { data: FinanzasResumen['flujoMensual']; cajaActual: number }) {
-  const max = Math.max(1, ...data.map((d) => Math.max(d.ingresos, d.egresos)));
-  return (
-    <div className="rounded-lg border border-line border-t-2 border-t-teal-600 bg-bg-elev p-4 flex flex-col">
-      <div className="flex items-center justify-between mb-1">
-        <h3 className="text-[11px] font-mono uppercase tracking-wider text-ink-4">Flujo de caja</h3>
-        <span className="text-[9px] font-mono uppercase tracking-wider text-ink-4 px-1.5 py-0.5 rounded border border-line bg-bg-sunken">REAL</span>
-      </div>
-      {data.length === 0 ? (
-        <div className="text-center py-8 text-[11.5px] text-ink-3 flex-1">Sin movimientos</div>
-      ) : (
-        <div className="flex items-end justify-between gap-1.5 h-28 flex-1 mt-2">
-          {data.map((d) => (
-            <div key={d.mes} className="flex-1 flex flex-col items-center gap-1 min-w-0">
-              <div className="w-full flex items-end justify-center gap-0.5 h-24">
-                <div className="w-1/2 rounded-t bg-primary/80" style={{ height: `${(d.ingresos / max) * 100}%` }} title={`Ingresos ${fmtPEN(d.ingresos)}`} />
-                <div className="w-1/2 rounded-t bg-rose-500/80" style={{ height: `${(d.egresos / max) * 100}%` }} title={`Egresos ${fmtPEN(d.egresos)}`} />
-              </div>
-              <span className="text-[9px] font-mono text-ink-4 truncate">{mesLabel(d.mes)}</span>
-            </div>
-          ))}
-        </div>
-      )}
-      <div className="mt-2 pt-2 border-t border-line flex items-center justify-between text-[11px]">
-        <span className="text-ink-3">Caja actual</span>
-        <span className="font-mono font-semibold tabular-nums">{fmtPEN(cajaActual)}</span>
-      </div>
     </div>
   );
 }
@@ -447,42 +491,6 @@ function Garantias({ r }: { r: FinanzasResumen }) {
             );
           })}
         </div>
-      )}
-    </div>
-  );
-}
-
-// ─── Por cobrar / pagar ──────────────────────────────────────
-type Row = { id: string; label: string; sub: string; monto: number; chip: string };
-function CobrarPagar({ title, total, tone, accent, rows, empty }: { title: string; total: number; tone: 'ok' | 'warn'; accent: keyof typeof ACENTO; rows: Row[]; empty: string }) {
-  const [page, setPage] = useState(0);
-  const PAGE = 10;
-  const totalPages = Math.max(1, Math.ceil(rows.length / PAGE));
-  const pageSafe = Math.min(page, totalPages - 1);
-  const rowsPage = rows.slice(pageSafe * PAGE, pageSafe * PAGE + PAGE);
-  return (
-    <div className={cn('rounded-lg border border-line border-t-2 bg-bg-elev p-4', ACENTO[accent].border)}>
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-[13px] font-semibold">{title}</h3>
-        <span className={cn('text-[12px] font-mono font-semibold tabular-nums', tone === 'ok' ? 'text-ok' : 'text-warn-ink')}>{fmtPEN(total)}</span>
-      </div>
-      {rows.length === 0 ? (
-        <div className="text-center py-6 text-[11.5px] text-ink-3">{empty}</div>
-      ) : (
-        <>
-          <div className="space-y-1">
-            {rowsPage.map((row) => (
-              <div key={row.id} className="flex items-center gap-2 text-[12px] py-1.5 border-b border-line last:border-0">
-                <div className="min-w-0 flex-1">
-                  <div className="font-medium truncate">{row.label}</div>
-                  <div className="text-[10.5px] text-ink-4 capitalize">{row.sub.replace(/_/g, ' ')}</div>
-                </div>
-                <span className="font-mono tabular-nums font-semibold w-24 text-right">{fmtPEN(row.monto)}</span>
-              </div>
-            ))}
-          </div>
-          <Pager page={pageSafe} totalPages={totalPages} count={rows.length} per={PAGE} onPage={setPage} />
-        </>
       )}
     </div>
   );
@@ -708,20 +716,20 @@ function SegTabs<T extends string>({ value, onChange, opts }: { value: T; onChan
   );
 }
 
-// ─── Tab Compras · segmentos: Registro · Órdenes por aprobar/pagar · Bandeja CPE (F2.3) ──
-function ComprasHub({ proyectoId, proyectos }: { proyectoId: string; proyectos: { id: string; codigo: string; nombre: string }[] }) {
-  const [vista, setVista] = useState<'registro' | 'ordenes' | 'bandeja'>('registro');
+// ─── Tab Compras · segmentos: Registro · Bandeja CPE ──
+// El segmento "Órdenes por aprobar/pagar" murió: la aprobación de OC vive en Logística
+// (su casa natural) y el pago vive en Registrar movimiento con aplicaciones (F2.2).
+function ComprasHub({ proyectoId, proyectos, initialVista = 'registro' }: { proyectoId: string; proyectos: { id: string; codigo: string; nombre: string }[]; initialVista?: 'registro' | 'bandeja' }) {
+  const [vista, setVista] = useState<'registro' | 'bandeja'>(initialVista);
   const bandejaQ = useQuery({ queryKey: ['cpe-bandeja', 'compra'], queryFn: () => api.cpe.listBandeja('compra') });
   const pendientes = bandejaQ.data?.borradores.length ?? 0;
   return (
     <div className="space-y-3">
       <SegTabs value={vista} onChange={setVista} opts={[
         { v: 'registro', l: 'Registro' },
-        { v: 'ordenes', l: 'Órdenes por aprobar/pagar' },
         { v: 'bandeja', l: 'Bandeja CPE', n: pendientes },
       ] as const} />
       {vista === 'registro' && <GlobalLedger proyectoId={proyectoId} proyectos={proyectos} kind="gastos" />}
-      {vista === 'ordenes' && <FinanzasOcQueue proyectoId={proyectoId} />}
       {vista === 'bandeja' && <BandejaCpeView proyectos={proyectos} />}
     </div>
   );
@@ -904,19 +912,29 @@ function CompletarCpeModal({ borrador: b, proyectos, onClose, onDone }: { borrad
   );
 }
 
-// ─── Tab Caja y bancos · segmentos: Libro por cuenta · Todos los movimientos (+ Cajas en F3.2) ──
+// ─── Tab Caja y bancos · segmentos: Libro por cuenta · Todos los movimientos · Cuentas (+ Cajas en F3.2) ──
 function CajaBancosHub({ proyectoId, proyectos }: { proyectoId: string; proyectos: { id: string; codigo: string; nombre: string }[] }) {
-  const [vista, setVista] = useState<'cuenta' | 'todos'>('cuenta');
+  const [vista, setVista] = useState<'cuenta' | 'todos' | 'cuentas'>('cuenta');
   return (
     <div className="space-y-3">
       <SegTabs value={vista} onChange={setVista} opts={[
         { v: 'cuenta', l: 'Libro por cuenta' },
         { v: 'todos', l: 'Todos los movimientos' },
+        { v: 'cuentas', l: 'Cuentas' },
       ] as const} />
       {vista === 'cuenta' && <BancosView />}
       {vista === 'todos' && <GlobalLedger proyectoId={proyectoId} proyectos={proyectos} kind="movimientos" />}
+      {vista === 'cuentas' && <TesoreriaConfig />}
     </div>
   );
+}
+
+// Cards de tesorería (mudadas del Resumen v1): agregar cuenta + asignar divisionaria 104x
+function TesoreriaConfig() {
+  const q = useQuery({ queryKey: ['finanzas-resumen', 'todos'], queryFn: () => api.finanzas.getResumen('todos') });
+  if (q.isLoading) return <SkelCards count={3} />;
+  if (!q.data) return null;
+  return <Tesoreria r={q.data} />;
 }
 
 // ─── F2.1 · Registro de ventas (valorizaciones con comprobante) ──
@@ -1592,7 +1610,7 @@ const REPS: { id: string; label: string; filtros: ('anio' | 'mes')[] }[] = [
   { id: 'utilidad', label: 'Utilidad por proyecto', filtros: ['anio'] },
 ];
 
-function ReportesView() {
+function ReportesView({ r }: { r?: FinanzasResumen }) {
   const [tipo, setTipo] = useState('cuentas-cobrar');
   const [anio, setAnio] = useState('');
   const [mes, setMes] = useState('');
@@ -1654,6 +1672,16 @@ function ReportesView() {
           </>
         )}
       </div>
+
+      {/* mudados del Resumen v2: control documental y presupuestal, no decisión diaria */}
+      {r && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+          <GastosOficinaCard r={r} />
+          <div className="space-y-3">
+            <Garantias r={r} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

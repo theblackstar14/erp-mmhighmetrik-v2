@@ -1965,6 +1965,19 @@ export type FinanzasResumen = {
   porPagar: { id: string; proyectoId: string; proyectoCodigo: string | null; proyectoNombre: string | null; numero: string; estado: string; monto: number }[];
   garantias: { id: string; proyectoId: string; proyectoCodigo: string | null; proyectoNombre: string | null; tipo: string; banco: string | null; monto: number; vigenciaHasta: string | null }[];
   totals: { porCobrar: number; porPagar: number; garantias: number };
+  // Resumen v2 · inbox de acción + proyección + aging + utilidad por proyecto (empresa-wide)
+  resumenV2: {
+    accion: {
+      detraccionesPendientes: { n: number; monto: number };
+      cxpPorVencer7: { n: number; monto: number; items: { tercero: string | null; doc: string; saldo: number; vence: string | null }[] };
+      valosSinComprobante: { n: number; items: { numero: number; proyectoCodigo: string | null }[] };
+      bandejaCpe: number;
+      conciliacionPendiente: number;
+    };
+    proyeccion: { hoy: number; d30: { cobros: number; pagos: number }; d60: { cobros: number; pagos: number } };
+    aging: Record<'cxc' | 'cxp', { corriente: number; v30: number; mas30: number; total: number }>;
+    utilidadPorProyecto: { proyectoId: string; proyectoCodigo: string | null; proyectoNombre: string | null; valorizado: number; gastado: number; margenPct: number | null }[];
+  };
 };
 
 // ─── Activos · herramientas y equipos ─────────────────────────

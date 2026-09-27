@@ -8,9 +8,12 @@ import { cn, fmtPEN } from '@/lib/utils.js';
 // Sub-páginas lazy · cada una (+ modales OC) en su chunk · solo baja la tab abierta
 const LogisticaOrdenesPage = lazy(() => import('@/components/logistica/LogisticaOrdenesPage.js').then((m) => ({ default: m.LogisticaOrdenesPage })));
 const LogisticaProveedoresPage = lazy(() => import('@/components/logistica/LogisticaProveedoresPage.js').then((m) => ({ default: m.LogisticaProveedoresPage })));
+// Mudada de Finanzas (Resumen v2): la aprobación/pago de OC vive donde nace la OC
+const FinanzasOcQueue = lazy(() => import('@/components/finanzas/FinanzasOcQueue.js').then((m) => ({ default: m.FinanzasOcQueue })));
 
 const TABS = [
   { key: 'ordenes', label: 'Órdenes', icon: ShoppingCart },
+  { key: 'aprobar', label: 'Aprobar / pagar', icon: AlertTriangle },
   { key: 'proveedores', label: 'Proveedores', icon: Truck },
 ];
 
@@ -80,6 +83,7 @@ export function LogisticaPage() {
       <Routes>
         <Route index element={<Navigate to="ordenes" replace />} />
         <Route path="ordenes" element={<LogisticaOrdenesPage />} />
+        <Route path="aprobar" element={<FinanzasOcQueue proyectoId="todos" />} />
         <Route path="proveedores" element={<LogisticaProveedoresPage />} />
         {/* rutas viejas/removidas · redirect a órdenes */}
         <Route path="*" element={<Navigate to="ordenes" replace />} />

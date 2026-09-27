@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import ReactECharts from '@/lib/echarts.js';
 import { Sparkles } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api } from '@/lib/api.js';
 import { Skel } from '@/components/ui/Skeleton.js';
 import { useThemeStore } from '@/lib/theme-store.js';
@@ -23,6 +23,13 @@ export default function FlujoCajaView({ proyectoId }: { proyectoId: string }) {
   const dark = theme === 'dark';
   const [cfDrill, setCfDrill] = useState<CashflowClick | null>(null);
   const [sankeyMode, setSankeyMode] = useState<'egresos' | 'ingresos'>('egresos');
+  // El sankey de echarts revienta si se monta con el contenedor en tamaño 0 (embebido bajo
+  // Suspense + animación del Resumen v2): montarlo un frame después del layout.
+  const [chartsReady, setChartsReady] = useState(false);
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => setChartsReady(true));
+    return () => cancelAnimationFrame(raf);
+  }, []);
   const { data, isLoading } = useQuery({ queryKey: ['finanzas-flujo', proyectoId], queryFn: () => api.finanzas.getFlujo(proyectoId) });
 
   const axis = dark ? '#a1a1aa' : '#52525b';
@@ -184,7 +191,7 @@ export default function FlujoCajaView({ proyectoId }: { proyectoId: string }) {
           <Empty msg={sankeyMode === 'egresos' ? 'Sin gastos por categoría para diagramar' : 'Sin ingresos con cliente identificable · asigna cliente a los proyectos'} />
         ) : (
           <>
-            <ReactECharts option={sankeyOption} style={{ height: 420 }} notMerge lazyUpdate opts={{ renderer: 'svg' }} />
+            {chartsReady && <ReactECharts option={sankeyOption} style={{ height: 420 }} notMerge lazyUpdate opts={{ renderer: 'svg' }} />}
             {sankeyMode === 'ingresos' && (data?.ingresosSinCliente ?? 0) > 0 && (
               <div className="text-[10.5px] text-ink-4 mt-1.5">{fmtPEN(data!.ingresosSinCliente)} en ingresos sin cliente asignado (no mostrados · asigna cliente al proyecto para incluirlos).</div>
             )}
