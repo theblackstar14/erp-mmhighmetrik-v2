@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Propuesta · Finanzas 6 tabs consolidadas · ERP MM High Metrik</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+/* tokens copiados de apps/frontend/src/index.css (light) */
+:root{
+  --background:hsl(60 10% 96%); --bg-elev:hsl(0 0% 100%); --bg-sunken:hsl(60 8% 93%);
+  --foreground:hsl(0 0% 11%); --ink-2:hsl(60 4% 23%); --ink-3:hsl(60 3% 42%); --ink-4:hsl(60 3% 60%);
+  --line:hsl(60 7% 88%); --line-2:hsl(60 6% 83%); --line-strong:hsl(60 5% 76%);
+  --primary:hsl(230 68% 55%); --primary-fg:#fff; --primary-soft:hsl(224 73% 94%); --primary-ink:hsl(230 64% 30%);
+  --warn:hsl(38 100% 48%); --warn-soft:hsl(41 89% 91%); --warn-ink:hsl(36 100% 24%);
+  --destructive:hsl(5 62% 53%); --destructive-soft:hsl(7 73% 93%);
+  --ok:hsl(154 45% 34%); --ok-soft:hsl(144 36% 90%); --ok-ink:hsl(154 49% 19%);
+  --emerald-600:#059669; --emerald-700:#047857; --rose-600:#e11d48; --rose-700:#be123c;
+  --amber-600:#d97706; --amber-700:#b45309; --violet-600:#7c3aed; --zinc-400:#a1a1aa;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--background);color:var(--foreground);
+  font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;line-height:1.5;-webkit-font-smoothing:antialiased}
+.mono{font-family:'JetBrains Mono',Menlo,Consolas,monospace;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.wrap{max-width:1180px;margin:0 auto;padding:24px 20px 60px;display:flex;flex-direction:column;gap:20px}
+.pagehead h1{margin:0;font-size:20px;font-weight:700;letter-spacing:-.02em}
+.pagehead p{margin:2px 0 0;font-size:13px;color:var(--ink-3)}
+.chip{display:inline-flex;align-items:center;gap:4px;border-radius:4px;padding:2px 8px;font-family:'JetBrains Mono',monospace;
+  font-size:10px;font-weight:500;text-transform:uppercase;letter-spacing:.05em;background:var(--bg-sunken);color:var(--ink-3)}
+.chip.blue{background:var(--primary-soft);color:var(--primary-ink)}
+.chip.amber{background:var(--warn-soft);color:var(--warn-ink)}
+.chip.green{background:var(--ok-soft);color:var(--ok-ink)}
+.chip.red{background:var(--destructive-soft);color:var(--destructive)}
+.chip.violet{background:#f3e8ff;color:#6d28d9}
+
+/* tabs nivel 1 (las 6) */
+.tabsbar{border-bottom:1px solid var(--line);overflow-x:auto}
+.tabsbar nav{display:flex;gap:4px;margin-bottom:-1px}
+.tab{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;border:0;border-bottom:2px solid transparent;
+  background:none;padding:8px 12px;font:500 12.5px/1.4 'Inter',sans-serif;color:var(--ink-3);cursor:pointer}
+.tab:hover{color:var(--foreground);border-bottom-color:var(--line-strong)}
+.tab.on{color:var(--primary);border-bottom-color:var(--primary)}
+.tab .bdg{border-radius:4px;background:var(--warn-soft);color:var(--warn-ink);font-family:'JetBrains Mono',monospace;font-size:9.5px;padding:0 5px}
+
+/* segmentos nivel 2 (dentro de cada tab) */
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:7px;background:var(--bg-sunken);padding:2px;gap:2px}
+.seg button{border:0;border-radius:5px;background:none;padding:5px 12px;font:500 11.5px/1.3 'Inter',sans-serif;color:var(--ink-3);cursor:pointer}
+.seg button.on{background:var(--bg-elev);color:var(--foreground);box-shadow:0 1px 2px rgba(0,0,0,.07)}
+.seg button .n{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--warn-ink);margin-left:4px}
+
+.card{border:1px solid var(--line);border-radius:8px;background:var(--bg-elev);overflow:hidden}
+.kpirow{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px}
+.kpi{border:1px solid var(--line);border-top:2px solid var(--zinc-400);border-radius:6px;background:var(--bg-elev);padding:10px 12px}
+.kpi .l{font-family:'JetBrains Mono',monospace;font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-4);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kpi .v{margin-top:4px;font-family:'JetBrains Mono',monospace;font-size:16px;font-weight:700;letter-spacing:-.02em}
+.kpi .s{margin-top:2px;font-size:10px;color:var(--ink-4)}
+.k-blue{border-top-color:var(--primary)} .k-blue .v{color:var(--primary)}
+.k-em{border-top-color:var(--emerald-600)} .k-em .v{color:var(--emerald-600)}
+.k-rose{border-top-color:var(--rose-600)} .k-rose .v{color:var(--rose-600)}
+.k-amber{border-top-color:var(--amber-600)} .k-amber .v{color:var(--amber-700)}
+.k-violet{border-top-color:var(--violet-600)} .k-violet .v{color:var(--violet-600)}
+
+.toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid var(--line)}
+.toolbar .ttl{font-size:12.5px;font-weight:600}
+.toolbar .cnt{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-4)}
+.grow{flex:1}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{text-align:left;padding:7px 12px;border-bottom:1px solid var(--line);white-space:nowrap;
+  font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:500;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-4)}
+td{padding:8px 12px;border-bottom:1px solid var(--line)}
+tbody tr:last-child td{border-bottom:0}
+tbody tr:hover{background:var(--bg-sunken)}
+td.r,th.r{text-align:right;font-variant-numeric:tabular-nums}
+.btn{display:inline-flex;align-items:center;gap:6px;height:32px;border:1px solid var(--line);border-radius:6px;
+  background:var(--bg-elev);padding:0 11px;font:500 11.5px/1 'Inter',sans-serif;color:var(--ink-2);cursor:pointer}
+.btn.pri{border-color:var(--primary);background:var(--primary);color:var(--primary-fg)}
+.sel{height:32px;border:1px solid var(--line);border-radius:6px;background:var(--bg-elev);padding:0 8px;font-size:11.5px;font-family:inherit}
+
+.note{border:1px solid var(--line);border-radius:8px;background:var(--bg-elev);padding:11px 13px;font-size:12px;color:var(--ink-2)}
+.note .hd{display:flex;align-items:center;gap:8px;margin-bottom:5px;font-weight:600}
+.notegrid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.sechead{display:flex;align-items:center;gap:10px;padding-top:4px}
+.sechead .sq{width:8px;height:8px;border-radius:2px;background:var(--primary)}
+.sechead .tx{font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--primary)}
+.sechead .rule{flex:1;height:1px;background:var(--line)}
+
+/* mapa de migración */
+.mapa{display:grid;grid-template-columns:1fr 42px 1fr;gap:8px;align-items:start}
+.mapa .col{display:flex;flex-direction:column;gap:6px}
+.mapa .it{border:1px solid var(--line);border-radius:6px;background:var(--bg-elev);padding:7px 10px;font-size:12px;display:flex;align-items:center;gap:8px}
+.mapa .it .mono{font-size:10px;color:var(--ink-4)}
+.mapa .arrow{display:flex;align-items:center;justify-content:center;height:100%;color:var(--ink-4);font-size:18px}
+.mapa .dest{border-left:3px solid var(--primary)}
+.mapa .dest.d2{border-left-color:var(--rose-600)}
+.mapa .dest.d3{border-left-color:var(--emerald-600)}
+.mapa .dest.d4{border-left-color:var(--amber-600)}
+.mapa .dest.d5{border-left-color:var(--violet-600)}
+.mapa .dest.d6{border-left-color:var(--zinc-400)}
+
+@media(max-width:1000px){.kpirow{grid-template-columns:repeat(3,1fr)}.notegrid{grid-template-columns:1fr}.mapa{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="pagehead" style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
+    <div>
+      <h1>Finanzas · de 9-11 tabs a 6</h1>
+      <p>Dos niveles: la tab dice el dominio, el segmento interno dice la vista. Nada se pierde, todo se agrupa.</p>
+    </div>
+    <span class="chip amber">Propuesta de consolidación</span>
+  </div>
+
+  <!-- ══════ MAPA: qué va dónde ══════ -->
+  <div class="sechead"><span class="sq"></span><span class="tx">Mapa · dónde queda cada apartado actual y futuro</span><span class="rule"></span></div>
+  <div class="mapa">
+    <div class="col">
+      <div class="it"><b>Resumen</b><span class="mono">hoy</span></div>
+      <div class="it"><b>Flujo de caja</b><span class="mono">hoy · gráficos</span></div>
+      <div class="it"><b>Compras</b><span class="mono">hoy</span></div>
+      <div class="it"><b>Órdenes (aprobar/pagar)</b><span class="mono">hoy</span></div>
+      <div class="it"><b>Bandeja CPE</b><span class="mono">futuro F2.3</span></div>
+      <div class="it"><b>Ventas</b><span class="mono">hoy</span></div>
+      <div class="it"><b>Bancos</b><span class="mono">hoy · libro por cuenta</span></div>
+      <div class="it"><b>Movimientos</b><span class="mono">hoy · consolidado</span></div>
+      <div class="it"><b>Cajas / rendiciones</b><span class="mono">futuro F3.2</span></div>
+      <div class="it"><b>Conciliación</b><span class="mono">hoy</span></div>
+      <div class="it"><b>Reportes</b><span class="mono">hoy</span></div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="col">
+      <div class="it dest"><b>1 · Resumen</b><span class="mono">KPIs + tesorería + gráfico de flujo integrado</span></div>
+      <div class="it dest d2"><b>2 · Compras</b><span class="mono">segmentos: Registro · Órdenes <span class="chip amber">3</span> · Bandeja CPE <span class="chip amber">4</span></span></div>
+      <div class="it dest d3"><b>3 · Ventas</b><span class="mono">registro 14.1 · luego alta standalone (F3.1)</span></div>
+      <div class="it dest d4"><b>4 · Caja y bancos</b><span class="mono">segmentos: Por cuenta · Todos · Cajas</span></div>
+      <div class="it dest d5"><b>5 · Conciliación</b><span class="mono">igual que hoy</span></div>
+      <div class="it dest d6"><b>6 · Reportes</b><span class="mono">igual + análisis por cuenta/tercero (F3.3)</span></div>
+    </div>
+  </div>
+
+  <!-- ══════ DEMO NAVEGABLE ══════ -->
+  <div class="sechead"><span class="sq"></span><span class="tx">Así se ve · click en tabs y segmentos</span><span class="rule"></span></div>
+
+  <div class="tabsbar"><nav id="tabs">
+    <button class="tab on" data-p="resumen">Resumen</button>
+    <button class="tab" data-p="compras">Compras <span class="bdg">3</span></button>
+    <button class="tab" data-p="ventas">Ventas</button>
+    <button class="tab" data-p="caja">Caja y bancos</button>
+    <button class="tab" data-p="concil">Conciliación</button>
+    <button class="tab" data-p="reportes">Reportes</button>
+  </nav></div>
+
+  <!-- ── 1 · RESUMEN (absorbe Flujo de caja) ── -->
+  <div class="panel" id="p-resumen" style="display:flex;flex-direction:column;gap:14px">
+    <div class="kpirow">
+      <div class="kpi k-em"><div class="l">Ingresos del mes</div><div class="v">S/ 0.00</div><div class="s">Ago '26</div></div>
+      <div class="kpi k-rose"><div class="l">Gastos del mes</div><div class="v">S/ 6,522.92</div><div class="s">planilla + compras</div></div>
+      <div class="kpi"><div class="l">Por cobrar</div><div class="v">S/ 0.00</div><div class="s">cuenta 12</div></div>
+      <div class="kpi k-rose"><div class="l">Por pagar</div><div class="v">S/ 807,341.89</div><div class="s">42 · 45 · 41</div></div>
+      <div class="kpi k-blue"><div class="l">Posición de caja</div><div class="v">S/ 1,391,395.22</div><div class="s">4 cuentas</div></div>
+      <div class="kpi k-violet"><div class="l">Detracc. por pagar</div><div class="v">S/ 4,431.00</div><div class="s">2 pendientes</div></div>
+    </div>
+    <div style="display:grid;grid-template-columns:2fr 1fr;gap:12px">
+      <div class="card">
+        <div class="toolbar"><span class="ttl">Flujo de caja</span><span class="cnt">antes era una tab entera</span><span class="grow"></span>
+          <div class="seg"><button class="on">12 meses</button><button>Por proyecto</button><button>Sankey</button></div></div>
+        <div style="padding:14px">
+          <svg viewBox="0 0 640 180" width="100%" role="img" aria-label="Flujo mensual: barras de ingresos y egresos con línea de saldo">
+            <line x1="30" y1="150" x2="630" y2="150" stroke="var(--line-strong)"/>
+            <g font-family="JetBrains Mono" font-size="9" fill="var(--ink-4)">
+              <text x="50" y="166">Set</text><text x="100" y="166">Oct</text><text x="150" y="166">Nov</text><text x="200" y="166">Dic</text>
+              <text x="250" y="166">Ene</text><text x="300" y="166">Feb</text><text x="350" y="166">Mar</text><text x="400" y="166">Abr</text>
+              <text x="450" y="166">May</text><text x="500" y="166">Jun</text><text x="550" y="166">Jul</text><text x="600" y="166">Ago</text>
+            </g>
+            <g fill="var(--emerald-600)" opacity=".85">
+              <rect x="42" y="70" width="10" height="80"/><rect x="92" y="40" width="10" height="110"/><rect x="142" y="55" width="10" height="95"/>
+              <rect x="192" y="30" width="10" height="120"/><rect x="242" y="90" width="10" height="60"/><rect x="292" y="60" width="10" height="90"/>
+              <rect x="342" y="80" width="10" height="70"/><rect x="392" y="65" width="10" height="85"/><rect x="442" y="140" width="10" height="10"/>
+              <rect x="492" y="140" width="10" height="10"/><rect x="542" y="135" width="10" height="15"/><rect x="592" y="148" width="10" height="2"/>
+            </g>
+            <g fill="var(--rose-600)" opacity=".8">
+              <rect x="54" y="95" width="10" height="55"/><rect x="104" y="75" width="10" height="75"/><rect x="154" y="60" width="10" height="90"/>
+              <rect x="204" y="70" width="10" height="80"/><rect x="254" y="100" width="10" height="50"/><rect x="304" y="110" width="10" height="40"/>
+              <rect x="354" y="95" width="10" height="55"/><rect x="404" y="105" width="10" height="45"/><rect x="454" y="145" width="10" height="5"/>
+              <rect x="504" y="145" width="10" height="5"/><rect x="554" y="142" width="10" height="8"/><rect x="604" y="144" width="10" height="6"/>
+            </g>
+            <polyline fill="none" stroke="var(--primary)" stroke-width="2"
+              points="47,120 97,95 147,90 197,60 247,68 297,50 347,55 397,48 447,52 497,54 547,53 597,56"/>
+            <g font-family="JetBrains Mono" font-size="9">
+              <rect x="470" y="12" width="8" height="8" fill="var(--emerald-600)"/><text x="482" y="20" fill="var(--ink-3)">Ingresos</text>
+              <rect x="536" y="12" width="8" height="8" fill="var(--rose-600)"/><text x="548" y="20" fill="var(--ink-3)">Egresos</text>
+              <line x1="596" y1="16" x2="612" y2="16" stroke="var(--primary)" stroke-width="2"/><text x="616" y="20" fill="var(--ink-3)">Saldo</text>
+            </g>
+          </svg>
+        </div>
+      </div>
+      <div class="card">
+        <div class="toolbar"><span class="ttl">Tesorería</span><span class="cnt">4 cuentas</span></div>
+        <table>
+          <tbody>
+            <tr><td class="mono">10411</td><td>BCP Principal</td><td class="r mono">1,392,195.22</td></tr>
+            <tr><td class="mono">10441</td><td>Scotia DORATTA</td><td class="r mono">0.00</td></tr>
+            <tr><td class="mono">10451</td><td>Caja chica</td><td class="r mono">−800.00</td></tr>
+            <tr><td class="mono">1071</td><td>BN Detracciones</td><td class="r mono">0.00</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="note"><div class="hd"><span class="chip blue">Cambio</span>Flujo de caja deja de ser tab</div>
+      El gráfico vive en el Resumen (arriba), con segmento para cambiar de vista (12 meses / por proyecto / sankey). El Resumen se vuelve la pantalla de Mario: KPIs + gráfico + tesorería + CxC/CxP en un solo scroll.</div>
+  </div>
+
+  <!-- ── 2 · COMPRAS (absorbe Órdenes + Bandeja CPE) ── -->
+  <div class="panel" id="p-compras" style="display:none;flex-direction:column;gap:14px">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <div class="seg">
+        <button class="on">Registro</button>
+        <button>Órdenes por aprobar/pagar<span class="n">3</span></button>
+        <button>Bandeja CPE<span class="n">4</span></button>
+      </div>
+      <span class="grow"></span>
+      <button class="btn">TXT SIRE</button>
+      <button class="btn pri">Nueva compra</button>
+    </div>
+    <div class="card">
+      <div class="toolbar"><span class="ttl">Registro de compras</span><span class="cnt">1,576</span><span class="grow"></span>
+        <select class="sel"><option>2026</option></select><select class="sel"><option>Agosto</option></select></div>
+      <table>
+        <thead><tr><th>Emisión</th><th>Proveedor</th><th>Comprobante</th><th>Obra</th><th>Cuenta</th><th class="r">Total</th><th class="r">Saldo</th><th>Estado</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">2026-08-07</td><td>PROVEEDOR TEST DEMO</td><td class="mono">F001-99999</td><td class="mono">PG0001</td><td class="mono">602</td><td class="r mono">1,180.00</td><td class="r mono">0.00</td><td><span class="chip green">Pagada</span></td></tr>
+          <tr><td class="mono">2026-07-19</td><td>Ferretería Demo</td><td class="mono">F001-123</td><td class="mono">—</td><td class="mono">603</td><td class="r mono">944.00</td><td class="r mono" style="color:var(--rose-600)">944.00</td><td><span class="chip red">Pendiente</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note"><div class="hd"><span class="chip blue">Cambio</span>Órdenes y CPE viven dentro de Compras</div>
+      La OC es el compromiso y la compra el devengado: mismo dominio, segmentos distintos. El badge en la tab avisa cuántas órdenes esperan aprobación sin entrar. La Bandeja CPE (F2.3) llega aquí, no como tab nueva.</div>
+  </div>
+
+  <!-- ── 3 · VENTAS ── -->
+  <div class="panel" id="p-ventas" style="display:none;flex-direction:column;gap:14px">
+    <div style="display:flex;align-items:center;gap:10px">
+      <div class="seg"><button class="on">Registro 14.1</button><button>Bandeja CPE emitidos</button></div>
+      <span class="grow"></span><button class="btn">TXT SIRE</button><button class="btn pri">Nueva venta</button>
+    </div>
+    <div class="card">
+      <div class="toolbar"><span class="ttl">Registro de ventas</span><span class="cnt">5</span></div>
+      <table>
+        <thead><tr><th>Emisión</th><th>Obra</th><th>Valo</th><th>Comprobante</th><th class="r">Total</th><th class="r">Detracción</th><th class="r">Ret. garantía</th><th>Estado</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">2026-03-16</td><td class="mono">PG0001</td><td class="mono">VAL-05</td><td class="mono" style="color:var(--warn-ink)">sin comprobante</td><td class="r mono">106,653.39</td><td class="r mono">—</td><td class="r mono">9,696.67</td><td><span class="chip amber">Por cobrar</span></td></tr>
+          <tr><td class="mono">2025-12-01</td><td class="mono">PG0001</td><td class="mono">VAL-03</td><td class="mono">F001-00000083</td><td class="r mono">244,770.90</td><td class="r mono">9,791.00</td><td class="r mono">22,251.90</td><td><span class="chip green">Cobrada</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note"><div class="hd"><span class="chip blue">Sin cambio de tab</span>Ventas queda igual</div>
+      Solo gana el alta standalone (F3.1) y su propio segmento de bandeja CPE para XML emitidos. Es la tab que mata el placeholder del PLE.</div>
+  </div>
+
+  <!-- ── 4 · CAJA Y BANCOS (fusión Bancos + Movimientos + Cajas) ── -->
+  <div class="panel" id="p-caja" style="display:none;flex-direction:column;gap:14px">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <div class="seg" id="seg-caja">
+        <button class="on" data-v="cuenta">Libro por cuenta</button>
+        <button data-v="todos">Todos los movimientos</button>
+        <button data-v="cajas">Cajas y rendiciones<span class="n">1</span></button>
+      </div>
+      <span class="grow"></span>
+      <button class="btn pri">Registrar movimiento</button>
+    </div>
+
+    <div class="card" id="v-cuenta">
+      <div class="toolbar"><span class="ttl">Libro banco</span>
+        <select class="sel"><option>10411 · BCP Principal · 194-9927833-0-39</option><option>10451 · Caja chica</option><option>1071 · BN Detracciones</option></select>
+        <span class="grow"></span><span class="chip blue">Saldo S/ 1,392,195.22</span></div>
+      <table>
+        <thead><tr><th>Fecha</th><th>Descripción</th><th>N° operación</th><th>Aplicado a</th><th class="r">Cargo</th><th class="r">Abono</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">2026-08-07</td><td>Pago PROVEEDOR TEST</td><td class="mono">5406618</td><td class="mono" style="color:var(--primary)">F001-99999</td><td class="r mono">1,180.00</td><td class="r mono">—</td></tr>
+          <tr><td class="mono">2026-07-19</td><td>Entrega caja Kelly</td><td class="mono">5404001</td><td class="mono" style="color:var(--primary)">REN-2026-0001</td><td class="r mono">800.00</td><td class="r mono">—</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card" id="v-todos" style="display:none">
+      <div class="toolbar"><span class="ttl">Todos los movimientos</span><span class="cnt">2,111 · todas las cuentas y cajas</span>
+        <span class="grow"></span><div class="seg"><button class="on">Todos</button><button>Ingresos</button><button>Egresos</button></div></div>
+      <table>
+        <thead><tr><th>Fecha</th><th>Tipo</th><th>Cuenta</th><th>N° op.</th><th>Concepto</th><th class="r">Monto</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">2026-08-07</td><td><span class="chip red">Egreso</span></td><td class="mono">10411</td><td class="mono">5406618</td><td>Pago PROVEEDOR TEST</td><td class="r mono" style="color:var(--rose-600)">−1,180.00</td></tr>
+          <tr><td class="mono">2026-01-09</td><td><span class="chip green">Ingreso</span></td><td class="mono">10411</td><td class="mono">4477102</td><td>Cobro VAL-03</td><td class="r mono" style="color:var(--emerald-600)">+234,979.90</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card" id="v-cajas" style="display:none">
+      <div class="toolbar"><span class="ttl">Cajas y rendiciones</span><span class="cnt">F3.2 · por proyecto</span><span class="grow"></span><button class="btn pri">Nueva entrega</button></div>
+      <table>
+        <thead><tr><th>Caja</th><th>Proyecto</th><th>Encargado</th><th>Origen</th><th class="r">Entregado</th><th class="r">Rendido</th><th class="r">Saldo</th><th>Estado</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">CAJA-2026-001</td><td class="mono">PG0001</td><td>Andrea García</td><td class="mono">BCP op. 5404001</td><td class="r mono">800.00</td><td class="r mono">620.00</td><td class="r mono" style="color:var(--warn-ink)">180.00</td><td><span class="chip amber">Abierta</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note"><div class="hd"><span class="chip blue">Cambio</span>Bancos + Movimientos + Cajas = una sola tab</div>
+      Es la misma data con tres lentes: una cuenta (libro), todas (consolidado, lo que Kelly tenía en su Excel) y las cajas por proyecto (F3.2). Tres tabs de nivel 1 hoy serían redundantes; como segmentos, un solo lugar donde vive la plata.</div>
+  </div>
+
+  <!-- ── 5 · CONCILIACIÓN ── -->
+  <div class="panel" id="p-concil" style="display:none;flex-direction:column;gap:14px">
+    <div class="card">
+      <div class="toolbar"><span class="ttl">Conciliación</span><span class="cnt">extracto vs sistema · match por N° operación</span>
+        <span class="grow"></span><button class="btn">Importar extracto</button><button class="btn pri">Auto-conciliar</button></div>
+      <table>
+        <thead><tr><th>Extracto</th><th>N° op.</th><th class="r">Monto</th><th>Sistema</th><th>Estado</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">07/08 TRANSF CTA TERC</td><td class="mono">5406618</td><td class="r mono">−1,180.00</td><td class="mono" style="color:var(--primary)">F001-99999</td><td><span class="chip green">Match</span></td></tr>
+          <tr><td class="mono">12/08 CONSUMO TARJETA</td><td class="mono">797585</td><td class="r mono">−272.50</td><td style="color:var(--ink-4)">sin registrar</td><td><button class="btn" style="height:24px;font-size:10.5px">Registrar desde extracto</button></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note"><div class="hd"><span class="chip blue">Sin cambio</span>Conciliación queda como tab propia</div>
+      Es el punto de control mensual de Kelly contra el banco: merece su lugar. Ya funciona (import + match H3); se le suma "registrar desde extracto" prellenado.</div>
+  </div>
+
+  <!-- ── 6 · REPORTES ── -->
+  <div class="panel" id="p-reportes" style="display:none;flex-direction:column;gap:14px">
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">
+      <button class="btn" style="height:auto;padding:12px;flex-direction:column;align-items:flex-start;gap:3px"><b>Cuentas por pagar</b><span class="mono" style="font-size:10px;color:var(--ink-4)">42 · 45 · 41 por tercero</span></button>
+      <button class="btn" style="height:auto;padding:12px;flex-direction:column;align-items:flex-start;gap:3px"><b>Cuentas por cobrar</b><span class="mono" style="font-size:10px;color:var(--ink-4)">12 por cliente y obra</span></button>
+      <button class="btn" style="height:auto;padding:12px;flex-direction:column;align-items:flex-start;gap:3px"><b>Detracciones</b><span class="mono" style="font-size:10px;color:var(--ink-4)">por depositar / retenidas</span></button>
+      <button class="btn" style="height:auto;padding:12px;flex-direction:column;align-items:flex-start;gap:3px"><b>Utilidad por proyecto</b><span class="mono" style="font-size:10px;color:var(--ink-4)">ingresos − CD − GG</span></button>
+    </div>
+    <div class="note"><div class="hd"><span class="chip blue">Sin cambio</span>Reportes queda; gana el análisis por cuenta con auxiliar (F3.3)</div>
+      Todo export en Excel plano — Kelly arma su propio formato desde las cuentas contables.</div>
+  </div>
+
+  <!-- ══════ POR QUÉ ══════ -->
+  <div class="sechead"><span class="sq"></span><span class="tx">Reglas de la consolidación</span><span class="rule"></span></div>
+  <div class="notegrid">
+    <div class="note"><div class="hd">1 · Tab = dominio, segmento = vista</div>
+      Una tab responde "¿de qué estoy hablando?" (compras, ventas, plata). El segmento responde "¿cómo lo quiero ver?". Con 6 dominios ya no se agrega tab por feature nueva: cajas, bandeja CPE y órdenes entran como segmentos.</div>
+    <div class="note"><div class="hd">2 · Badges en vez de tabs de pendientes</div>
+      Órdenes por aprobar y CPE por completar se anuncian con contador en la tab Compras. Kelly/Mario ven el pendiente sin navegar.</div>
+    <div class="note"><div class="hd">3 · Lo que muere</div>
+      "Flujo de caja" como tab (se integra al Resumen), "Movimientos" y "Bancos" como tabs separadas (segmentos de Caja y bancos), "Gastos" (ya es Compras). Contabilidad no se toca en esta propuesta.</div>
+  </div>
+
+</div>
+
+<script>
+document.querySelectorAll('#tabs .tab').forEach(function(b){
+  b.addEventListener('click', function(){
+    document.querySelectorAll('#tabs .tab').forEach(function(x){ x.classList.toggle('on', x===b); });
+    document.querySelectorAll('.panel').forEach(function(p){ p.style.display = p.id === 'p-' + b.dataset.p ? 'flex' : 'none'; });
+  });
+});
+document.querySelectorAll('.seg').forEach(function(s){
+  s.querySelectorAll('button').forEach(function(b){
+    b.addEventListener('click', function(){
+      s.querySelectorAll('button').forEach(function(x){ x.classList.toggle('on', x===b); });
+      if (s.id === 'seg-caja') {
+        ['cuenta','todos','cajas'].forEach(function(v){
+          var el = document.getElementById('v-' + v);
+          if (el) el.style.display = b.dataset.v === v ? '' : 'none';
+        });
+      }
+    });
+  });
+});
+</script>
+</body>
+</html>

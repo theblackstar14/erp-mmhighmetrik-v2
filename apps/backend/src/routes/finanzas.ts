@@ -711,9 +711,10 @@ router.get('/finanzas/resumen', async (req, res) => {
 
   // Todas las lecturas independientes en paralelo · tesorería vía GROUP BY (no traer TODA movimientos)
   const [movs, cuentas, tesRows, valos, ocs, gars, gastosOf, pm] = await Promise.all([
-    db.select({ fecha: schema.movimientos.fecha, tipo: schema.movimientos.tipoMovimiento, monto: schema.movimientos.monto }).from(schema.movimientos).where(pFilter ? eq(schema.movimientos.proyectoId, pFilter) : undefined),
+    // fix: los movimientos ANULADOS no cuentan en KPIs ni tesorería (la anulación H1 no llegaba a los agregados)
+    db.select({ fecha: schema.movimientos.fecha, tipo: schema.movimientos.tipoMovimiento, monto: schema.movimientos.monto }).from(schema.movimientos).where(and(eq(schema.movimientos.anulado, false), pFilter ? eq(schema.movimientos.proyectoId, pFilter) : undefined)),
     db.select().from(schema.cuentasBancarias).where(eq(schema.cuentasBancarias.activo, true)),
-    db.select({ cuentaId: schema.movimientos.cuentaId, tipo: schema.movimientos.tipoMovimiento, total: sql<number>`coalesce(sum(${schema.movimientos.monto}),0)::float8`, n: sql<number>`count(*)::int` }).from(schema.movimientos).groupBy(schema.movimientos.cuentaId, schema.movimientos.tipoMovimiento),
+    db.select({ cuentaId: schema.movimientos.cuentaId, tipo: schema.movimientos.tipoMovimiento, total: sql<number>`coalesce(sum(${schema.movimientos.monto}),0)::float8`, n: sql<number>`count(*)::int` }).from(schema.movimientos).where(eq(schema.movimientos.anulado, false)).groupBy(schema.movimientos.cuentaId, schema.movimientos.tipoMovimiento),
     db.select().from(schema.valorizaciones).where(pFilter ? eq(schema.valorizaciones.proyectoId, pFilter) : undefined),
     db.select().from(schema.ordenesCompra).where(pFilter ? eq(schema.ordenesCompra.proyectoId, pFilter) : undefined),
     db.select().from(schema.garantias).where(pFilter ? eq(schema.garantias.proyectoId, pFilter) : undefined),
@@ -1084,7 +1085,7 @@ router.get('/inventario/:id/detalle', async (req, res) => {
 // GET saldos por cuenta (global · caja real de toda la empresa)
 router.get('/tesoreria/saldos', async (_req, res) => {
   const cuentas = await db.select().from(schema.cuentasBancarias).where(eq(schema.cuentasBancarias.activo, true));
-  const movs = await db.select({ cuentaId: schema.movimientos.cuentaId, tipo: schema.movimientos.tipoMovimiento, monto: schema.movimientos.monto }).from(schema.movimientos);
+  const movs = await db.select({ cuentaId: schema.movimientos.cuentaId, tipo: schema.movimientos.tipoMovimiento, monto: schema.movimientos.monto }).from(schema.movimientos).where(eq(schema.movimientos.anulado, false));
   const saldos = cuentas.map((c) => {
     const ms = movs.filter((m) => m.cuentaId === c.id);
     const ingresos = ms.filter((m) => m.tipo === 'Ingreso').reduce((s, m) => s + Number(m.monto), 0);

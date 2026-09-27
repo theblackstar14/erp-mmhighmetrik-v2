@@ -28,7 +28,8 @@ import { EmittingOverlay } from '@/components/ui/EmittingOverlay.js';
 
 const FlujoCajaView = lazy(() => import('./FlujoCajaView.js'));
 
-type Sub = 'resumen' | 'compras' | 'ventas' | 'bancos' | 'flujo' | 'movimientos' | 'ordenes' | 'conciliacion' | 'reportes';
+// Consolidación 6 tabs: tab = dominio, segmento interno = vista (mockup finanzas-tabs-consolidado)
+type Sub = 'resumen' | 'compras' | 'ventas' | 'caja' | 'conciliacion' | 'reportes';
 
 const mesLabel = (m: string | null) => {
   if (!m) return '—';
@@ -89,10 +90,7 @@ export function FinanzasPage() {
             ['resumen', 'Resumen'],
             ['compras', 'Compras'],
             ['ventas', 'Ventas'],
-            ['bancos', 'Bancos'],
-            ['flujo', 'Flujo de caja'],
-            ['movimientos', 'Movimientos'],
-            ['ordenes', 'Órdenes (aprobar/pagar)'],
+            ['caja', 'Caja y bancos'],
             ['conciliacion', 'Conciliación'],
             ['reportes', 'Reportes'],
           ] as const).map(([k, l]) => (
@@ -111,17 +109,21 @@ export function FinanzasPage() {
       </div>
 
       <TabFade tabKey={sub}>
-        {sub === 'resumen' && <ResumenView r={r} loading={resumenQ.isLoading} />}
-        {sub === 'flujo' && (
-          <Suspense fallback={<Skel className="h-[420px] w-full" />}>
-            <FlujoCajaView proyectoId={filtro} />
-          </Suspense>
+        {sub === 'resumen' && (
+          <div className="space-y-5">
+            <ResumenView r={r} loading={resumenQ.isLoading} />
+            {/* Flujo de caja absorbido: era una tab entera, ahora es la sección gráfica del resumen */}
+            <div>
+              <h2 className="text-[13px] font-semibold mb-2">Flujo de caja</h2>
+              <Suspense fallback={<Skel className="h-[420px] w-full" />}>
+                <FlujoCajaView proyectoId={filtro} />
+              </Suspense>
+            </div>
+          </div>
         )}
-        {sub === 'ordenes' && <FinanzasOcQueue proyectoId={filtro} />}
-        {sub === 'movimientos' && <GlobalLedger proyectoId={filtro} proyectos={proyectos} kind="movimientos" />}
-        {sub === 'compras' && <GlobalLedger proyectoId={filtro} proyectos={proyectos} kind="gastos" />}
+        {sub === 'compras' && <ComprasHub proyectoId={filtro} proyectos={proyectos} />}
         {sub === 'ventas' && <VentasView proyectoId={filtro} />}
-        {sub === 'bancos' && <BancosView />}
+        {sub === 'caja' && <CajaBancosHub proyectoId={filtro} proyectos={proyectos} />}
         {sub === 'conciliacion' && <ConciliacionView />}
         {sub === 'reportes' && <ReportesView />}
       </TabFade>
@@ -686,6 +688,52 @@ function GlobalLedger({ proyectoId, proyectos, kind }: { proyectoId: string; pro
       </div>
       <p className="text-[10.5px] text-ink-4">Click en una compra para ver sus ítems de inventario + valuación. Para registrar con detalle usa el módulo por obra.</p>
       {gastoSel && <GastoItemsModal gastoId={gastoSel} onClose={() => setGastoSel(null)} />}
+    </div>
+  );
+}
+
+// ─── Consolidación · segmento interno (tab = dominio, segmento = vista) ──
+function SegTabs<T extends string>({ value, onChange, opts }: { value: T; onChange: (v: T) => void; opts: readonly { v: T; l: string; n?: number }[] }) {
+  return (
+    <div className="inline-flex rounded-md border border-line p-0.5 bg-bg-sunken">
+      {opts.map((o) => (
+        <button key={o.v} onClick={() => onChange(o.v)}
+          className={cn('h-8 px-3 rounded-[5px] text-[11.5px] font-medium transition-colors inline-flex items-center gap-1.5',
+            value === o.v ? 'bg-bg-elev text-foreground shadow-sm' : 'text-ink-3 hover:text-foreground')}>
+          {o.l}
+          {o.n != null && o.n > 0 && <span className="font-mono text-[9.5px] px-1 rounded bg-warn-soft text-warn-ink">{o.n}</span>}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ─── Tab Compras · segmentos: Registro · Órdenes por aprobar/pagar (+ Bandeja CPE en F2.3) ──
+function ComprasHub({ proyectoId, proyectos }: { proyectoId: string; proyectos: { id: string; codigo: string; nombre: string }[] }) {
+  const [vista, setVista] = useState<'registro' | 'ordenes'>('registro');
+  return (
+    <div className="space-y-3">
+      <SegTabs value={vista} onChange={setVista} opts={[
+        { v: 'registro', l: 'Registro' },
+        { v: 'ordenes', l: 'Órdenes por aprobar/pagar' },
+      ] as const} />
+      {vista === 'registro' && <GlobalLedger proyectoId={proyectoId} proyectos={proyectos} kind="gastos" />}
+      {vista === 'ordenes' && <FinanzasOcQueue proyectoId={proyectoId} />}
+    </div>
+  );
+}
+
+// ─── Tab Caja y bancos · segmentos: Libro por cuenta · Todos los movimientos (+ Cajas en F3.2) ──
+function CajaBancosHub({ proyectoId, proyectos }: { proyectoId: string; proyectos: { id: string; codigo: string; nombre: string }[] }) {
+  const [vista, setVista] = useState<'cuenta' | 'todos'>('cuenta');
+  return (
+    <div className="space-y-3">
+      <SegTabs value={vista} onChange={setVista} opts={[
+        { v: 'cuenta', l: 'Libro por cuenta' },
+        { v: 'todos', l: 'Todos los movimientos' },
+      ] as const} />
+      {vista === 'cuenta' && <BancosView />}
+      {vista === 'todos' && <GlobalLedger proyectoId={proyectoId} proyectos={proyectos} kind="movimientos" />}
     </div>
   );
 }
