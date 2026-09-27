@@ -779,7 +779,7 @@ router.post('/generar', async (req, res) => {
     .from(schema.asientos)
     .where(and(dsql`${schema.asientos.origen} != 'manual'`, dsql`${schema.asientos.status} != 'anulado'`));
   const yaSet = new Set(yaGenerados.map((a) => `${a.origen}:${a.origenId}`));
-  const resultado = { gastos: 0, pagosOc: 0, valorizaciones: 0, cobros: 0, planillas: 0, movimientos: 0, movSkip: { preCutover: 0, sinCuenta104x: 0, transferEspejo: 0 }, errores: [] as string[] };
+  const resultado = { gastos: 0, pagosOc: 0, valorizaciones: 0, cobros: 0, adelantos: 0, planillas: 0, movimientos: 0, movSkip: { preCutover: 0, sinCuenta104x: 0, transferEspejo: 0 }, errores: [] as string[] };
 
   // F3 · CUTOVER del 104x · legacy (pago_oc/cobro_valo) manda ANTES del cutover, movimientos DESPUÉS.
   // cutover=null → inerte: legacy asienta todo (comportamiento actual), pass de movimientos no asienta nada.
@@ -881,6 +881,12 @@ router.post('/generar', async (req, res) => {
         const total = Number(v.montoTotalConIgv ?? v.montoTotal);
         // F1.1 · la retención de garantía nace segregada en 12122; la 1212 queda solo con lo exigible.
         const retGar = Math.min(Math.max(Number(v.montoRetencion ?? 0), 0), total);
+        // F1.2 · amortización de anticipo: la factura SUNAT la resta ANTES del IGV (campo "Anticipos"),
+        // así que total/montoIgv ya vienen netos. El debe 122 cancela el anticipo; el ingreso (7041) es bruto.
+        const amort = Math.max(Number(v.montoAmortizaciones ?? 0), 0);
+        // con amortización el IGV de la factura es montoIgv (0.18 × base neta); el fallback total−sinIgv
+        // solo vale cuando no hay amortización (sinIgv es el bruto).
+        const igvLinea = amort > 0 ? igv : (Math.max(0, total - sinIgv) || igv);
         await gen({
           fecha: String(v.fechaEmision),
           glosa: `Valorización N°${v.numero} devengada`,
@@ -890,13 +896,14 @@ router.post('/generar', async (req, res) => {
           lineas: [
             { cuenta: '1212', descripcion: `Val N°${v.numero}`, debe: total - retGar, haber: 0, obraId: null },
             { cuenta: '12122', descripcion: `Retención garantía Val N°${v.numero}`, debe: retGar, haber: 0, obraId: null },
+            { cuenta: '122', descripcion: `Amortización anticipo Val N°${v.numero}`, debe: amort, haber: 0, obraId: null },
             // WS1 · cuenta de ingreso: la que Kelly confirmó (default fuerte 7041). Deriva clase (70x → null).
             {
               cuenta: v.cuentaContable ?? '7041', descripcion: 'Servicios de construcción', debe: 0, haber: sinIgv,
               obraId: v.proyectoId,
               cuentaOrigen: v.cuentaContable ? ((v.cuentaContableOrigen as 'USUARIO' | 'SUGERIDO' | 'AUTOMATICO' | null) ?? 'AUTOMATICO') : 'AUTOMATICO',
             },
-            { cuenta: '40111', descripcion: 'IGV débito fiscal', debe: 0, haber: Math.max(0, total - sinIgv) || igv, obraId: null },
+            { cuenta: '40111', descripcion: 'IGV débito fiscal', debe: 0, haber: igvLinea, obraId: null },
           ],
         });
         resultado.valorizaciones++;
@@ -926,6 +933,38 @@ router.post('/generar', async (req, res) => {
       } catch (e) {
         resultado.errores.push(`cobro valo ${v.numero}: ${(e as Error).message}`);
       }
+    }
+  }
+
+  // 3b· ADELANTOS facturados (F1.2) → 1212 / 122 + 40111. La factura de anticipo tributa IGV al emitirse
+  // (estructura SUNAT: en la valo el campo "Anticipos" resta la base). El COBRO del anticipo es un
+  // movimiento bancario (cuenta contra manual 1212). Devengo documental → sin gate de cutover.
+  // Supuesto: adelantos.monto viene CON IGV (nace de pct × monto de contrato, que es con IGV).
+  const adelantosFacturados = await db.select().from(schema.adelantos).where(inArray(schema.adelantos.estado, ['pagado', 'amortizado']));
+  for (const a of adelantosFacturados) {
+    if (!a.fechaPago) continue;
+    const f = String(a.fechaPago).slice(0, 10);
+    if (periodoDe(f) !== periodo) continue;
+    if (yaSet.has(`adelanto:${a.id}`)) continue;
+    try {
+      const monto = Number(a.monto);
+      if (monto <= 0) continue;
+      const base = Number((monto / 1.18).toFixed(2));
+      await gen({
+        fecha: f,
+        glosa: `Anticipo ${a.tipo} facturado`,
+        origen: 'adelanto',
+        origenId: a.id,
+        proyectoId: a.proyectoId,
+        lineas: [
+          { cuenta: '1212', descripcion: 'Factura de anticipo', debe: monto, haber: 0, obraId: null },
+          { cuenta: '122', descripcion: 'Anticipo de cliente', debe: 0, haber: base, obraId: null },
+          { cuenta: '40111', descripcion: 'IGV débito anticipo', debe: 0, haber: monto - base, obraId: null },
+        ],
+      });
+      resultado.adelantos++;
+    } catch (e) {
+      resultado.errores.push(`adelanto ${a.id}: ${(e as Error).message}`);
     }
   }
 
@@ -1054,7 +1093,7 @@ router.post('/generar', async (req, res) => {
     }
   }
 
-  const totalGenerados = resultado.gastos + resultado.pagosOc + resultado.valorizaciones + resultado.cobros + resultado.planillas + resultado.movimientos;
+  const totalGenerados = resultado.gastos + resultado.pagosOc + resultado.valorizaciones + resultado.cobros + resultado.adelantos + resultado.planillas + resultado.movimientos;
   if (!dryRunMov && totalGenerados > 0) await audit(req, { action: 'generar', entityType: 'periodo', entityId: periodo, after: { generados: totalGenerados, detalle: resultado } });
   res.json({ ok: true, periodo, generados: totalGenerados, detalle: resultado, cutover: cfg.cutover, parallel: cfg.parallel, dryRunMov });
 });
