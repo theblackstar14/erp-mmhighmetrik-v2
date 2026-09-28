@@ -1911,6 +1911,9 @@ function ReportesView({ r }: { r?: FinanzasResumen }) {
 
   return (
     <div className="space-y-4">
+      {/* F3.3 · el reporte "libre" de Kelly: cualquier cuenta → auxiliar por tercero */}
+      <AnalisisCuenta />
+
       <div className="flex flex-wrap items-center gap-2">
         {REPS.map((x) => (
           <button key={x.id} onClick={() => setTipo(x.id)} className={cn('h-8 px-3 rounded-md text-[12px] font-medium border', tipo === x.id ? 'bg-primary text-primary-foreground border-primary' : 'border-line text-ink-2 hover:bg-bg-sunken')}>{x.label}</button>
@@ -1968,6 +1971,106 @@ function ReportesView({ r }: { r?: FinanzasResumen }) {
           <div className="space-y-3">
             <Garantias r={r} />
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── F3.3 · Análisis de cuenta · auxiliar por tercero con aging ──
+function AnalisisCuenta() {
+  const [cuenta, setCuenta] = useState<string | null>(null);
+  const proyectosQ = useQuery({ queryKey: ['proyectos-list'], queryFn: () => api.proyectos.list() });
+  const [proyectoId, setProyectoId] = useState('todos');
+  const q = useQuery({
+    queryKey: ['auxiliar', cuenta, proyectoId],
+    queryFn: () => api.contabilidad.getAuxiliar(cuenta!, { proyectoId }),
+    enabled: !!cuenta,
+  });
+  const r = q.data;
+  const csv = () => {
+    if (!r) return;
+    const head = r.modo === 'documentos'
+      ? ['Tercero', 'RUC', 'Corriente', '1-30', '31-60', '61-90', '+90', 'Saldo', 'Docs']
+      : ['Tercero', 'RUC', 'Debe', 'Haber', 'Saldo', 'Movs'];
+    const lines = r.modo === 'documentos'
+      ? r.filas.map((f) => [f.tercero, f.ruc ?? '', f.corriente.toFixed(2), f.d30.toFixed(2), f.d60.toFixed(2), f.d90.toFixed(2), f.mas90.toFixed(2), f.saldo.toFixed(2), f.docs])
+      : r.filas.map((f) => [f.tercero, f.ruc ?? '', f.debe.toFixed(2), f.haber.toFixed(2), f.saldo.toFixed(2), f.movs]);
+    const blob = new Blob(['﻿' + [head.join(';'), ...lines.map((l) => l.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(';'))].join('\n')], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `auxiliar_${r.cuenta}_${new Date().toISOString().slice(0, 10)}.csv`; a.click(); URL.revokeObjectURL(a.href);
+  };
+  const num = (n: number, dim = false) => <span className={cn('font-mono tabular-nums', dim && n === 0 && 'text-ink-4')}>{fmtPEN(n)}</span>;
+  return (
+    <div className="rounded-lg border border-line bg-bg-elev overflow-hidden">
+      <div className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-2.5">
+        <h3 className="text-[13px] font-semibold">Análisis de cuenta</h3>
+        <span className="text-[10.5px] font-mono text-ink-4">elige la cuenta · el sistema desagrega por tercero</span>
+        <span className="flex-1" />
+        <div className="w-[290px]"><CuentaContableSelect value={cuenta} onChange={(c) => setCuenta(c)} /></div>
+        <select value={proyectoId} onChange={(e) => setProyectoId(e.target.value)} className="h-8 px-2 rounded-md border border-line bg-bg-elev text-[12px] max-w-[190px]">
+          <option value="todos">Todos los proyectos</option>
+          {(proyectosQ.data?.proyectos ?? []).map((p) => <option key={p.id} value={p.id}>{p.codigo}</option>)}
+        </select>
+        <button onClick={csv} disabled={!r || r.filas.length === 0} className="inline-flex items-center gap-1 h-8 px-2.5 rounded-md border border-line text-[11.5px] font-medium hover:bg-bg-sunken disabled:opacity-40"><Download className="h-3.5 w-3.5" /> Excel plano</button>
+      </div>
+      {!cuenta ? <div className="px-3.5 py-6 text-center text-[12px] text-ink-3">Busca una cuenta (4212, 1212, 45, 63…) — si es cuenta control del sub-mayor sale con aging por vencimiento; si no, el mayor por contraparte.</div>
+        : q.isLoading ? <SkelRows rows={4} />
+        : !r || r.filas.length === 0 ? <div className="px-3.5 py-6 text-center text-[12px] text-ink-3">Sin saldos ni movimientos para la cuenta {cuenta}</div>
+        : r.modo === 'documentos' ? (
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead><tr className="border-b border-line bg-bg-sunken">{['Tercero', 'RUC', 'Corriente', '1-30', '31-60', '61-90', '+90', 'Saldo', 'Docs'].map((h, i) => <th key={h} className={cn('px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-ink-4', i >= 2 ? 'text-right' : 'text-left')}>{h}</th>)}</tr></thead>
+            <tbody>
+              {r.filas.map((f) => (
+                <tr key={f.tercero + (f.ruc ?? '')} className="border-b border-line hover:bg-bg-sunken/30">
+                  <td className="px-3 py-1.5 text-[11.5px] max-w-[220px] truncate">{f.tercero}</td>
+                  <td className="px-3 py-1.5 text-[11px] font-mono text-ink-3">{f.ruc ?? '—'}</td>
+                  <td className="px-3 py-1.5 text-[11px] text-right">{num(f.corriente, true)}</td>
+                  <td className="px-3 py-1.5 text-[11px] text-right text-amber-700">{num(f.d30, true)}</td>
+                  <td className="px-3 py-1.5 text-[11px] text-right text-amber-700">{num(f.d60, true)}</td>
+                  <td className="px-3 py-1.5 text-[11px] text-right text-rose-600">{num(f.d90, true)}</td>
+                  <td className="px-3 py-1.5 text-[11px] text-right text-rose-600">{num(f.mas90, true)}</td>
+                  <td className="px-3 py-1.5 text-[11px] text-right font-semibold">{num(f.saldo)}</td>
+                  <td className="px-3 py-1.5 text-[11px] font-mono tabular-nums text-right text-ink-3">{f.docs}</td>
+                </tr>
+              ))}
+              <tr className="border-t-2 border-line bg-bg-sunken/40 font-semibold">
+                <td className="px-3 py-2 text-[11.5px]" colSpan={2}>Total · {r.filas.length} tercero(s)</td>
+                <td className="px-3 py-2 text-[11px] text-right">{num(r.totales.corriente)}</td>
+                <td className="px-3 py-2 text-[11px] text-right">{num(r.totales.d30)}</td>
+                <td className="px-3 py-2 text-[11px] text-right">{num(r.totales.d60)}</td>
+                <td className="px-3 py-2 text-[11px] text-right">{num(r.totales.d90)}</td>
+                <td className="px-3 py-2 text-[11px] text-right">{num(r.totales.mas90)}</td>
+                <td className="px-3 py-2 text-[11px] text-right">{num(r.totales.saldo)}</td>
+                <td className="px-3 py-2 text-[11px] font-mono tabular-nums text-right">{r.totales.docs}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead><tr className="border-b border-line bg-bg-sunken">{['Tercero', 'RUC', 'Debe', 'Haber', 'Saldo', 'Movs'].map((h, i) => <th key={h} className={cn('px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-ink-4', i >= 2 ? 'text-right' : 'text-left')}>{h}</th>)}</tr></thead>
+            <tbody>
+              {r.filas.slice(0, 60).map((f) => (
+                <tr key={f.tercero + (f.ruc ?? '')} className="border-b border-line hover:bg-bg-sunken/30">
+                  <td className="px-3 py-1.5 text-[11.5px] max-w-[240px] truncate">{f.tercero}</td>
+                  <td className="px-3 py-1.5 text-[11px] font-mono text-ink-3">{f.ruc ?? '—'}</td>
+                  <td className="px-3 py-1.5 text-[11px] text-right">{num(f.debe)}</td>
+                  <td className="px-3 py-1.5 text-[11px] text-right">{num(f.haber)}</td>
+                  <td className={cn('px-3 py-1.5 text-[11px] text-right font-semibold', f.saldo < 0 && 'text-rose-600')}>{num(f.saldo)}</td>
+                  <td className="px-3 py-1.5 text-[11px] font-mono tabular-nums text-right text-ink-3">{f.movs}</td>
+                </tr>
+              ))}
+              <tr className="border-t-2 border-line bg-bg-sunken/40 font-semibold">
+                <td className="px-3 py-2 text-[11.5px]" colSpan={2}>Total · {r.filas.length} contraparte(s){r.filas.length > 60 ? ' (60 en pantalla, todas en el Excel)' : ''}</td>
+                <td className="px-3 py-2 text-[11px] text-right">{num(r.totales.debe)}</td>
+                <td className="px-3 py-2 text-[11px] text-right">{num(r.totales.haber)}</td>
+                <td className="px-3 py-2 text-[11px] text-right">{num(r.totales.saldo)}</td>
+                <td className="px-3 py-2 text-[11px] font-mono tabular-nums text-right">{r.totales.movs}</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       )}
     </div>

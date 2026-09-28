@@ -1137,6 +1137,74 @@ router.post('/generar', async (req, res) => {
   res.json({ ok: true, periodo, generados: totalGenerados, detalle: resultado, cutover: cfg.cutover, parallel: cfg.parallel, dryRunMov });
 });
 
+// ── F3.3 · AUXILIAR POR TERCERO · el reporte "libre" de Kelly ────────────────────
+// Elige cualquier cuenta del plan → desagregado por tercero. Dos modos automáticos:
+//  · 'documentos': la cuenta es control del sub-mayor (hay documento_pendiente con esa
+//    cuentaControl) → saldos VIVOS por tercero con aging por vencimiento (corriente/30/60/90/+90).
+//  · 'mayor': cualquier otra cuenta → Σ debe/haber por contraparte del asiento (prefijo incluye
+//    divisionarias). Sin contraparte se agrupa como "— sin tercero".
+router.get('/auxiliar', async (req, res) => {
+  const { cuenta, proyectoId, periodo } = req.query as { cuenta?: string; proyectoId?: string; periodo?: string };
+  if (!cuenta?.trim()) return res.status(400).json({ error: 'cuenta requerida' });
+  const cta = cuenta.trim();
+  const hoy = new Date().toISOString().slice(0, 10);
+
+  // ¿modo documentos? (cuenta control del sub-mayor con docs vivos)
+  const d = schema.documentoPendiente;
+  const docs = await db.select().from(d).where(and(
+    eq(d.cuentaControl, cta),
+    inArray(d.estado, ['abierto', 'parcial']),
+    proyectoId ? eq(d.obraId, proyectoId) : undefined,
+  ));
+  if (docs.length > 0) {
+    const dias = (venc: string | null) => (venc == null ? 0 : Math.floor((Date.parse(hoy) - Date.parse(venc)) / 86400000));
+    type Fila = { tercero: string; ruc: string | null; corriente: number; d30: number; d60: number; d90: number; mas90: number; saldo: number; docs: number };
+    const porTercero = new Map<string, Fila>();
+    for (const doc of docs) {
+      const key = doc.terceroRuc ?? doc.terceroRazon ?? '— sin tercero';
+      const f = porTercero.get(key) ?? { tercero: doc.terceroRazon ?? doc.terceroRuc ?? '— sin tercero', ruc: doc.terceroRuc, corriente: 0, d30: 0, d60: 0, d90: 0, mas90: 0, saldo: 0, docs: 0 };
+      const s = Number(doc.saldoPendiente);
+      const dd = dias(doc.fechaVenc);
+      if (dd <= 0) f.corriente += s;
+      else if (dd <= 30) f.d30 += s;
+      else if (dd <= 60) f.d60 += s;
+      else if (dd <= 90) f.d90 += s;
+      else f.mas90 += s;
+      f.saldo += s;
+      f.docs += 1;
+      porTercero.set(key, f);
+    }
+    const filas = [...porTercero.values()].sort((a, b) => b.saldo - a.saldo);
+    const tot = filas.reduce((t, f) => ({ corriente: t.corriente + f.corriente, d30: t.d30 + f.d30, d60: t.d60 + f.d60, d90: t.d90 + f.d90, mas90: t.mas90 + f.mas90, saldo: t.saldo + f.saldo, docs: t.docs + f.docs }), { corriente: 0, d30: 0, d60: 0, d90: 0, mas90: 0, saldo: 0, docs: 0 });
+    return res.json({ cuenta: cta, modo: 'documentos', filas, totales: tot });
+  }
+
+  // modo mayor: líneas de la cuenta (prefijo) agrupadas por contraparte del asiento
+  const conds = [
+    dsql`${schema.asientosLineas.cuenta} LIKE ${cta + '%'}`,
+    dsql`${schema.asientos.status} != 'anulado'`,
+    proyectoId ? eq(schema.asientos.proyectoId, proyectoId) : undefined,
+    periodo && /^\d{4}-\d{2}$/.test(periodo) ? eq(schema.asientos.periodo, periodo) : undefined,
+  ].filter(Boolean);
+  const rows = await db
+    .select({
+      ruc: schema.asientos.contraparteRuc,
+      razon: schema.asientos.contraparteRazon,
+      debe: dsql<number>`coalesce(sum(${schema.asientosLineas.debe}),0)::float8`,
+      haber: dsql<number>`coalesce(sum(${schema.asientosLineas.haber}),0)::float8`,
+      movs: dsql<number>`count(*)::int`,
+    })
+    .from(schema.asientosLineas)
+    .innerJoin(schema.asientos, eq(schema.asientosLineas.asientoId, schema.asientos.id))
+    .where(and(...(conds as Parameters<typeof and>)))
+    .groupBy(schema.asientos.contraparteRuc, schema.asientos.contraparteRazon);
+  const filas = rows
+    .map((r) => ({ tercero: r.razon ?? r.ruc ?? '— sin tercero', ruc: r.ruc, debe: r.debe, haber: r.haber, saldo: Math.round((r.debe - r.haber) * 100) / 100, movs: r.movs }))
+    .sort((a, b) => Math.abs(b.saldo) - Math.abs(a.saldo));
+  const tot = filas.reduce((t, f) => ({ debe: t.debe + f.debe, haber: t.haber + f.haber, saldo: t.saldo + f.saldo, movs: t.movs + f.movs }), { debe: 0, haber: 0, saldo: 0, movs: 0 });
+  res.json({ cuenta: cta, modo: 'mayor', filas, totales: tot });
+});
+
 // ── F3-B · REPORTE SOMBRA (read-only · 0 escrituras · no toca CUTOVER) ──────────
 // Compara lo que el motor legacy asienta en 104x (1041) contra lo que los movimientos
 // de caja asentarían (recálculo de la pasada de /generar, sin gate de cutover) para

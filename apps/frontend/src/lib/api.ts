@@ -746,6 +746,13 @@ export const api = {
     cutoverReadiness: (periodo: string) => req<CutoverReadiness>(`/api/contabilidad/cutover-readiness?periodo=${periodo}`),
     cutoverDryRun: (periodo: string, cutover: string) => req<CutoverDryRun>('/api/contabilidad/cutover-dry-run', { method: 'POST', body: JSON.stringify({ periodo, cutover }) }),
     cutoverPlaybook: (periodo: string, cutover: string) => req<CutoverPlaybook>(`/api/contabilidad/cutover-playbook?periodo=${periodo}&cutover=${cutover}`),
+    // F3.3 · auxiliar por tercero: cualquier cuenta → documentos (aging) o mayor por contraparte
+    getAuxiliar: (cuenta: string, opts?: { proyectoId?: string; periodo?: string }) => {
+      const qs = new URLSearchParams({ cuenta });
+      if (opts?.proyectoId && opts.proyectoId !== 'todos') qs.set('proyectoId', opts.proyectoId);
+      if (opts?.periodo) qs.set('periodo', opts.periodo);
+      return req<AuxiliarResult>(`/api/contabilidad/auxiliar?${qs}`);
+    },
     // PLE SUNAT (C5)
     pleResumen: (periodo: string) =>
       req<{ periodo: string; libros: Record<'5.1' | '6.1' | '8.1' | '14.1' | 'RCE' | 'RVIE', { nombre: string; filas: number }> }>(`/api/contabilidad/ple/resumen?periodo=${periodo}`),
@@ -1868,6 +1875,11 @@ export type GastoInput = {
   lineas?: { descripcion: string; unidad?: string | null; cantidad: number; valorUnitario: number; descuento?: number; afectacionIgv?: string; cuentaContable?: string | null; aInventario?: boolean }[];
   detraccion?: { codigo: string; montoDeclarado?: number | null } | null;
 };
+// F3.3 · resultado del auxiliar por tercero
+export type AuxiliarResult =
+  | { cuenta: string; modo: 'documentos'; filas: { tercero: string; ruc: string | null; corriente: number; d30: number; d60: number; d90: number; mas90: number; saldo: number; docs: number }[]; totales: { corriente: number; d30: number; d60: number; d90: number; mas90: number; saldo: number; docs: number } }
+  | { cuenta: string; modo: 'mayor'; filas: { tercero: string; ruc: string | null; debe: number; haber: number; saldo: number; movs: number }[]; totales: { debe: number; haber: number; saldo: number; movs: number } };
+
 // F2.3 · borrador de la bandeja CPE
 export type CpeBorrador = {
   id: string; rol: 'compra' | 'venta'; clasificacion: 'factura' | 'boleta' | 'nc' | 'nd' | 'venta';
