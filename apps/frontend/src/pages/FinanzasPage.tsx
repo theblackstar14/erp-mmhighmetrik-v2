@@ -722,7 +722,7 @@ function SegTabs<T extends string>({ value, onChange, opts }: { value: T; onChan
 // (su casa natural) y el pago vive en Registrar movimiento con aplicaciones (F2.2).
 function ComprasHub({ proyectoId, proyectos, initialVista = 'registro' }: { proyectoId: string; proyectos: { id: string; codigo: string; nombre: string }[]; initialVista?: 'registro' | 'bandeja' }) {
   const [vista, setVista] = useState<'registro' | 'bandeja'>(initialVista);
-  const bandejaQ = useQuery({ queryKey: ['cpe-bandeja', 'compra'], queryFn: () => api.cpe.listBandeja('compra') });
+  const bandejaQ = useQuery({ queryKey: ['cpe-bandeja'], queryFn: () => api.cpe.listBandeja() });
   const pendientes = bandejaQ.data?.borradores.length ?? 0;
   return (
     <div className="space-y-3">
@@ -748,7 +748,9 @@ const CLASIF_CHIP: Record<string, { l: string; c: string }> = {
 
 function BandejaCpeView({ proyectos }: { proyectos: { id: string; codigo: string; nombre: string }[] }) {
   const qc = useQueryClient();
-  const q = useQuery({ queryKey: ['cpe-bandeja', 'compra'], queryFn: () => api.cpe.listBandeja('compra') });
+  // sin filtro de rol: las VENTAS también se muestran (chip propio, sin Completar hasta F3.1) —
+  // si no, un XML emitido por MM entra a la tabla pero queda invisible.
+  const q = useQuery({ queryKey: ['cpe-bandeja'], queryFn: () => api.cpe.listBandeja() });
   const borradores = q.data?.borradores ?? [];
   const [subiendo, setSubiendo] = useState(false);
   const [resultado, setResultado] = useState<string | null>(null);
@@ -800,7 +802,9 @@ function BandejaCpeView({ proyectos }: { proyectos: { id: string; codigo: string
                     <td className="px-3 py-1.5 text-[11px] font-mono tabular-nums text-right text-amber-700">{b.payload.detraccion ? fmtPEN(b.payload.detraccion.monto) : '—'}</td>
                     <td className="px-3 py-1.5"><span className={cn('text-[10.5px] font-medium px-1.5 py-0.5 rounded', CLASIF_CHIP[b.clasificacion]?.c)}>{CLASIF_CHIP[b.clasificacion]?.l ?? b.clasificacion}</span></td>
                     <td className="px-3 py-1.5 whitespace-nowrap text-right">
-                      <button onClick={() => setCompletar(b)} className="h-7 px-2.5 rounded-md bg-primary text-primary-foreground text-[11px] font-medium hover:opacity-90 mr-1.5">Completar</button>
+                      {b.rol === 'compra'
+                        ? <button onClick={() => setCompletar(b)} className="h-7 px-2.5 rounded-md bg-primary text-primary-foreground text-[11px] font-medium hover:opacity-90 mr-1.5">Completar</button>
+                        : <span className="text-[10.5px] text-ink-4 mr-1.5">se registra con F3.1</span>}
                       <button onClick={() => { if (confirm(`¿Descartar ${b.serie}-${b.numero}?`)) descartar.mutate(b.id); }} className="h-7 px-2 rounded-md border border-line text-[11px] text-ink-3 hover:bg-bg-sunken">Descartar</button>
                     </td>
                   </tr>
