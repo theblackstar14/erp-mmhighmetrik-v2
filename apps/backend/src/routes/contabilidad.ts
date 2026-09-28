@@ -812,9 +812,13 @@ router.post('/generar', async (req, res) => {
     const cm = cuentaMap.get(g.tipoGasto ?? '');
     if (cm && !cm.esGasto) continue; // no es gasto (financiamiento/CxC) → no se provisiona como compra
     try {
-      const subtotal = Number(g.subtotal) + Number(g.exonerado);
-      const igv = Number(g.igv);
-      const total = Number(g.total);
+      // F3.6 · devengo en PEN: moneda extranjera convierte al TC histórico del documento
+      const tcG = g.moneda === 'PEN' ? 1 : Number(g.tipoCambio ?? 0);
+      if (!(tcG > 0)) { resultado.errores.push(`gasto ${g.codigo ?? g.id}: moneda ${g.moneda} sin tipo de cambio`); continue; }
+      const pen = (n: number) => Math.round(n * tcG * 100) / 100;
+      const subtotal = pen(Number(g.subtotal) + Number(g.exonerado));
+      const igv = pen(Number(g.igv));
+      const total = pen(Number(g.total));
       if (total <= 0) continue;
       // F3.5 · boleta o destino DNG: el IGV no es crédito → va al costo (la 40111 no nace).
       // DGNG conserva la 40111 completa; la prorrata es ajuste manual de Kelly al cierre.
@@ -834,6 +838,7 @@ router.post('/generar', async (req, res) => {
       await gen({
         fecha: g.fecha,
         glosa: `${esNC ? 'NC compra' : 'Compra'} · ${g.proveedorRazon ?? 's/proveedor'} · ${g.descripcionItem ?? g.codigo ?? ''}`.slice(0, 250),
+        moneda: g.moneda, tipoCambio: g.moneda === 'PEN' ? null : tcG,
         origen: 'gasto',
         origenId: g.id,
         proyectoId: g.proyectoId,
@@ -961,9 +966,13 @@ router.post('/generar', async (req, res) => {
   for (const v of ventasStand) {
     if (yaSet.has(`venta:${v.id}`)) continue;
     try {
-      const total = Number(v.total);
-      const base = Number(v.base);
-      const igvV = Number(v.igv);
+      // F3.6 · devengo en PEN al TC histórico de la venta
+      const tcV = v.moneda === 'PEN' ? 1 : Number(v.tipoCambio ?? 0);
+      if (!(tcV > 0)) { resultado.errores.push(`venta ${v.serie}-${v.numero}: moneda ${v.moneda} sin tipo de cambio`); continue; }
+      const penV = (n: number) => Math.round(n * tcV * 100) / 100;
+      const total = penV(Number(v.total));
+      const base = penV(Number(v.base));
+      const igvV = penV(Number(v.igv));
       if (total <= 0) continue;
       const nc = v.tipoCpe === '07';
       const cta = v.cuentaContable ?? '7041';
@@ -982,6 +991,7 @@ router.post('/generar', async (req, res) => {
       await gen({
         fecha: String(v.fechaEmision),
         glosa: `${nc ? 'NC de venta' : 'Venta'} ${v.serie}-${v.numero} · ${v.clienteRazon ?? v.clienteRuc ?? 's/cliente'}`.slice(0, 250),
+        moneda: v.moneda, tipoCambio: v.moneda === 'PEN' ? null : tcV,
         origen: 'venta', origenId: v.id, proyectoId: v.proyectoId,
         docOrigen: `${v.serie}-${v.numero}`, tipoDoc: v.tipoCpe,
         contraparteRuc: v.clienteRuc, contraparteRazon: v.clienteRazon,
@@ -1092,6 +1102,27 @@ router.post('/generar', async (req, res) => {
   const cuentas104 = new Map(
     (await db.select({ id: schema.cuentasBancarias.id, cc: schema.cuentasBancarias.cuentaContable }).from(schema.cuentasBancarias)).map((c) => [c.id, c.cc]),
   );
+  // F3.6 · aplicaciones activas del periodo: el pago/cobro aplicado cancela la CUENTA CONTROL del
+  // documento (4212/1212 · fix del gap F2.2: antes caía en la naturaleza 659/759 y duplicaba gasto),
+  // y en USD la contra vale el TC del documento (snapshot) con la brecha a 675/776.
+  const apsRows = movs.length
+    ? await db.select({
+        origenId: schema.aplicacionDocumento.origenId,
+        montoAplicado: schema.aplicacionDocumento.montoAplicado,
+        moneda: schema.aplicacionDocumento.moneda,
+        tipoCambio: schema.aplicacionDocumento.tipoCambio,
+        cuentaControl: schema.documentoPendiente.cuentaControl,
+      })
+      .from(schema.aplicacionDocumento)
+      .innerJoin(schema.documentoPendiente, eq(schema.aplicacionDocumento.documentoPendienteId, schema.documentoPendiente.id))
+      .where(and(
+        eq(schema.aplicacionDocumento.origenTipo, 'movimiento'),
+        inArray(schema.aplicacionDocumento.origenId, movs.map((m) => m.id)),
+        eq(schema.aplicacionDocumento.estado, 'activa'),
+      ))
+    : [];
+  const apsPorMov = new Map<string, typeof apsRows>();
+  for (const a of apsRows) { const l = apsPorMov.get(a.origenId) ?? []; l.push(a); apsPorMov.set(a.origenId, l); }
   for (const m of movs) {
     if (yaSet.has(`movimiento:${m.id}`)) continue;
     const fmov = String(m.fecha).slice(0, 10);
@@ -1118,6 +1149,9 @@ router.post('/generar', async (req, res) => {
       // (m.cuentaContable manda sobre la inferida, abajo) — el motor no puede distinguirlo solo.
       let contra = m.ordenCompraId ? '4212' : m.valorizacionId ? '1212' : (nat in NATURALEZAS_CONTABLES ? cuentaDeNaturaleza(nat) : null);
       if (!contra) contra = m.tipoMovimiento === 'Ingreso' ? '759' : '659';
+      // F3.6 · pago/cobro APLICADO a documentos cancela su cuenta control (4212/1212), no la naturaleza
+      const apsM = apsPorMov.get(m.id) ?? [];
+      if (apsM.length && apsM[0]!.cuentaControl) contra = apsM[0]!.cuentaControl;
       // WS1 · Kelly puede fijar la cuenta contra manual → manda sobre la inferida.
       if (m.cuentaContable) contra = m.cuentaContable;
       contraTag = contra;
@@ -1126,7 +1160,29 @@ router.post('/generar', async (req, res) => {
       const igv = Number(m.igv ?? 0);
       const sub = Number(m.subtotal ?? 0) || total - igv;
       const simple = docLink || igv <= 0; // pago/cobro: el IGV nació en el devengo → no se re-asienta
-      if (m.tipoMovimiento === 'Ingreso') {
+      // F3.6 · pago/cobro aplicado a documentos en moneda extranjera: la contra vale lo que el
+      // documento asentó (Σ aplicado × TC del doc) y la brecha contra el banco es 675/776.
+      const hayFx = apsM.some((a) => (a.moneda ?? 'PEN') !== 'PEN');
+      if (hayFx) {
+        const contraPen = Math.round(apsM.reduce((s, a) => s + Number(a.montoAplicado) * ((a.moneda ?? 'PEN') === 'PEN' ? 1 : Number(a.tipoCambio ?? 0)), 0) * 100) / 100;
+        if (contraPen <= 0) { resultado.errores.push(`movimiento ${m.codigo ?? m.id}: aplicación en moneda extranjera sin TC del documento`); continue; }
+        const delta = Math.round((contraPen - total) * 100) / 100; // deuda en libros − caja real
+        if (m.tipoMovimiento === 'Egreso') {
+          lineas = [
+            { cuenta: contra, descripcion: m.descripcion, debe: contraPen, haber: 0 },
+            { cuenta: banco, debe: 0, haber: total },
+          ];
+          if (delta > 0.004) lineas.push({ cuenta: '776', descripcion: 'Diferencia de cambio (ganancia)', debe: 0, haber: delta });
+          else if (delta < -0.004) lineas.push({ cuenta: '675', descripcion: 'Diferencia de cambio (pérdida)', debe: -delta, haber: 0 });
+        } else {
+          lineas = [
+            { cuenta: banco, debe: total, haber: 0 },
+            { cuenta: contra, descripcion: m.descripcion, debe: 0, haber: contraPen },
+          ];
+          if (delta > 0.004) lineas.push({ cuenta: '675', descripcion: 'Diferencia de cambio (pérdida)', debe: delta, haber: 0 });
+          else if (delta < -0.004) lineas.push({ cuenta: '776', descripcion: 'Diferencia de cambio (ganancia)', debe: 0, haber: -delta });
+        }
+      } else if (m.tipoMovimiento === 'Ingreso') {
         lineas = simple
           ? [{ cuenta: banco, descripcion: m.descripcion, debe: total, haber: 0 }, { cuenta: contra, debe: 0, haber: total }]
           : [{ cuenta: banco, debe: total, haber: 0 }, { cuenta: contra, debe: 0, haber: sub }, { cuenta: '40111', descripcion: 'IGV débito', debe: 0, haber: igv }];
@@ -1144,7 +1200,11 @@ router.post('/generar', async (req, res) => {
     if (dryRunMov) { resultado.movimientos++; continue; } // dry-run: cuenta pero no escribe
     try {
       // F3.4 · contraparte en el header: el auxiliar por tercero y las provisiones 48 la necesitan
-      await gen({ fecha: fmov, glosa: m.descripcion ?? `Movimiento ${m.tipoMovimiento}`, origen: 'movimiento', origenId: m.id, proyectoId: m.proyectoId, contraparteRazon: esTransfer ? null : m.clienteNombre, lineas });
+      await gen({
+        fecha: fmov, glosa: m.descripcion ?? `Movimiento ${m.tipoMovimiento}`,
+        moneda: m.moneda, tipoCambio: m.moneda === 'PEN' ? null : Number(m.tipoCambio ?? 0) || null, // F3.6
+        origen: 'movimiento', origenId: m.id, proyectoId: m.proyectoId, contraparteRazon: esTransfer ? null : m.clienteNombre, lineas,
+      });
       resultado.movimientos++;
     } catch (e) {
       resultado.errores.push(`movimiento ${m.codigo ?? m.id}: ${(e as Error).message}`);

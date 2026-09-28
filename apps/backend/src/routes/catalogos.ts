@@ -9,6 +9,7 @@ import { requireAuth } from '../middleware/auth.js';
 import { requirePermiso } from '../lib/permisos.js';
 import { audit } from '../lib/audit.js';
 import { buscarTipoCambio } from '../lib/tipoCambio.js';
+import { obtenerTcSunat } from '../lib/tcSunat.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -41,6 +42,22 @@ router.get('/tipo-cambio', requirePermiso('finanzas', 'lectura'), async (req, re
   const tc = await buscarTipoCambio(fecha, moneda);
   if (!tc) return res.status(404).json({ error: `Sin tipo de cambio ${moneda} para ${fecha} (ni en los 10 dias previos). Cargalo primero.` });
   res.json(tc);
+});
+
+// F3.6 · trae el TC SUNAT del día (API pública) y lo guarda; si la API no responde → 502 y carga manual
+router.post('/tipo-cambio/sunat', requirePermiso('contabilidad', 'edicion'), async (req, res) => {
+  const fecha = String((req.body as { fecha?: unknown })?.fecha ?? '');
+  if (!FECHA.test(fecha)) return res.status(400).json({ error: 'fecha (YYYY-MM-DD) requerida' });
+  const tc = await obtenerTcSunat(fecha);
+  if (!tc) return res.status(502).json({ error: `SUNAT no respondió el TC del ${fecha}. Cárgalo manual en la tabla de tipo de cambio.` });
+  await db.insert(schema.tipoCambio)
+    .values({ fecha: tc.fecha, moneda: 'USD', compra: tc.compra.toFixed(4), venta: tc.venta.toFixed(4), fuente: 'sunat' })
+    .onConflictDoUpdate({
+      target: [schema.tipoCambio.fecha, schema.tipoCambio.moneda],
+      set: { compra: tc.compra.toFixed(4), venta: tc.venta.toFixed(4), fuente: 'sunat', updatedAt: new Date() },
+    });
+  await audit(req, { action: 'update_tipo_cambio', entityType: 'tipo_cambio', before: null, after: { fuente: 'sunat', fecha: tc.fecha, moneda: 'USD', compra: tc.compra, venta: tc.venta }, motivo: null });
+  res.json({ fecha: tc.fecha, moneda: 'USD', compra: tc.compra, venta: tc.venta, fuente: 'sunat' });
 });
 
 const tcSchema = z.object({

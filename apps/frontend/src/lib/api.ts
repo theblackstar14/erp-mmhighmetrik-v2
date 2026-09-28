@@ -767,6 +767,14 @@ export const api = {
       req<EstadosFinancieros>(`/api/contabilidad/estados-financieros${anio ? `?anio=${anio}${uit ? `&uit=${uit}` : ''}` : ''}`),
   },
 
+  // F3.6 · tipo de cambio (tabla manual + fetch SUNAT del día)
+  catalogos: {
+    getTipoCambio: (fecha: string, moneda: string) =>
+      req<{ fecha: string; moneda: string; compra: number; venta: number; diasAtras: number }>(`/api/catalogos/tipo-cambio?fecha=${fecha}&moneda=${moneda}`),
+    fetchTcSunat: (fecha: string) =>
+      req<{ fecha: string; moneda: string; compra: number; venta: number; fuente: string }>('/api/catalogos/tipo-cambio/sunat', { method: 'POST', body: JSON.stringify({ fecha }) }),
+  },
+
   // F2.3 · Bandeja CPE (borradores del lector XML UBL 2.1)
   cpe: {
     subirBandeja: async (files: File[]) => {
@@ -1878,6 +1886,7 @@ export type GastoInput = {
   // F3.5 · anotación RCE en otro periodo (crédito 12 meses) + destino del crédito fiscal
   periodoContable?: string | null; // YYYY-MM · null = mes de emisión
   destinoCredito?: 'DG' | 'DGNG' | 'DNG';
+  tipoCambio?: number | null; // F3.6 · TC histórico si moneda ≠ PEN (si falta, el backend busca en la tabla)
   // Fase 1 · extras del alta de compra (gastoCompraSchema): líneas + fechas + tributos
   fechaVencimiento?: string | null;
   lineas?: { descripcion: string; unidad?: string | null; cantidad: number; valorUnitario: number; descuento?: number; afectacionIgv?: string; cuentaContable?: string | null; aInventario?: boolean }[];
@@ -2002,6 +2011,7 @@ export type MovimientoInput = {
   gastoId?: string | null;
   cuentaContable?: string | null; // WS1 · cuenta contra manual (Kelly)
   cuentaContableOrigen?: 'USUARIO' | 'SUGERIDO' | null;
+  tipoCambio?: number | null; // F3.6 · obligatorio si moneda ≠ PEN (TC histórico)
   aplicaciones?: { documentoPendienteId: string; monto: number }[]; // F2.2 · pago/cobro aplicado a documentos
 };
 export type SaldoCuenta = { cuenta: CuentaBancaria; ingresos: number; egresos: number; saldo: number; movimientos: number };

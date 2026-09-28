@@ -1581,6 +1581,7 @@ function MovModal({ proyectos, defaultProyecto, onClose }: { proyectos: { id: st
     tipoDoc: 'RUC', docNumero: '', contraparte: '',
     cuentaId: '', cuentaDestinoId: '',
     moneda: 'PEN',
+    tipoCambio: '', // F3.6 · TC venta del día (auto de la tabla / SUNAT · editable)
     subtotal: '',
     aplicaIgv: true, incluyeIgv: false,
     aplicaDetraccion: false, detraccionPct: '4',
@@ -1590,6 +1591,29 @@ function MovModal({ proyectos, defaultProyecto, onClose }: { proyectos: { id: st
     descripcion: '',
   });
   const set = (p: Partial<typeof f>) => setF((s) => ({ ...s, ...p }));
+
+  // F3.6 · TC del día: prefill de la tabla local; botón consulta SUNAT y lo guarda; siempre editable
+  const [tcBuscando, setTcBuscando] = useState(false);
+  const [tcMsg, setTcMsg] = useState<string | null>(null);
+  const traerTc = async () => {
+    setTcBuscando(true); setTcMsg(null);
+    try {
+      const r = await api.catalogos.fetchTcSunat(f.fecha);
+      setF((s) => ({ ...s, tipoCambio: String(r.venta) }));
+    } catch (e) {
+      setTcMsg((e as Error).message);
+    } finally {
+      setTcBuscando(false);
+    }
+  };
+  useEffect(() => {
+    if (f.moneda === 'PEN') { setTcMsg(null); return; }
+    let vivo = true;
+    api.catalogos.getTipoCambio(f.fecha, f.moneda)
+      .then((r) => { if (!vivo) return; setF((s) => ({ ...s, tipoCambio: String(r.venta) })); setTcMsg(r.diasAtras > 0 ? `TC del ${r.fecha} (${r.diasAtras} día(s) atrás)` : null); })
+      .catch(() => { if (vivo) setTcMsg('Sin TC en la tabla · botón SUNAT o escríbelo'); });
+    return () => { vivo = false; };
+  }, [f.moneda, f.fecha]);
 
   const isBanc = tipo === 'Bancario';
   const isIngreso = tipo === 'Ingreso';
@@ -1645,6 +1669,7 @@ function MovModal({ proyectos, defaultProyecto, onClose }: { proyectos: { id: st
     serie: isBanc ? null : f.serie || null,
     numero: isBanc ? null : f.numero || null,
     moneda: f.moneda,
+    tipoCambio: f.moneda !== 'PEN' ? parseFloat(f.tipoCambio) || null : null, // F3.6
     monto: isBanc ? sub : totalComp,
     subtotal: isBanc ? sub : base,
     igv: isBanc ? 0 : igv,
@@ -1674,7 +1699,7 @@ function MovModal({ proyectos, defaultProyecto, onClose }: { proyectos: { id: st
             const igvRow = totalRow - baseRow;
             const { gasto: gp } = await api.finanzas.createGastoGlobal({
               fecha: f.fecha, proyectoId: row.proyectoId, proveedorRuc: f.docNumero || null, proveedorRazon: f.contraparte || null,
-              tipoComprobante: f.tipoComprobante, serie: f.serie || null, numero: f.numero || null, moneda: f.moneda, cuentaId: f.cuentaId || null,
+              tipoComprobante: f.tipoComprobante, serie: f.serie || null, numero: f.numero || null, moneda: f.moneda, tipoCambio: f.moneda !== 'PEN' ? parseFloat(f.tipoCambio) || null : null, cuentaId: f.cuentaId || null,
               descripcionItem: `${f.descripcion || f.subtipo || ''} · prorrateo ${opRef}`.trim(), subtotal: baseRow, igv: igvRow, total: totalRow,
               tipoGasto, inventariable: false, destino: 'proyecto',
               cuentaContable: cuentaContable ?? null, cuentaContableOrigen: cuentaContable ? (cuentaSugerida ? 'SUGERIDO' : 'USUARIO') : null,
@@ -1692,6 +1717,7 @@ function MovModal({ proyectos, defaultProyecto, onClose }: { proyectos: { id: st
           serie: f.serie || null,
           numero: f.numero || null,
           moneda: f.moneda,
+          tipoCambio: f.moneda !== 'PEN' ? parseFloat(f.tipoCambio) || null : null, // F3.6
           cuentaId: f.cuentaId || null,
           descripcionItem: f.descripcion || f.subtipo || null,
           subtotal: base,
@@ -1732,11 +1758,12 @@ function MovModal({ proyectos, defaultProyecto, onClose }: { proyectos: { id: st
   // origen es obligatoria: sin ella el motor 104x no puede asentar (huérfanos de prorrateo 2026-08).
   const creaMovimiento = isBanc || !esGastoEgreso || estadoPago === 'pagado';
   const aplicOk = totalAplicado <= totalComp + 0.005; // F2.2 · lo aplicado no excede el pago
-  const isValid = sub > 0 && f.fecha && repartoValido && aplicOk && (!creaMovimiento || !!f.cuentaId) && (isBanc ? (f.cuentaId && (!esTransfer || (f.cuentaDestinoId && f.cuentaDestinoId !== f.cuentaId))) : (f.contraparte.trim() && validDoc));
+  const tcOk = f.moneda === 'PEN' || parseFloat(f.tipoCambio) > 0; // F3.6 · USD exige TC
+  const isValid = sub > 0 && f.fecha && repartoValido && aplicOk && tcOk && (!creaMovimiento || !!f.cuentaId) && (isBanc ? (f.cuentaId && (!esTransfer || (f.cuentaDestinoId && f.cuentaDestinoId !== f.cuentaId))) : (f.contraparte.trim() && validDoc));
 
   const onSave = () => {
     setError(null);
-    if (!isValid) { setError(creaMovimiento && !f.cuentaId ? 'Indica la cuenta de la que sale o a la que entra el dinero' : isBanc ? 'Completa cuenta(s) y monto' : 'Completa contraparte, monto y documento válido'); return; }
+    if (!isValid) { setError(!tcOk ? `Moneda ${f.moneda}: falta el tipo de cambio (botón TC SUNAT o escríbelo)` : creaMovimiento && !f.cuentaId ? 'Indica la cuenta de la que sale o a la que entra el dinero' : isBanc ? 'Completa cuenta(s) y monto' : 'Completa contraparte, monto y documento válido'); return; }
     setEmitting(true); setEmitDone(false); create.mutate();
   };
 
@@ -1948,6 +1975,17 @@ function MovModal({ proyectos, defaultProyecto, onClose }: { proyectos: { id: st
                   <Field label="IGV (18%)"><div className={cn(inputCls, 'font-mono flex items-center text-ink-3', !f.aplicaIgv && 'opacity-50')}>{igv.toFixed(2)}</div></Field>
                   <Field label={isIngreso ? 'Total a cobrar' : 'Total comprob.'}><div className={cn(inputCls, 'font-mono flex items-center font-bold', accent === 'emerald' ? 'text-emerald-600' : 'text-rose-600')}>{totalComp.toFixed(2)}</div></Field>
                 </div>
+                {/* F3.6 · USD: TC venta SUNAT del día (auto de la tabla, botón trae de SUNAT, editable) */}
+                {f.moneda !== 'PEN' && (
+                  <div className="mt-2 flex items-end gap-2">
+                    <Field label={`TC venta ${f.moneda}→PEN`}>
+                      <input className={cn(inputCls, 'font-mono w-28', !(parseFloat(f.tipoCambio) > 0) && 'border-amber-500')} type="number" step="0.0001" value={f.tipoCambio} onChange={(e) => set({ tipoCambio: e.target.value })} placeholder="3.7500" />
+                    </Field>
+                    <button type="button" disabled={tcBuscando} onClick={traerTc} className="h-9 px-3 rounded-md border border-line text-[11.5px] hover:bg-bg-sunken disabled:opacity-50">{tcBuscando ? 'Buscando…' : 'TC SUNAT'}</button>
+                    {parseFloat(f.tipoCambio) > 0 && <span className="text-[11px] text-ink-3 pb-2.5 font-mono">= {fmtPEN(totalComp * parseFloat(f.tipoCambio))}</span>}
+                    {tcMsg && <span className="text-[10.5px] text-amber-600 pb-2.5">{tcMsg}</span>}
+                  </div>
+                )}
                 <div className="flex flex-wrap gap-x-5 gap-y-2 mt-2 text-[11.5px]">
                   <label className="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" checked={f.aplicaIgv} onChange={(e) => set({ aplicaIgv: e.target.checked })} className="rounded border-line" /> Afecto a IGV</label>
                   <label className="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" checked={f.incluyeIgv} disabled={!f.aplicaIgv} onChange={(e) => set({ incluyeIgv: e.target.checked })} className="rounded border-line" /> El monto ya incluye IGV</label>
