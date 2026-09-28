@@ -1897,7 +1897,11 @@ export type GastoInput = {
   // Fase 1 · extras del alta de compra (gastoCompraSchema): líneas + fechas + tributos
   fechaVencimiento?: string | null;
   lineas?: { descripcion: string; unidad?: string | null; cantidad: number; valorUnitario: number; descuento?: number; afectacionIgv?: string; cuentaContable?: string | null; aInventario?: boolean }[];
-  detraccion?: { codigo: string; montoDeclarado?: number | null } | null;
+  detraccion?: { codigo: string; montoDeclarado?: number | null; constanciaNumero?: string | null; fechaDeposito?: string | null } | null;
+  // F5.3 · retención tipada (reduce la CxP) + percepción + referencia de NC — el backend ya los soportaba
+  retencion?: { tipo: 'igv3' | 'renta4ta'; monto: number } | null;
+  percepcion?: number | null;
+  docModifica?: { serie: string; numero: string } | null;
 };
 // F3.3 · resultado del auxiliar por tercero
 export type AuxiliarResult =

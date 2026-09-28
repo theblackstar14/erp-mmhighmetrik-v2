@@ -42,6 +42,7 @@ export function FinanzasPage() {
   const [sub, setSub] = useState<Sub>('resumen');
   const [hubVista, setHubVista] = useState<string | null>(null); // deep-link del inbox al segmento de un hub
   const [movOpen, setMovOpen] = useState(false);
+  const [movV2Open, setMovV2Open] = useState(false); // F5.3 · formulario del mockup en beta (paralelo al actual)
   const onJump = (s: Sub, vista?: string) => { setSub(s); setHubVista(vista ?? null); };
 
   const proyectosQ = useQuery({ queryKey: ['proyectos-list'], queryFn: () => api.proyectos.list() });
@@ -80,6 +81,13 @@ export function FinanzasPage() {
             className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md bg-primary text-primary-foreground text-[12px] font-medium hover:opacity-90"
           >
             <Plus className="h-3.5 w-3.5" /> Registrar movimiento
+          </button>
+          <button
+            onClick={() => setMovV2Open(true)}
+            title="Formulario nuevo (diseño confirmado con Kelly/Mario) · en prueba en paralelo"
+            className="inline-flex items-center gap-1 h-9 px-2.5 rounded-md border border-dashed border-primary/60 text-primary text-[11.5px] font-medium hover:bg-primary/5"
+          >
+            Nuevo <span className="rounded bg-primary/10 px-1 text-[9.5px] font-bold uppercase">beta</span>
           </button>
         </div>
       </header>
@@ -130,6 +138,7 @@ export function FinanzasPage() {
       </TabFade>
 
       {movOpen && <MovModal proyectos={proyectos} defaultProyecto={filtro} onClose={() => setMovOpen(false)} />}
+      {movV2Open && <MovModalV2 proyectos={proyectos} defaultProyecto={filtro} onClose={() => setMovV2Open(false)} />}
     </div>
   );
 }
@@ -1577,6 +1586,516 @@ function SaldoObraBox({ c, clase }: { c: CostosObra; clase: 'CD' | 'GG_OBRA' | '
   );
 }
 
+// ═══ F5.3 · MovModalV2 · formulario del mockup (confirmado por Kelly/Mario) · BETA en paralelo ═══
+// Steps Documento/Proveedor/Detalle/Tributos/Pago/Destino + sidebar Totales/Se registra.
+// Cubre compra y gasto completos (líneas con partida+cuenta, detracción por código con constancia,
+// retención tipada, período de anotación, destino del crédito, pago parcial, RUC lookup, OC 3-way).
+// Bancario/Ingreso: campos básicos (las aplicaciones a facturas siguen en el clásico hasta el swap).
+const TIPOS_CPE_COMPRA = [
+  ['01', '01 · Factura'], ['03', '03 · Boleta'], ['07', '07 · Nota de crédito'], ['08', '08 · Nota de débito'],
+  ['02', '02 · Recibo por honorarios'], ['00', '00 · Sin comprobante'],
+] as const;
+const TIPO_CPE_NOMBRE: Record<string, string> = { '01': 'Factura', '03': 'Boleta', '07': 'Nota de Crédito', '08': 'Nota de Débito', '02': 'Recibo por Honorarios', '00': 'Sin comprobante' };
+
+function MovModalV2({ proyectos, defaultProyecto, onClose }: { proyectos: { id: string; codigo: string; nombre: string }[]; defaultProyecto: string; onClose: () => void }) {
+  const qc = useQueryClient();
+  const hoy = new Date().toISOString().slice(0, 10);
+  type Entrada = 'compra' | 'gasto' | 'bancario' | 'ingreso';
+  const [entrada, setEntrada] = useState<Entrada>('compra');
+  const esCompraGasto = entrada === 'compra' || entrada === 'gasto';
+
+  // ── Documento ──
+  const [doc, setDoc] = useState({ tipo: '01', serie: '', numero: '', fechaEmision: hoy, fechaVencimiento: '', periodoContable: hoy.slice(0, 7), moneda: 'PEN', tipoCambio: '', modSerie: '', modNumero: '' });
+  const dset = (p: Partial<typeof doc>) => setDoc((s) => ({ ...s, ...p }));
+  const esNC = doc.tipo === '07';
+  const esBoleta = doc.tipo === '03';
+  const sinCpe = entrada === 'gasto' || doc.tipo === '00';
+  // ── Proveedor ──
+  const [prov, setProv] = useState({ ruc: '', razon: '', estadoSunat: '', condicionSunat: '', fuente: '' });
+  const [rucBuscando, setRucBuscando] = useState(false);
+  const [cuentaSug, setCuentaSug] = useState<string | null>(null);
+  // ── Detalle por líneas ──
+  type LineaV2 = { descripcion: string; unidad: string; cantidad: string; pu: string; partidaId: string; cuenta: string; inv: boolean };
+  const lineaVacia: LineaV2 = { descripcion: '', unidad: 'UND', cantidad: '1', pu: '', partidaId: '', cuenta: '', inv: false };
+  const [lineas, setLineas] = useState<LineaV2[]>([{ ...lineaVacia }]);
+  const lset = (i: number, p: Partial<LineaV2>) => setLineas((ls) => ls.map((l, j) => (j === i ? { ...l, ...p } : l)));
+  const [aplicaIgv, setAplicaIgv] = useState(true);
+  // ── Tributos ──
+  const [trib, setTrib] = useState({ detCodigo: '', constNumero: '', constFecha: '', destinoCredito: 'DG' as 'DG' | 'DGNG' | 'DNG', retencion: 'no' as 'no' | 'igv3' | 'renta4ta', percepcion: false });
+  const tset = (p: Partial<typeof trib>) => setTrib((s) => ({ ...s, ...p }));
+  // ── Pago ──
+  const [pago, setPago] = useState({ estado: 'pendiente' as 'pagado' | 'parcial' | 'pendiente', importe: '', cuentaId: '', numOperacion: '', fecha: hoy });
+  const pset = (p: Partial<typeof pago>) => setPago((s) => ({ ...s, ...p }));
+  // ── Destino ──
+  const [proyectoId, setProyectoId] = useState(defaultProyecto === 'todos' ? '' : defaultProyecto);
+  const [tipoGasto, setTipoGasto] = useState('Compra Materiales');
+  const [sobrecostoOk, setSobrecostoOk] = useState(false);
+  const [glosa, setGlosa] = useState('');
+  // ── Bancario / Ingreso (básico) ──
+  const [bi, setBi] = useState({ fecha: hoy, monto: '', cuentaId: '', cuentaDestinoId: '', numOperacion: '', contraparte: '', descripcion: '' });
+  const biset = (p: Partial<typeof bi>) => setBi((s) => ({ ...s, ...p }));
+
+  const [error, setError] = useState<string | null>(null);
+  const [emitting, setEmitting] = useState(false);
+  const [emitDone, setEmitDone] = useState(false);
+
+  // ── catálogos ──
+  const cuentasQ = useQuery({ queryKey: ['cuentas'], queryFn: () => api.finanzas.listCuentas() });
+  const cuentas = (cuentasQ.data?.cuentas ?? []).filter((c) => c.activo !== false);
+  const detQ = useQuery({ queryKey: ['detracciones', doc.fechaEmision], queryFn: () => api.catalogos.getDetracciones(doc.fechaEmision), enabled: esCompraGasto });
+  const partidasQ = useQuery({ queryKey: ['partidas', proyectoId], queryFn: () => api.proyectos.listPartidas(proyectoId), enabled: !!proyectoId && esCompraGasto });
+  const partidas = partidasQ.data?.partidas ?? [];
+  const costosQ = useQuery({ queryKey: ['costos-obra', proyectoId], queryFn: () => api.proyectos.getCostosObra(proyectoId), enabled: !!proyectoId && esCompraGasto });
+  // duplicados: los rechaza el backend (409 por RUC+serie+número) · sin pre-chequeo local
+
+  // ── OC 3-way (idéntica precarga que V1, pero las líneas entran EDITABLES al detalle) ──
+  const [ocSel, setOcSel] = useState('');
+  const [ocNumero, setOcNumero] = useState('');
+  const ocsQ = useQuery({ queryKey: ['ocs-abiertas'], queryFn: () => api.logistica.listOcs(), enabled: esCompraGasto });
+  const ocsAbiertas = useMemo(
+    () => (ocsQ.data?.ordenes ?? []).filter((o) => ['aprobada', 'emitida', 'en_transito', 'entregada'].includes(o.estado) && !o.gastoId),
+    [ocsQ.data],
+  );
+  const elegirOc = async (id: string) => {
+    setOcSel(id);
+    if (!id) { setOcNumero(''); return; }
+    const d = await api.logistica.getOc(id);
+    setOcNumero(d.oc.numero);
+    setProv((s) => ({ ...s, ruc: d.proveedor?.ruc ?? s.ruc, razon: d.proveedor?.razonSocial ?? s.razon, fuente: 'oc' }));
+    dset({ moneda: d.oc.moneda, tipoCambio: d.oc.tipoCambio ? String(Number(d.oc.tipoCambio)) : doc.tipoCambio });
+    if (d.oc.proyectoId) setProyectoId(d.oc.proyectoId);
+    if (d.oc.aplicaDetraccion && d.oc.pctDetraccion) {
+      const match = (detQ.data?.tasas ?? []).find((t) => Math.abs(t.porcentaje - Number(d.oc.pctDetraccion)) < 0.01);
+      if (match) tset({ detCodigo: match.codigo });
+    }
+    if (d.lineas.length) {
+      setLineas(d.lineas.map((l) => ({
+        descripcion: l.descripcion, unidad: l.unidad, cantidad: String(Number(l.cantidad)),
+        pu: String(d.oc.incluyeIgv ? Math.round((Number(l.precioUnitario) / 1.18) * 10000) / 10000 : Number(l.precioUnitario)),
+        partidaId: '', cuenta: '', inv: false,
+      })));
+    }
+  };
+
+  // ── RUC lookup (solo sin OC ligada) ──
+  const buscarRuc = async (ruc: string) => {
+    if (ocSel || !/^\d{11}$/.test(ruc)) return;
+    setRucBuscando(true);
+    try {
+      const r = await api.catalogos.getRuc(ruc);
+      setProv((s) => ({ ...s, razon: r.razonSocial, estadoSunat: r.estadoSunat ?? '', condicionSunat: r.condicionSunat ?? '', fuente: r.fuente }));
+      const { cuenta } = await api.contabilidad.sugerirCuenta({ proveedorRuc: ruc, tipoGasto });
+      if (cuenta) setCuentaSug(cuenta);
+    } catch {
+      setProv((s) => ({ ...s, fuente: 'no-encontrado' }));
+    } finally {
+      setRucBuscando(false);
+    }
+  };
+
+  // ── TC (misma mecánica V1) ──
+  const [tcMsg, setTcMsg] = useState<string | null>(null);
+  const [tcBuscando, setTcBuscando] = useState(false);
+  useEffect(() => {
+    if (doc.moneda === 'PEN') { setTcMsg(null); return; }
+    let vivo = true;
+    api.catalogos.getTipoCambio(doc.fechaEmision, doc.moneda)
+      .then((r) => { if (!vivo) return; setDoc((s) => ({ ...s, tipoCambio: String(r.venta) })); setTcMsg(r.diasAtras > 0 ? `TC del ${r.fecha}` : null); })
+      .catch(() => { if (vivo) setTcMsg('Sin TC · botón SUNAT o escríbelo'); });
+    return () => { vivo = false; };
+  }, [doc.moneda, doc.fechaEmision]);
+  const traerTc = async () => {
+    setTcBuscando(true); setTcMsg(null);
+    try { const r = await api.catalogos.fetchTcSunat(doc.fechaEmision); setDoc((s) => ({ ...s, tipoCambio: String(r.venta) })); }
+    catch (e) { setTcMsg((e as Error).message); }
+    finally { setTcBuscando(false); }
+  };
+
+  // ── totales derivados ──
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+  const lineasCalc = lineas
+    .map((l) => ({ ...l, importe: r2((parseFloat(l.cantidad) || 0) * (parseFloat(l.pu) || 0)) }))
+    .filter((l) => l.descripcion.trim() && l.importe > 0);
+  const valorVenta = r2(lineasCalc.reduce((s, l) => s + l.importe, 0));
+  const igv = aplicaIgv ? r2(valorVenta * 0.18) : 0;
+  const total = r2(valorVenta + igv);
+  const detTasa = trib.detCodigo ? (detQ.data?.tasas ?? []).find((t) => t.codigo === trib.detCodigo) : null;
+  const detAplica = !!detTasa && total >= (detTasa.montoMinimo || 700) && !esNC && !sinCpe;
+  const detMonto = detAplica ? Math.round(total * detTasa!.porcentaje / 100) : 0; // entero, como el BN
+  const retMonto = trib.retencion === 'igv3' ? r2(total * 0.03) : trib.retencion === 'renta4ta' ? r2(valorVenta * 0.08) : 0;
+  const percMonto = trib.percepcion ? r2(total * 0.02) : 0;
+  const netoPagar = r2(total - detMonto - retMonto + percMonto);
+  const pagadoNum = pago.estado === 'pagado' ? netoPagar : pago.estado === 'parcial' ? (parseFloat(pago.importe) || 0) : 0;
+  const saldoCxP = r2(netoPagar - pagadoNum);
+  const invCount = lineasCalc.filter((l) => l.inv).length;
+
+  // ── sobrecosto (bolsa CD por defecto · la clase fina la deriva el motor por cuenta) ──
+  const excede = proyectoId && esCompraGasto && !esNC ? excedenteBolsa(costosQ.data, 'CD', total) : 0;
+
+  // ── validez por sección (steps) ──
+  const okDoc = sinCpe || (!!doc.serie.trim() && !!doc.numero.trim() && (!esNC || (!!doc.modSerie && !!doc.modNumero)));
+  const okProv = sinCpe ? !!prov.razon.trim() : /^\d{11}$/.test(prov.ruc) && !!prov.razon.trim();
+  const okDet = lineasCalc.length > 0;
+  const okTrib = !detAplica || !!trib.detCodigo;
+  const okPago = pago.estado === 'pendiente' || (!!pago.cuentaId && !!pago.numOperacion.trim() && (pago.estado !== 'parcial' || pagadoNum > 0));
+  const okDest = true;
+  const tcOk = doc.moneda === 'PEN' || parseFloat(doc.tipoCambio) > 0;
+  const okTodo = esCompraGasto
+    ? okDoc && okProv && okDet && okPago && tcOk && (excede <= 0 || sobrecostoOk)
+    : parseFloat(bi.monto) > 0 && !!bi.cuentaId && (entrada === 'ingreso' ? !!bi.contraparte.trim() : true);
+
+  const registrar = useMutation({
+    mutationFn: async () => {
+      if (!esCompraGasto) {
+        const monto = parseFloat(bi.monto) || 0;
+        await api.finanzas.createMovimientoGlobal({
+          fecha: bi.fecha, tipoMovimiento: entrada === 'ingreso' ? 'Ingreso' : 'Egreso', proyectoId: proyectoId || null,
+          cuentaId: bi.cuentaId || null, cuentaDestinoId: entrada === 'bancario' ? bi.cuentaDestinoId || null : null,
+          subtipo: entrada === 'bancario' ? 'Transferencia entre cuentas' : null,
+          naturalezaContable: entrada === 'bancario' ? 'TRANSFERENCIA' : 'OTRO_INGRESO',
+          clienteNombre: bi.contraparte || null, monto, subtotal: monto, igv: 0,
+          numOperacion: bi.numOperacion || null, descripcion: bi.descripcion || null,
+        });
+        return;
+      }
+      const payload: GastoInput & { proyectoId?: string | null; docModifica?: { serie: string; numero: string } } = {
+        fecha: doc.fechaEmision,
+        proyectoId: proyectoId || null,
+        proveedorRuc: prov.ruc || null,
+        proveedorRazon: prov.razon || null,
+        tipoComprobante: TIPO_CPE_NOMBRE[doc.tipo] ?? 'Factura',
+        serie: sinCpe ? null : doc.serie || null,
+        numero: sinCpe ? null : doc.numero || null,
+        moneda: doc.moneda,
+        tipoCambio: doc.moneda !== 'PEN' ? parseFloat(doc.tipoCambio) || null : null,
+        subtotal: valorVenta, igv, total,
+        tipoGasto,
+        destino: proyectoId ? 'proyecto' : 'corporativo',
+        cuentaContable: lineasCalc[0]?.cuenta || cuentaSug || null,
+        cuentaContableOrigen: lineasCalc[0]?.cuenta ? 'USUARIO' : cuentaSug ? 'SUGERIDO' : null,
+        periodoContable: doc.periodoContable || null,
+        destinoCredito: trib.destinoCredito,
+        fechaVencimiento: doc.fechaVencimiento || null,
+        ordenCompraId: ocSel || null,
+        descripcionItem: glosa || lineasCalc[0]?.descripcion || null,
+        lineas: lineasCalc.map((l) => ({
+          descripcion: l.descripcion, unidad: l.unidad || null, cantidad: parseFloat(l.cantidad) || 1,
+          valorUnitario: parseFloat(l.pu) || 0, afectacionIgv: aplicaIgv ? '10' : '20',
+          cuentaContable: l.cuenta || cuentaSug || null, partidaId: l.partidaId || null, aInventario: l.inv,
+        })),
+        detraccion: detAplica && trib.detCodigo
+          ? { codigo: trib.detCodigo, constanciaNumero: trib.constNumero || null, fechaDeposito: trib.constFecha || null }
+          : null,
+        ...(trib.retencion !== 'no' && retMonto > 0 ? { retencion: { tipo: trib.retencion, monto: retMonto } } : {}),
+        ...(percMonto > 0 ? { percepcion: percMonto } : {}),
+        ...(esNC && doc.modSerie ? { docModifica: { serie: doc.modSerie, numero: doc.modNumero } } : {}),
+      } as GastoInput & { proyectoId?: string | null; docModifica?: { serie: string; numero: string }; retencion?: { tipo: string; monto: number }; percepcion?: number };
+      const { gasto } = await api.finanzas.createGastoGlobal(payload);
+      if (pagadoNum > 0 && gasto && !esNC) {
+        await api.finanzas.createMovimientoGlobal({
+          fecha: pago.fecha, tipoMovimiento: 'Egreso', proyectoId: proyectoId || null,
+          cuentaId: pago.cuentaId, monto: pagadoNum, subtotal: pagadoNum, igv: 0,
+          moneda: doc.moneda, tipoCambio: doc.moneda !== 'PEN' ? parseFloat(doc.tipoCambio) || null : null,
+          clienteNombre: prov.razon || null, numOperacion: pago.numOperacion || null,
+          gastoId: gasto.id, descripcion: `Pago ${sinCpe ? 'gasto' : `${doc.serie}-${doc.numero}`} · ${prov.razon}`.slice(0, 250),
+        });
+      }
+    },
+    onSuccess: () => {
+      setEmitDone(true);
+      setTimeout(() => {
+        invalidateResumen(qc);
+        qc.invalidateQueries({ queryKey: ['gas-global'] });
+        qc.invalidateQueries({ queryKey: ['mov-global'] });
+        qc.invalidateQueries({ queryKey: ['costos-obra'] });
+        onClose();
+      }, 950);
+    },
+    onError: (e: Error) => { setEmitting(false); setEmitDone(false); setError(e.message); },
+  });
+
+  const irA = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  const Step = ({ id, ok, label }: { id: string; ok: boolean; label: string }) => (
+    <button type="button" onClick={() => irA(id)} className={cn('inline-flex items-center gap-1 text-[10.5px] font-semibold uppercase tracking-wide', ok ? 'text-emerald-600' : 'text-amber-600')}>
+      <span className={cn('inline-flex h-3.5 w-3.5 items-center justify-center rounded-full text-[9px] text-white', ok ? 'bg-emerald-500' : 'bg-amber-500')}>{ok ? '✓' : '!'}</span>{label}
+    </button>
+  );
+
+  if (emitting) return <EmittingOverlay done={emitDone} titulo={emitDone ? 'Registrado' : 'Registrando…'} subtitulo={emitDone ? 'Actualizando…' : pagadoNum > 0 ? 'Compra + pago' : 'Guardando'} />;
+
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 animate-backdropIn" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="w-full max-w-5xl max-h-[92vh] overflow-hidden rounded-xl border border-line bg-bg-elev shadow-2xl flex flex-col animate-modalPop">
+        <div className="shrink-0 flex items-center justify-between border-b border-line px-5 py-3">
+          <div>
+            <h2 className="text-[16px] font-bold tracking-[-0.01em]">Registrar {entrada === 'compra' ? 'compra' : entrada === 'gasto' ? 'gasto' : entrada === 'bancario' ? 'operación bancaria' : 'ingreso'} <span className="ml-1 rounded bg-primary/10 px-1.5 py-0.5 text-[9.5px] font-bold uppercase text-primary">beta</span></h2>
+            {esCompraGasto && (
+              <div className="mt-1 flex items-center gap-2.5">
+                <Step id="v2-doc" ok={okDoc} label="Documento" /><span className="text-ink-4">/</span>
+                <Step id="v2-prov" ok={okProv} label="Proveedor" /><span className="text-ink-4">/</span>
+                <Step id="v2-det" ok={okDet} label={`Detalle · ${lineasCalc.length}`} /><span className="text-ink-4">/</span>
+                <Step id="v2-trib" ok={okTrib} label="Tributos" /><span className="text-ink-4">/</span>
+                <Step id="v2-pago" ok={okPago} label="Pago" /><span className="text-ink-4">/</span>
+                <Step id="v2-dest" ok={okDest} label="Destino" />
+              </div>
+            )}
+          </div>
+          <button onClick={onClose} className="h-8 w-8 rounded-md inline-flex items-center justify-center text-ink-3 hover:bg-bg-sunken"><X className="h-4 w-4" /></button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto bg-bg-sunken/40">
+          <div className="grid grid-cols-[1fr_250px] gap-4 p-5 items-start">
+            <div className="space-y-3.5 min-w-0">
+              {/* Entradas */}
+              <div className="grid grid-cols-4 gap-2">
+                {([['compra', 'Compra', 'Con comprobante · RCE y SIRE'], ['gasto', 'Gasto', 'Sin comprobante fiscal'], ['bancario', 'Bancario', 'Transferencia entre cuentas'], ['ingreso', 'Ingreso', 'Cobro / otro ingreso']] as const).map(([v, l, s]) => (
+                  <button key={v} type="button" onClick={() => setEntrada(v)}
+                    className={cn('rounded-lg border-2 p-2 text-left transition-colors', entrada === v ? 'border-primary bg-primary/5' : 'border-line hover:bg-bg-elev')}>
+                    <div className="text-[12px] font-bold">{l}</div>
+                    <div className="text-[9.5px] text-ink-4 leading-tight">{s}</div>
+                  </button>
+                ))}
+              </div>
+
+              {!esCompraGasto && (
+                <SecBox title={entrada === 'bancario' ? 'Operación bancaria' : 'Ingreso'}>
+                  <div className="grid grid-cols-3 gap-3">
+                    <Field label="Fecha"><input type="date" className={inputCls} value={bi.fecha} onChange={(e) => biset({ fecha: e.target.value })} /></Field>
+                    <Field label={entrada === 'bancario' ? 'Cuenta origen' : 'Entra a'}><select className={inputCls} value={bi.cuentaId} onChange={(e) => biset({ cuentaId: e.target.value })}><option value="">— cuenta —</option>{cuentas.map((c) => <option key={c.id} value={c.id}>{c.descripcion ?? c.codigo}</option>)}</select></Field>
+                    {entrada === 'bancario'
+                      ? <Field label="Cuenta destino"><select className={inputCls} value={bi.cuentaDestinoId} onChange={(e) => biset({ cuentaDestinoId: e.target.value })}><option value="">— destino —</option>{cuentas.filter((c) => c.id !== bi.cuentaId).map((c) => <option key={c.id} value={c.id}>{c.descripcion ?? c.codigo}</option>)}</select></Field>
+                      : <Field label="Cliente / contraparte"><input className={inputCls} value={bi.contraparte} onChange={(e) => biset({ contraparte: e.target.value })} /></Field>}
+                    <Field label="Monto"><input type="number" step="0.01" className={cn(inputCls, 'font-mono')} value={bi.monto} onChange={(e) => biset({ monto: e.target.value })} /></Field>
+                    <Field label="N° operación"><input className={cn(inputCls, 'font-mono')} value={bi.numOperacion} onChange={(e) => biset({ numOperacion: e.target.value })} /></Field>
+                    <Field label="Descripción"><input className={inputCls} value={bi.descripcion} onChange={(e) => biset({ descripcion: e.target.value })} /></Field>
+                  </div>
+                  <div className="mt-2 text-[10.5px] text-ink-4">Para aplicar un cobro a facturas pendientes usa por ahora el formulario clásico (Registrar movimiento).</div>
+                </SecBox>
+              )}
+
+              {esCompraGasto && (<>
+              <SecBox title="Documento" id="v2-doc">
+                <div className="grid grid-cols-3 gap-3">
+                  <Field label="Tipo"><select className={inputCls} value={doc.tipo} onChange={(e) => dset({ tipo: e.target.value })} disabled={entrada === 'gasto'}>{TIPOS_CPE_COMPRA.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></Field>
+                  <Field label="Serie"><input className={cn(inputCls, 'font-mono')} value={doc.serie} onChange={(e) => dset({ serie: e.target.value })} disabled={sinCpe} placeholder="F001" /></Field>
+                  <Field label="Número"><input className={cn(inputCls, 'font-mono')} value={doc.numero} onChange={(e) => dset({ numero: e.target.value })} disabled={sinCpe} placeholder="00123" /></Field>
+                  <Field label="Fecha de emisión"><input type="date" className={inputCls} value={doc.fechaEmision} onChange={(e) => dset({ fechaEmision: e.target.value })} /></Field>
+                  <Field label="Vencimiento"><input type="date" className={inputCls} value={doc.fechaVencimiento} onChange={(e) => dset({ fechaVencimiento: e.target.value })} /></Field>
+                  <Field label="Periodo contable" right="≠ emisión · hasta 12 meses"><input type="month" className={inputCls} value={doc.periodoContable} onChange={(e) => dset({ periodoContable: e.target.value })} /></Field>
+                  <Field label="Moneda / TC" right={tcMsg ?? undefined}>
+                    <div className="flex gap-1.5">
+                      <select className={cn(inputCls, 'w-[70px]')} value={doc.moneda} onChange={(e) => dset({ moneda: e.target.value })}><option>PEN</option><option>USD</option></select>
+                      {doc.moneda !== 'PEN' && <>
+                        <input type="number" step="0.0001" className={cn(inputCls, 'font-mono flex-1', !tcOk && 'border-amber-500')} value={doc.tipoCambio} onChange={(e) => dset({ tipoCambio: e.target.value })} placeholder="3.7500" />
+                        <button type="button" disabled={tcBuscando} onClick={traerTc} className="shrink-0 px-2 rounded-md border border-line text-[10.5px] hover:bg-bg-sunken disabled:opacity-50">{tcBuscando ? '…' : 'SUNAT'}</button>
+                      </>}
+                    </div>
+                  </Field>
+                  <Field label="Documento que modifica" right="si es NC o ND">
+                    <div className="flex gap-1.5">
+                      <input className={cn(inputCls, 'font-mono w-20')} value={doc.modSerie} onChange={(e) => dset({ modSerie: e.target.value })} disabled={!esNC && doc.tipo !== '08'} placeholder="F001" />
+                      <input className={cn(inputCls, 'font-mono flex-1')} value={doc.modNumero} onChange={(e) => dset({ modNumero: e.target.value })} disabled={!esNC && doc.tipo !== '08'} placeholder="00098" />
+                    </div>
+                  </Field>
+                  <Field label="Orden de compra" right="jala sus líneas al detalle">
+                    <select className={inputCls} value={ocSel} onChange={(e) => elegirOc(e.target.value)}>
+                      <option value="">— sin OC —</option>
+                      {ocsAbiertas.map((o) => <option key={o.id} value={o.id}>{o.numero} · {(o.proveedor?.razonSocial ?? '').slice(0, 26)}</option>)}
+                    </select>
+                  </Field>
+                </div>
+                {esBoleta && <div className="mt-2 rounded-md border border-amber-300/60 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-[11px] text-amber-700">Boleta: no entra al Registro de Compras ni da crédito fiscal (el IGV va al costo). Se guarda como gasto con documento.</div>}
+              </SecBox>
+
+              <SecBox title="Proveedor" id="v2-prov">
+                <div className="grid grid-cols-3 gap-3">
+                  <Field label="RUC" right={rucBuscando ? 'buscando…' : prov.fuente === 'sunat' ? 'de SUNAT' : prov.fuente === 'maestro' ? 'del maestro' : prov.fuente === 'no-encontrado' ? 'no encontrado' : undefined}>
+                    <input className={cn(inputCls, 'font-mono')} value={prov.ruc} maxLength={11}
+                      onChange={(e) => setProv((s) => ({ ...s, ruc: e.target.value.replace(/\D/g, '') }))}
+                      onBlur={(e) => buscarRuc(e.target.value)} disabled={!!ocSel} placeholder="20XXXXXXXXX" />
+                  </Field>
+                  <Field label="Razón social *" right={ocSel ? `de la ${ocNumero}` : undefined}>
+                    <input className={inputCls} value={prov.razon} onChange={(e) => setProv((s) => ({ ...s, razon: e.target.value }))} disabled={!!ocSel} />
+                  </Field>
+                  <Field label="Estado SUNAT">
+                    <div className="flex items-center h-9">
+                      {prov.estadoSunat
+                        ? <span className={cn('rounded px-1.5 py-0.5 text-[10.5px] font-medium', /activo/i.test(prov.estadoSunat) ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700')}>{prov.estadoSunat}{prov.condicionSunat ? ` · ${prov.condicionSunat}` : ''}</span>
+                        : <span className="text-[10.5px] text-ink-4">—</span>}
+                    </div>
+                  </Field>
+                </div>
+                {cuentaSug && <div className="mt-1 text-[10.5px] text-amber-600">Cuenta sugerida {cuentaSug} (última usada con este proveedor) · se aplica a las líneas sin cuenta.</div>}
+              </SecBox>
+
+              <SecBox title="Detalle por línea · cuenta contable manual por línea" id="v2-det">
+                <div className="overflow-x-auto rounded-md border border-line">
+                  <table className="w-full">
+                    <thead><tr className="border-b border-line bg-bg-sunken">{['Descripción', 'Und.', 'Cant.', 'P. unit.', 'Partida', 'Cuenta', '→INV', 'Importe', ''].map((h, i) => <th key={i} className={cn('px-2 py-1.5 font-mono text-[9.5px] uppercase tracking-wider text-ink-4', i === 2 || i === 3 || i === 7 ? 'text-right' : 'text-left')}>{h}</th>)}</tr></thead>
+                    <tbody>
+                      {lineas.map((l, i) => (
+                        <tr key={i} className={cn('border-b border-line/40 last:border-0', l.inv && 'bg-amber-500/5')}>
+                          <td className="p-1"><input className={cn(inputCls, 'h-8 min-w-[190px]')} value={l.descripcion} onChange={(e) => lset(i, { descripcion: e.target.value })} placeholder="descripción" /></td>
+                          <td className="p-1"><input className={cn(inputCls, 'h-8 w-14 font-mono')} value={l.unidad} onChange={(e) => lset(i, { unidad: e.target.value })} /></td>
+                          <td className="p-1"><input type="number" step="0.01" className={cn(inputCls, 'h-8 w-16 font-mono text-right')} value={l.cantidad} onChange={(e) => lset(i, { cantidad: e.target.value })} /></td>
+                          <td className="p-1"><input type="number" step="0.0001" className={cn(inputCls, 'h-8 w-20 font-mono text-right')} value={l.pu} onChange={(e) => lset(i, { pu: e.target.value })} placeholder="0.00" /></td>
+                          <td className="p-1">
+                            <select className={cn(inputCls, 'h-8 max-w-[150px]')} value={l.partidaId} onChange={(e) => lset(i, { partidaId: e.target.value })} disabled={!proyectoId}>
+                              <option value="">{proyectoId ? '— partida —' : 'sin obra'}</option>
+                              {partidas.map((p) => <option key={p.id} value={p.id}>{p.codigo} · {p.nombre.slice(0, 24)}</option>)}
+                            </select>
+                          </td>
+                          <td className="p-1"><input className={cn(inputCls, 'h-8 w-20 font-mono')} value={l.cuenta} onChange={(e) => lset(i, { cuenta: e.target.value })} placeholder={cuentaSug ?? '60x'} /></td>
+                          <td className="p-1 text-center"><input type="checkbox" checked={l.inv} onChange={(e) => lset(i, { inv: e.target.checked })} className="rounded border-line" /></td>
+                          <td className="p-1 text-right font-mono text-[11.5px] whitespace-nowrap">{fmtPEN(r2((parseFloat(l.cantidad) || 0) * (parseFloat(l.pu) || 0)))}</td>
+                          <td className="p-1">{lineas.length > 1 && <button type="button" onClick={() => setLineas((ls) => ls.filter((_, j) => j !== i))} className="text-ink-4 hover:text-rose-600"><X className="h-3.5 w-3.5" /></button>}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="mt-2 flex items-center gap-2">
+                  <button type="button" onClick={() => setLineas((ls) => [...ls, { ...lineaVacia }])} className="rounded-md border border-dashed border-line-strong px-2.5 py-1 text-[11px] hover:bg-bg-sunken">+ Agregar línea</button>
+                  {lineas.some((l) => l.cuenta) && <button type="button" onClick={() => { const c = lineas.find((l) => l.cuenta)?.cuenta ?? ''; setLineas((ls) => ls.map((l) => ({ ...l, cuenta: l.cuenta || c }))); }} className="rounded-md border border-line px-2.5 py-1 text-[11px] hover:bg-bg-sunken">Aplicar la cuenta a todas</button>}
+                  <label className="ml-auto flex items-center gap-1.5 cursor-pointer text-[11px]"><input type="checkbox" checked={aplicaIgv} onChange={(e) => setAplicaIgv(e.target.checked)} className="rounded border-line" /> Afecto a IGV 18%</label>
+                </div>
+                {invCount > 0 && <div className="mt-2 rounded-md border border-amber-300/60 bg-amber-50 dark:bg-amber-950/30 px-3 py-1.5 text-[10.5px] text-amber-700">{invCount} línea(s) entran a inventario como borrador "por completar".</div>}
+              </SecBox>
+
+              {!sinCpe && !esNC && (
+              <SecBox title="Tributos y retenciones" id="v2-trib">
+                <div className="grid grid-cols-[1fr_170px] gap-3">
+                  <Field label="Código de detracción" right="catálogo vigente">
+                    <select className={inputCls} value={trib.detCodigo} onChange={(e) => tset({ detCodigo: e.target.value })}>
+                      <option value="">No sujeta a detracción</option>
+                      {(detQ.data?.tasas ?? []).map((t) => <option key={t.codigo} value={t.codigo}>{t.codigo} · {t.descripcion.slice(0, 52)} · {t.porcentaje}%</option>)}
+                    </select>
+                  </Field>
+                  <div className="grid grid-cols-2 gap-2">
+                    <Field label="Tasa"><div className={cn(inputCls, 'flex items-center font-mono text-ink-3')}>{detTasa ? `${detTasa.porcentaje}%` : '—'}</div></Field>
+                    <Field label="Monto"><div className={cn(inputCls, 'flex items-center font-mono text-ink-3')}>{detMonto || '—'}</div></Field>
+                  </div>
+                </div>
+                {detTasa && !detAplica && total > 0 && <div className="text-[10.5px] text-ink-4">Total {fmtPEN(total)} bajo el mínimo de {fmtPEN(detTasa.montoMinimo || 700)} · no corresponde detracción.</div>}
+                {detAplica && (
+                  <div className="grid grid-cols-3 gap-3">
+                    <Field label="N° de constancia" right="vacía = crédito diferido"><input className={cn(inputCls, 'font-mono', !trib.constNumero && 'border-amber-400')} value={trib.constNumero} onChange={(e) => tset({ constNumero: e.target.value })} placeholder="2026-000418" /></Field>
+                    <Field label="Fecha de depósito"><input type="date" className={inputCls} value={trib.constFecha} onChange={(e) => tset({ constFecha: e.target.value })} /></Field>
+                    <Field label="Crédito fiscal"><div className={cn(inputCls, 'flex items-center font-mono text-[11px]', trib.constNumero ? 'text-emerald-600' : 'text-amber-600')}>{fmtPEN(igv)} · {trib.constNumero ? 'usable' : 'diferido'}</div></Field>
+                  </div>
+                )}
+                <div className="grid grid-cols-3 gap-3">
+                  <Field label="Destino del crédito fiscal" right="columnas del SIRE">
+                    <select className={inputCls} value={trib.destinoCredito} onChange={(e) => tset({ destinoCredito: e.target.value as 'DG' | 'DGNG' | 'DNG' })}>
+                      <option value="DG">DG · operaciones gravadas</option>
+                      <option value="DGNG">DGNG · mixtas</option>
+                      <option value="DNG">DNG · no gravadas (IGV al costo)</option>
+                    </select>
+                  </Field>
+                  <Field label="Retención">
+                    <select className={inputCls} value={trib.retencion} onChange={(e) => tset({ retencion: e.target.value as 'no' | 'igv3' | 'renta4ta' })}>
+                      <option value="no">No aplica</option>
+                      <option value="igv3">IGV 3% (agente)</option>
+                      <option value="renta4ta">Renta 4ta 8% (RxH)</option>
+                    </select>
+                  </Field>
+                  <Field label="Percepción IGV 2%">
+                    <label className="flex items-center gap-1.5 h-9 cursor-pointer text-[11.5px]"><input type="checkbox" checked={trib.percepcion} onChange={(e) => tset({ percepcion: e.target.checked })} className="rounded border-line" /> Aplica</label>
+                  </Field>
+                </div>
+              </SecBox>
+              )}
+
+              {!esNC && (
+              <SecBox title="Pago · parcial permitido" id="v2-pago">
+                <div className="grid grid-cols-3 gap-3">
+                  <Field label="Estado">
+                    <div className="flex gap-1.5">
+                      {(['pagado', 'parcial', 'pendiente'] as const).map((e) => (
+                        <button key={e} type="button" onClick={() => pset({ estado: e })} className={cn('flex-1 rounded-md border py-1.5 text-[11px] capitalize', pago.estado === e ? 'border-primary bg-primary/5 font-semibold' : 'border-line hover:bg-bg-sunken')}>{e}</button>
+                      ))}
+                    </div>
+                  </Field>
+                  <Field label="Importe pagado"><input type="number" step="0.01" className={cn(inputCls, 'font-mono')} value={pago.estado === 'pagado' ? String(netoPagar) : pago.estado === 'pendiente' ? '' : pago.importe} onChange={(e) => pset({ importe: e.target.value })} disabled={pago.estado !== 'parcial'} placeholder="0.00" /></Field>
+                  <Field label="Saldo pendiente" right="→ cuenta 42"><div className={cn(inputCls, 'flex items-center font-mono font-semibold', saldoCxP > 0 ? 'text-rose-600' : 'text-emerald-600')}>{fmtPEN(saldoCxP)}</div></Field>
+                </div>
+                {pago.estado !== 'pendiente' && (
+                  <div className="grid grid-cols-3 gap-3">
+                    <Field label="Sale de"><select className={inputCls} value={pago.cuentaId} onChange={(e) => pset({ cuentaId: e.target.value })}><option value="">— cuenta —</option>{cuentas.map((c) => <option key={c.id} value={c.id}>{c.descripcion ?? c.codigo}</option>)}</select></Field>
+                    <Field label="N° de operación *"><input className={cn(inputCls, 'font-mono')} value={pago.numOperacion} onChange={(e) => pset({ numOperacion: e.target.value })} placeholder="5401882" /></Field>
+                    <Field label="Fecha de pago" right="≠ emisión permitida"><input type="date" className={inputCls} value={pago.fecha} onChange={(e) => pset({ fecha: e.target.value })} /></Field>
+                  </div>
+                )}
+              </SecBox>
+              )}
+
+              <SecBox title="Destino" id="v2-dest">
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="Proyecto"><select className={inputCls} value={proyectoId} onChange={(e) => setProyectoId(e.target.value)}><option value="">Oficina / general</option>{proyectos.map((p) => <option key={p.id} value={p.id}>{p.codigo} · {p.nombre.slice(0, 34)}</option>)}</select></Field>
+                  <Field label="Tipo de gasto"><select className={inputCls} value={tipoGasto} onChange={(e) => setTipoGasto(e.target.value)}>{TIPOS_GASTO.map((t) => <option key={t}>{t}</option>)}</select></Field>
+                </div>
+                <Field label="Glosa / descripción"><input className={inputCls} value={glosa} onChange={(e) => setGlosa(e.target.value)} placeholder="opcional · aparece en el libro y el asiento" /></Field>
+                {proyectoId && costosQ.data && <SaldoObraBox c={costosQ.data} clase={null} />}
+                {excede > 0 && (
+                  <div className="rounded-md border border-rose-300/60 bg-rose-50 dark:bg-rose-950/30 px-3 py-2 text-[11.5px] text-rose-700 space-y-1">
+                    <div className="font-semibold">Sobrecosto: +{fmtPEN(excede)} sobre el saldo CD de la obra</div>
+                    <label className="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" checked={sobrecostoOk} onChange={(e) => setSobrecostoOk(e.target.checked)} className="rounded border-line" /> Registrar sobrecosto igual · entra a los costos reales</label>
+                  </div>
+                )}
+              </SecBox>
+              </>)}
+            </div>
+
+            {/* Sidebar */}
+            <div className="space-y-3 sticky top-0">
+              {esCompraGasto && (<>
+              <div className="rounded-lg border border-line bg-bg-elev p-3">
+                <div className="text-[10px] font-mono uppercase tracking-wider text-ink-4 mb-2">Totales</div>
+                <div className="space-y-1 text-[11.5px]">
+                  <div className="flex justify-between"><span className="text-ink-3">Valor de venta</span><span className="font-mono">{fmtPEN(valorVenta)}</span></div>
+                  <div className="flex justify-between"><span className="text-ink-3">IGV 18% · auto</span><span className="font-mono">{fmtPEN(igv)}</span></div>
+                  <div className="border-t border-line my-1" />
+                  <div className="flex justify-between font-semibold"><span>Total comprobante</span><span className="font-mono">{fmtPEN(total)}</span></div>
+                  {detMonto > 0 && <div className="flex justify-between text-amber-700"><span>Detracción {detTasa?.porcentaje}%</span><span className="font-mono">−{fmtPEN(detMonto)}</span></div>}
+                  {retMonto > 0 && <div className="flex justify-between text-amber-700"><span>Retención</span><span className="font-mono">−{fmtPEN(retMonto)}</span></div>}
+                  {percMonto > 0 && <div className="flex justify-between text-amber-700"><span>Percepción 2%</span><span className="font-mono">+{fmtPEN(percMonto)}</span></div>}
+                  <div className="flex justify-between font-semibold text-emerald-700"><span>Neto a pagar</span><span className="font-mono">{fmtPEN(netoPagar)}</span></div>
+                  {pagadoNum > 0 && <><div className="border-t border-line my-1" />
+                    <div className="flex justify-between"><span className="text-ink-3">Pagado</span><span className="font-mono">{fmtPEN(pagadoNum)}</span></div>
+                    <div className="flex justify-between text-rose-600 font-semibold"><span>Saldo</span><span className="font-mono">{fmtPEN(saldoCxP)}</span></div></>}
+                </div>
+              </div>
+              <div className="rounded-lg border border-line bg-bg-elev p-3">
+                <div className="text-[10px] font-mono uppercase tracking-wider text-ink-4 mb-2">Se registra</div>
+                <ul className="space-y-1 text-[10.5px] text-ink-2 list-disc pl-4">
+                  <li>{esBoleta || sinCpe ? 'Gasto (no entra al RCE)' : esNC ? 'NC aplicada a la factura original' : `Compra en el Registro (anotación ${doc.periodoContable})`}</li>
+                  <li>{lineasCalc.length} línea(s) con cuenta propia{invCount ? ` · ${invCount} a inventario` : ''}</li>
+                  {!esNC && <li>CxP {fmtPEN(saldoCxP)} {saldoCxP > 0 ? 'pendiente' : 'saldada'}</li>}
+                  {detMonto > 0 && <li>Detracción {trib.constNumero ? 'depositada' : 'PENDIENTE de constancia'}</li>}
+                  {pagadoNum > 0 && !esNC && <li>Movimiento de pago ({pago.fecha})</li>}
+                  {doc.moneda !== 'PEN' && <li>USD al TC {doc.tipoCambio || '—'} · dif. de cambio automática al pagar</li>}
+                </ul>
+              </div>
+              </>)}
+              {error && <div className="rounded-md border border-rose-300/60 bg-rose-50 dark:bg-rose-950/30 px-3 py-2 text-[11px] text-rose-700">{error}</div>}
+            </div>
+          </div>
+        </div>
+
+        <div className="shrink-0 flex items-center gap-3 border-t border-line bg-bg-elev px-5 py-3">
+          <span className="text-[11px] text-ink-3 mr-auto">{esCompraGasto ? `${entrada === 'compra' ? 'Compra' : 'Gasto'} · ${lineasCalc.length} línea(s) · ${fmtPEN(total)}` : 'Movimiento de caja'}</span>
+          <button onClick={onClose} className="h-9 px-4 rounded-md border border-line text-[12px] hover:bg-bg-sunken">Cancelar</button>
+          <button disabled={!okTodo || registrar.isPending} onClick={() => { setError(null); setEmitting(true); registrar.mutate(); }}
+            className={cn('inline-flex items-center gap-1.5 h-9 px-4 rounded-md bg-primary text-primary-foreground text-[12px] font-medium hover:opacity-90', (!okTodo || registrar.isPending) && 'opacity-50 pointer-events-none')}>
+            <Check className="h-3.5 w-3.5" /> Registrar
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 function MovModal({ proyectos, defaultProyecto, onClose }: { proyectos: { id: string; codigo: string; nombre: string }[]; defaultProyecto: string; onClose: () => void }) {
   const qc = useQueryClient();
   const cuentasQ = useQuery({ queryKey: ['cuentas'], queryFn: () => api.finanzas.listCuentas() });
@@ -2167,9 +2686,9 @@ function MovModal({ proyectos, defaultProyecto, onClose }: { proyectos: { id: st
   );
 }
 
-function SecBox({ title, children }: { title: string; children: React.ReactNode }) {
+function SecBox({ title, children, id }: { title: string; children: React.ReactNode; id?: string }) {
   return (
-    <div className="rounded-lg border border-line bg-bg-elev p-3.5">
+    <div id={id} className="rounded-lg border border-line bg-bg-elev p-3.5 scroll-mt-2">
       <div className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-4 font-bold mb-2.5">{title}</div>
       <div className="space-y-3">{children}</div>
     </div>

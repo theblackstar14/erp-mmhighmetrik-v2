@@ -33,7 +33,13 @@ export const extrasCompraSchema = z.object({
   fechaVencimiento: z.string().regex(FECHA).optional().nullable(),
   tipoCambio: z.number().positive().optional().nullable(),
   lineas: z.array(lineaCompraSchema).max(200).optional(),
-  detraccion: z.object({ codigo: z.string().regex(/^\d{3}$/), montoDeclarado: z.number().min(0).optional().nullable() }).optional().nullable(),
+  // F5.3 · la constancia puede venir desde el alta (mockup): con nro+fecha la detracción nace depositada
+  detraccion: z.object({
+    codigo: z.string().regex(/^\d{3}$/),
+    montoDeclarado: z.number().min(0).optional().nullable(),
+    constanciaNumero: z.string().max(30).optional().nullable(),
+    fechaDeposito: z.string().regex(FECHA).optional().nullable(),
+  }).optional().nullable(),
   retencion: z.object({ tipo: z.enum(['igv3', 'renta4ta']), monto: z.number().positive() }).optional().nullable(),
   percepcion: z.number().min(0).optional().nullable(),
   docModifica: z.object({ serie: z.string().min(1), numero: z.string().min(1) }).optional().nullable(),
@@ -138,10 +144,13 @@ export async function registrarCompra(q: DbLike, input: { values: typeof schema.
     const calc = calcularDetraccion({ total: Number(g.total), moneda: g.moneda, tipoCambio: tc, tasa });
     const declarado = extras.detraccion.montoDeclarado;
     // D2 · noUncheckedIndexedAccess: returning()[0] es `X | undefined`, no se puede asignar por destructuring a `X | null`
+    const conConstancia = !!(extras.detraccion.constanciaNumero && extras.detraccion.fechaDeposito);
     detraccion = (await q.insert(schema.detraccionDocumento).values({
       docOrigenTipo: 'gasto', docOrigenId: g.id, empresaId, codigo: tasa.codigo, porcentaje: tasa.porcentaje.toFixed(2),
       basePen: calc.basePen.toFixed(2), monto: calc.monto.toFixed(2), montoDeclarado: declarado != null ? declarado.toFixed(2) : null,
-      estado: calc.aplica ? 'pendiente' : 'no_aplica',
+      constanciaNumero: extras.detraccion.constanciaNumero ?? null,
+      fechaDeposito: extras.detraccion.fechaDeposito ?? null,
+      estado: !calc.aplica ? 'no_aplica' : conConstancia ? 'depositada' : 'pendiente',
     }).returning())[0] ?? null;
   }
 
