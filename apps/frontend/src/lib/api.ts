@@ -1887,6 +1887,7 @@ export type GastoInput = {
   periodoContable?: string | null; // YYYY-MM · null = mes de emisión
   destinoCredito?: 'DG' | 'DGNG' | 'DNG';
   tipoCambio?: number | null; // F3.6 · TC histórico si moneda ≠ PEN (si falta, el backend busca en la tabla)
+  ordenCompraId?: string | null; // F3.7 · 3-way match: la compra devenga contra la OC comprometida
   // Fase 1 · extras del alta de compra (gastoCompraSchema): líneas + fechas + tributos
   fechaVencimiento?: string | null;
   lineas?: { descripcion: string; unidad?: string | null; cantidad: number; valorUnitario: number; descuento?: number; afectacionIgv?: string; cuentaContable?: string | null; aInventario?: boolean }[];

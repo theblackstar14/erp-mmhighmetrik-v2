@@ -4,7 +4,7 @@
  * Sin líneas se comporta como antes (una línea implícita con los totales de cabecera).
  */
 import { schema } from '@erp/db';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 import { calcularDetraccion } from './detraccionCalc.js';
 import { buscarTasaDetraccion } from './detraccionTasa.js';
@@ -92,6 +92,12 @@ export async function registrarCompra(q: DbLike, input: { values: typeof schema.
     motivoNota: extras.motivoNota ?? null,
   }).returning();
   const g = gasto!;
+
+  // F3.7 · 3-way match: la factura liga su OC (deja de ofrecerse para nuevas compras)
+  if (g.ordenCompraId && !esNota) {
+    await q.update(schema.ordenesCompra).set({ gastoId: g.id })
+      .where(and(eq(schema.ordenesCompra.id, g.ordenCompraId), isNull(schema.ordenesCompra.gastoId)));
+  }
 
   if (lineas.length) {
     await q.insert(schema.gastoLineas).values(lineas.map((l) => ({

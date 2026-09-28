@@ -1563,6 +1563,9 @@ function MovModal({ proyectos, defaultProyecto, onClose }: { proyectos: { id: st
   };
   // F2.2 · aplicar el pago/cobro a facturas pendientes del tercero (docId → monto a aplicar)
   const [aplicSel, setAplicSel] = useState<Record<string, string>>({});
+  // F3.7 · 3-way match: elegir la OC precarga proveedor/proyecto/montos/detracción y sus líneas
+  const [ocSel, setOcSel] = useState('');
+  const [ocDetalle, setOcDetalle] = useState<Awaited<ReturnType<typeof api.logistica.getOc>> | null>(null);
   // Prorrateo · repartir un gasto compartido entre varias obras (montos manuales)
   const [prorratear, setProrratear] = useState(false);
   const [reparto, setReparto] = useState<{ proyectoId: string; monto: string }[]>([{ proyectoId: '', monto: '' }, { proyectoId: '', monto: '' }]);
@@ -1614,6 +1617,35 @@ function MovModal({ proyectos, defaultProyecto, onClose }: { proyectos: { id: st
       .catch(() => { if (vivo) setTcMsg('Sin TC en la tabla · botón SUNAT o escríbelo'); });
     return () => { vivo = false; };
   }, [f.moneda, f.fecha]);
+
+  // F3.7 · OCs comprometidas sin factura (3-way): aprobada/emitida/en tránsito/entregada, sin gasto ligado
+  const ocsQ = useQuery({ queryKey: ['ocs-abiertas'], queryFn: () => api.logistica.listOcs(), enabled: tipo === 'Egreso' && esGasto });
+  const ocsAbiertas = useMemo(
+    () => (ocsQ.data?.ordenes ?? []).filter((o) => ['aprobada', 'emitida', 'en_transito', 'entregada'].includes(o.estado) && !o.gastoId),
+    [ocsQ.data],
+  );
+  const elegirOc = async (id: string) => {
+    setOcSel(id);
+    if (!id) { setOcDetalle(null); return; }
+    const d = await api.logistica.getOc(id);
+    setOcDetalle(d);
+    const oc = d.oc;
+    set({
+      contraparte: d.proveedor?.razonSocial ?? f.contraparte,
+      docNumero: d.proveedor?.ruc ?? f.docNumero,
+      tipoDoc: 'RUC',
+      subtotal: String(Number(oc.subtotalSinIgv)),
+      aplicaIgv: Number(oc.igv) > 0, incluyeIgv: false,
+      moneda: oc.moneda,
+      tipoCambio: oc.tipoCambio ? String(Number(oc.tipoCambio)) : f.tipoCambio,
+      aplicaDetraccion: oc.aplicaDetraccion,
+      detraccionPct: oc.pctDetraccion ? String(Number(oc.pctDetraccion)) : f.detraccionPct,
+    });
+    if (oc.proyectoId) setProyectoId(oc.proyectoId);
+    if (d.proveedor?.ruc) prefillCuenta(d.proveedor.ruc);
+  };
+  // las líneas de la OC entran al detalle SOLO si la factura cuadra con la OC (si difiere, va sin líneas)
+  const ocCuadra = !!ocDetalle && ocDetalle.lineas.length > 0 && Math.abs((parseFloat(f.subtotal) || 0) - Number(ocDetalle.oc.subtotalSinIgv)) < 0.01;
 
   const isBanc = tipo === 'Bancario';
   const isIngreso = tipo === 'Ingreso';
@@ -1729,6 +1761,15 @@ function MovModal({ proyectos, defaultProyecto, onClose }: { proyectos: { id: st
           // WS1 · CD/GG ya no es input; se deriva de la cuenta. Enviamos la cuenta manual si Kelly la eligió.
           cuentaContable: cuentaContable ?? null,
           cuentaContableOrigen: cuentaContable ? (cuentaSugerida ? 'SUGERIDO' : 'USUARIO') : null,
+          // F3.7 · 3-way: la compra devenga contra la OC; sus líneas entran solo si los totales cuadran
+          ordenCompraId: ocSel || null,
+          lineas: ocCuadra && ocDetalle
+            ? ocDetalle.lineas.map((l) => ({
+                descripcion: l.descripcion, unidad: l.unidad, cantidad: Number(l.cantidad),
+                valorUnitario: ocDetalle.oc.incluyeIgv ? Number(l.precioUnitario) / 1.18 : Number(l.precioUnitario),
+                afectacionIgv: '10', cuentaContable: cuentaContable ?? null,
+              }))
+            : undefined,
         };
         const { gasto } = await api.finanzas.createGastoGlobal(gastoPayload);
         // pendiente = solo gasto (cuenta por pagar); pagado = además movimiento de caja linkeado
@@ -1827,6 +1868,26 @@ function MovModal({ proyectos, defaultProyecto, onClose }: { proyectos: { id: st
                       ))}
                     </div></Field>
                   </div>
+                  {/* F3.7 · 3-way match: la OC comprometida precarga proveedor/proyecto/montos/detracción */}
+                  {ocsAbiertas.length > 0 && (
+                    <Field label="Orden de compra · opcional (3-way match)">
+                      <select className={inputCls} value={ocSel} onChange={(e) => elegirOc(e.target.value)}>
+                        <option value="">— sin OC —</option>
+                        {ocsAbiertas.map((o) => <option key={o.id} value={o.id}>{o.numero} · {(o.proveedor?.razonSocial ?? 's/proveedor').slice(0, 32)} · {o.moneda === 'USD' ? '$' : 'S/'} {Number(o.total).toFixed(2)}</option>)}
+                      </select>
+                    </Field>
+                  )}
+                  {ocDetalle && (() => {
+                    const ocTotal = Number(ocDetalle.oc.total);
+                    const dif = totalComp - ocTotal;
+                    const cuadraTot = Math.abs(dif) < 0.01;
+                    return (
+                      <div className={cn('rounded-md border px-3 py-2 text-[11px]', cuadraTot ? 'border-emerald-300/60 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700' : 'border-amber-300/60 bg-amber-50 dark:bg-amber-950/30 text-amber-700')}>
+                        OC {ocDetalle.oc.numero}: {fmtPEN(ocTotal)} · factura: {fmtPEN(totalComp)} · {cuadraTot ? 'cuadra ✓' : `difiere ${fmtPEN(dif)}`}
+                        <span className="block text-[10px] opacity-80">{ocCuadra ? `${ocDetalle.lineas.length} línea(s) de la OC entran al detalle de la compra` : ocDetalle.lineas.length === 0 ? 'la OC no tiene detalle de líneas: la compra se registra con los totales' : 'los totales difieren: la compra se registra ligada a la OC pero sin su detalle de líneas'}</span>
+                      </div>
+                    );
+                  })()}
                   {/* WS1 · cuenta contable MANUAL (Kelly) + chip CD/GG DERIVADO (no editable) */}
                   <div>
                     <div className="text-[10px] text-ink-4 mb-1">Cuenta contable</div>
