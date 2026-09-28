@@ -773,6 +773,12 @@ export const api = {
       req<{ fecha: string; moneda: string; compra: number; venta: number; diasAtras: number }>(`/api/catalogos/tipo-cambio?fecha=${fecha}&moneda=${moneda}`),
     fetchTcSunat: (fecha: string) =>
       req<{ fecha: string; moneda: string; compra: number; venta: number; fuente: string }>('/api/catalogos/tipo-cambio/sunat', { method: 'POST', body: JSON.stringify({ fecha }) }),
+    // F5.1 · RUC → razón social (maestro → historial → SUNAT, cachea al maestro)
+    getRuc: (numero: string) =>
+      req<{ fuente: 'maestro' | 'historial' | 'sunat'; ruc: string; razonSocial: string; proveedorId: string | null; estadoSunat: string | null; condicionSunat: string | null; cuentaDetraccionesBn: string | null }>(`/api/catalogos/ruc/${numero}`),
+    // F0 · catálogo de detracciones vigente a una fecha
+    getDetracciones: (fecha?: string) =>
+      req<{ fecha: string; tasas: { codigo: string; descripcion: string; anexo: number | null; porcentaje: number; montoMinimo: number }[] }>(`/api/catalogos/detracciones${fecha ? `?fecha=${fecha}` : ''}`),
   },
 
   // F2.3 · Bandeja CPE (borradores del lector XML UBL 2.1)

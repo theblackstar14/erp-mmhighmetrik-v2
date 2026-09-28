@@ -10,6 +10,7 @@ import { requirePermiso } from '../lib/permisos.js';
 import { audit } from '../lib/audit.js';
 import { buscarTipoCambio } from '../lib/tipoCambio.js';
 import { obtenerTcSunat } from '../lib/tcSunat.js';
+import { consultarRuc } from '../lib/rucSunat.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -58,6 +59,27 @@ router.post('/tipo-cambio/sunat', requirePermiso('contabilidad', 'edicion'), asy
     });
   await audit(req, { action: 'update_tipo_cambio', entityType: 'tipo_cambio', before: null, after: { fuente: 'sunat', fecha: tc.fecha, moneda: 'USD', compra: tc.compra, venta: tc.venta }, motivo: null });
   res.json({ fecha: tc.fecha, moneda: 'USD', compra: tc.compra, venta: tc.venta, fuente: 'sunat' });
+});
+
+// F5.1 · RUC → razón social: maestro de proveedores → historial de compras → API SUNAT (y cachea al maestro)
+router.get('/ruc/:numero', requirePermiso('finanzas', 'lectura'), async (req, res) => {
+  const numero = String(req.params.numero ?? '');
+  if (!/^\d{11}$/.test(numero)) return res.status(400).json({ error: 'RUC de 11 dígitos requerido' });
+  const [prov] = await db.select().from(schema.proveedores).where(eq(schema.proveedores.ruc, numero)).limit(1);
+  if (prov) {
+    return res.json({ fuente: 'maestro', ruc: numero, razonSocial: prov.razonSocial, proveedorId: prov.id, estadoSunat: prov.estadoSunat, condicionSunat: prov.condicionSunat, cuentaDetraccionesBn: prov.cuentaDetraccionesBn });
+  }
+  const [previo] = await db.select({ razon: schema.gastos.proveedorRazon }).from(schema.gastos)
+    .where(and(eq(schema.gastos.proveedorRuc, numero), isNotNull(schema.gastos.proveedorRazon)))
+    .orderBy(sql`${schema.gastos.fecha} desc`).limit(1);
+  if (previo?.razon) return res.json({ fuente: 'historial', ruc: numero, razonSocial: previo.razon, proveedorId: null, estadoSunat: null, condicionSunat: null, cuentaDetraccionesBn: null });
+  const sunat = await consultarRuc(numero);
+  if (!sunat) return res.status(404).json({ error: 'RUC no encontrado (ni local ni en SUNAT) · escribe la razón social' });
+  // cachea al maestro: la próxima consulta es local y el autocomplete lo ofrece
+  const [nuevo] = await db.insert(schema.proveedores)
+    .values({ ruc: sunat.ruc, razonSocial: sunat.razonSocial, estadoSunat: sunat.estado, condicionSunat: sunat.condicion, domicilio: sunat.direccion })
+    .onConflictDoNothing({ target: schema.proveedores.ruc }).returning();
+  res.json({ fuente: 'sunat', ruc: sunat.ruc, razonSocial: sunat.razonSocial, proveedorId: nuevo?.id ?? null, estadoSunat: sunat.estado, condicionSunat: sunat.condicion, cuentaDetraccionesBn: null });
 });
 
 const tcSchema = z.object({

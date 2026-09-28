@@ -93,6 +93,12 @@ export async function registrarCompra(q: DbLike, input: { values: typeof schema.
   }).returning();
   const g = gasto!;
 
+  // F5.1 · proveedor nuevo → alta silenciosa al maestro (mejora autocomplete, RUC lookup y cuenta sugerida)
+  if (g.proveedorRuc && g.proveedorRazon && !g.proveedorId) {
+    await q.insert(schema.proveedores).values({ ruc: g.proveedorRuc, razonSocial: g.proveedorRazon })
+      .onConflictDoNothing({ target: schema.proveedores.ruc });
+  }
+
   // F3.7 · 3-way match: la factura liga su OC (deja de ofrecerse para nuevas compras)
   if (g.ordenCompraId && !esNota) {
     await q.update(schema.ordenesCompra).set({ gastoId: g.id })

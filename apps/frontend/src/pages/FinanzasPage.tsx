@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
   ArrowDownRight,
@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { Suspense, lazy, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { type FinanzasResumen, type MovimientoInput, type GastoInput, type ConciliacionResumen, type PartidaConcil, type PlanCuentaBusqueda, type CpeBorrador, type CajaRow, type CuentaBancaria, type ProvisionRow, api } from '@/lib/api.js';
+import { type FinanzasResumen, type MovimientoInput, type GastoInput, type ConciliacionResumen, type PartidaConcil, type PlanCuentaBusqueda, type CpeBorrador, type CajaRow, type CuentaBancaria, type ProvisionRow, type CostosObra, api } from '@/lib/api.js';
 import { cn, fmtPEN } from '@/lib/utils.js';
 import { CuentaContableSelect, claseDerivadaUI } from '@/components/contabilidad/CuentaContableSelect.js';
 import { invalidateResumen } from '@/lib/invalidate.js';
@@ -1534,6 +1534,49 @@ const TIPOS_GASTO = [
 ];
 const TIPOS_INVENTARIABLES = new Set(['Herramientas', 'Maquinaria y equipo', 'EPPS']);
 
+// ─── F5.2 · saldo de obra por bolsa (CD y GG) · compartido V1/V2 ──────────────
+// Muestra "queda" de cada bolsa, resalta la que el gasto afecta; GG solo tiene tope
+// propio cuando el contrato lo separa (ggUtModo separado), si no va dentro del CD.
+function excedenteBolsa(c: CostosObra | undefined, clase: string | null, monto: number): number {
+  if (!c || !(monto > 0)) return 0;
+  if (clase === 'GG_OBRA') {
+    if (c.ggObra.presupuesto == null) return 0; // GG embebido en el CD · sin tope propio
+    return Math.max(0, Math.round((monto - (c.ggObra.presupuesto - c.ggObra.ejecutado)) * 100) / 100);
+  }
+  // default CD (clase aún no derivada = el destino típico del gasto de obra)
+  return Math.max(0, Math.round((monto - (c.cd.presupuesto - c.cd.ejecutado)) * 100) / 100);
+}
+
+function SaldoObraBox({ c, clase }: { c: CostosObra; clase: 'CD' | 'GG_OBRA' | 'GG_CORP' | null }) {
+  const cdQueda = c.cd.presupuesto - c.cd.ejecutado;
+  const ggQueda = c.ggObra.presupuesto != null ? c.ggObra.presupuesto - c.ggObra.ejecutado : null;
+  const afectaCd = clase == null || clase === 'CD';
+  const afectaGg = clase === 'GG_OBRA';
+  return (
+    <div className="mt-2 rounded-md bg-bg-sunken/60 border border-line p-2 text-[10.5px] space-y-0.5">
+      <div className="flex items-center justify-between font-semibold text-ink-2"><span>Saldo de esta obra</span><span className="text-ink-4 font-normal">presupuesto − ejecutado</span></div>
+      <div className={cn('flex justify-between', afectaCd && 'font-semibold')}>
+        <span>CD{afectaCd ? ' ← este gasto' : ''} · ejecutado {fmtPEN(c.cd.ejecutado)} de {fmtPEN(c.cd.presupuesto)}</span>
+        <span className={cn('font-mono font-semibold', cdQueda < 0 ? 'text-rose-600' : 'text-emerald-600')}>queda {fmtPEN(cdQueda)}</span>
+      </div>
+      <div className={cn('flex justify-between', afectaGg && 'font-semibold')}>
+        {ggQueda != null ? (
+          <>
+            <span>GG obra{afectaGg ? ' ← este gasto' : ''} · ejecutado {fmtPEN(c.ggObra.ejecutado)} de {fmtPEN(c.ggObra.presupuesto!)}</span>
+            <span className={cn('font-mono font-semibold', ggQueda < 0 ? 'text-rose-600' : 'text-emerald-600')}>queda {fmtPEN(ggQueda)}</span>
+          </>
+        ) : (
+          <>
+            <span>GG obra{afectaGg ? ' ← este gasto' : ''} · ejecutado {fmtPEN(c.ggObra.ejecutado)}</span>
+            <span className="text-ink-4">GG dentro del CD · sin tope propio</span>
+          </>
+        )}
+      </div>
+      <div className="flex justify-between text-ink-3"><span>Resultado de obra a hoy</span><span className="font-mono">{fmtPEN(c.resultadoObra)}</span></div>
+    </div>
+  );
+}
+
 function MovModal({ proyectos, defaultProyecto, onClose }: { proyectos: { id: string; codigo: string; nombre: string }[]; defaultProyecto: string; onClose: () => void }) {
   const qc = useQueryClient();
   const cuentasQ = useQuery({ queryKey: ['cuentas'], queryFn: () => api.finanzas.listCuentas() });
@@ -1570,6 +1613,17 @@ function MovModal({ proyectos, defaultProyecto, onClose }: { proyectos: { id: st
   const [prorratear, setProrratear] = useState(false);
   const [reparto, setReparto] = useState<{ proyectoId: string; monto: string }[]>([{ proyectoId: '', monto: '' }, { proyectoId: '', monto: '' }]);
   const costosObraQ = useQuery({ queryKey: ['costos-obra', proyectoId], queryFn: () => api.proyectos.getCostosObra(proyectoId), enabled: !!proyectoId && esGasto && tipo === 'Egreso' });
+  // F5.2 · saldo por obra del prorrateo (una query por obra elegida) + sobrecosto con confirmación
+  const [sobrecostoOk, setSobrecostoOk] = useState(false);
+  const repartoObras = useMemo(() => [...new Set(reparto.map((r) => r.proyectoId).filter(Boolean))], [reparto]);
+  const repartoCostosQ = useQueries({
+    queries: (prorratear ? repartoObras : []).map((pid) => ({ queryKey: ['costos-obra', pid], queryFn: () => api.proyectos.getCostosObra(pid) })),
+  });
+  const costosPorObra = useMemo(() => {
+    const m = new Map<string, CostosObra>();
+    repartoObras.forEach((pid, i) => { const d = repartoCostosQ[i]?.data; if (d) m.set(pid, d); });
+    return m;
+  }, [repartoObras, repartoCostosQ]);
   const [showAuto, setShowAuto] = useState(false);
   const [emitting, setEmitting] = useState(false);
   const [emitDone, setEmitDone] = useState(false);
@@ -1800,11 +1854,21 @@ function MovModal({ proyectos, defaultProyecto, onClose }: { proyectos: { id: st
   const creaMovimiento = isBanc || !esGastoEgreso || estadoPago === 'pagado';
   const aplicOk = totalAplicado <= totalComp + 0.005; // F2.2 · lo aplicado no excede el pago
   const tcOk = f.moneda === 'PEN' || parseFloat(f.tipoCambio) > 0; // F3.6 · USD exige TC
-  const isValid = sub > 0 && f.fecha && repartoValido && aplicOk && tcOk && (!creaMovimiento || !!f.cuentaId) && (isBanc ? (f.cuentaId && (!esTransfer || (f.cuentaDestinoId && f.cuentaDestinoId !== f.cuentaId))) : (f.contraparte.trim() && validDoc));
+  // F5.2 · sobrecosto: el gasto excede la bolsa (CD/GG) de su(s) obra(s) → exige confirmación explícita
+  const claseGasto = esGastoEgreso ? (claseDerivadaUI(cuentaRow, true) ?? 'CD') : null;
+  const sobrecostos: { codigo: string; excede: number }[] = !esGastoEgreso ? [] : prorratear
+    ? reparto.filter((r) => r.proyectoId && (parseFloat(r.monto) || 0) > 0)
+        .map((r) => ({ codigo: proyectos.find((p) => p.id === r.proyectoId)?.codigo ?? '?', excede: excedenteBolsa(costosPorObra.get(r.proyectoId), claseGasto, parseFloat(r.monto) || 0) }))
+        .filter((x) => x.excede > 0)
+    : proyectoId && excedenteBolsa(costosObraQ.data, claseGasto, totalComp) > 0
+      ? [{ codigo: proyectos.find((p) => p.id === proyectoId)?.codigo ?? 'obra', excede: excedenteBolsa(costosObraQ.data, claseGasto, totalComp) }]
+      : [];
+  const sobrecostoBloquea = sobrecostos.length > 0 && !sobrecostoOk;
+  const isValid = sub > 0 && f.fecha && repartoValido && aplicOk && tcOk && !sobrecostoBloquea && (!creaMovimiento || !!f.cuentaId) && (isBanc ? (f.cuentaId && (!esTransfer || (f.cuentaDestinoId && f.cuentaDestinoId !== f.cuentaId))) : (f.contraparte.trim() && validDoc));
 
   const onSave = () => {
     setError(null);
-    if (!isValid) { setError(!tcOk ? `Moneda ${f.moneda}: falta el tipo de cambio (botón TC SUNAT o escríbelo)` : creaMovimiento && !f.cuentaId ? 'Indica la cuenta de la que sale o a la que entra el dinero' : isBanc ? 'Completa cuenta(s) y monto' : 'Completa contraparte, monto y documento válido'); return; }
+    if (!isValid) { setError(sobrecostoBloquea ? 'El gasto excede el saldo de la obra: marca "Registrar sobrecosto" para continuar' : !tcOk ? `Moneda ${f.moneda}: falta el tipo de cambio (botón TC SUNAT o escríbelo)` : creaMovimiento && !f.cuentaId ? 'Indica la cuenta de la que sale o a la que entra el dinero' : isBanc ? 'Completa cuenta(s) y monto' : 'Completa contraparte, monto y documento válido'); return; }
     setEmitting(true); setEmitDone(false); create.mutate();
   };
 
@@ -1900,36 +1964,40 @@ function MovModal({ proyectos, defaultProyecto, onClose }: { proyectos: { id: st
                       {cuentaSugerida && cuentaContable && <span className="text-[10px] text-amber-600" title="Última cuenta usada con este proveedor · confírmala o cámbiala">sugerida</span>}
                     </div>
                   </div>
-                  {proyectoId && (
-                    <div>
-                      {costosObraQ.data && (() => { const c = costosObraQ.data; const cdQueda = c.cd.presupuesto - c.cd.ejecutado; return (
-                        <div className="mt-2 rounded-md bg-bg-sunken/60 border border-line p-2 text-[10.5px] space-y-0.5">
-                          <div className="flex items-center justify-between font-semibold text-ink-2"><span>Saldo de esta obra</span><span className="text-ink-4 font-normal">presupuesto − ejecutado</span></div>
-                          <div className="flex justify-between"><span>CD ejecutado {fmtPEN(c.cd.ejecutado)} de {fmtPEN(c.cd.presupuesto)}</span><span className={cn('font-mono font-semibold', cdQueda < 0 ? 'text-rose-600' : 'text-emerald-600')}>queda {fmtPEN(cdQueda)}</span></div>
-                          <div className="flex justify-between text-ink-3"><span>Resultado de obra a hoy</span><span className="font-mono">{fmtPEN(c.resultadoObra)}</span></div>
-                        </div>
-                      ); })()}
-                    </div>
-                  )}
+                  {proyectoId && !prorratear && costosObraQ.data && <SaldoObraBox c={costosObraQ.data} clase={claseGasto} />}
                   <label className="flex items-center gap-1.5 cursor-pointer text-[11.5px]"><input type="checkbox" checked={prorratear} onChange={(e) => setProrratear(e.target.checked)} className="rounded border-line" /> Repartir entre varias obras (prorrateo)</label>
                   {prorratear && (
                     <div className="rounded-md border border-line p-2 space-y-1.5">
-                      {reparto.map((row, i) => (
+                      {reparto.map((row, i) => {
+                        // F5.2 · queda de la bolsa (CD/GG según la cuenta) de la obra elegida + excedente
+                        const cRow = row.proyectoId ? costosPorObra.get(row.proyectoId) : undefined;
+                        const quedaRow = cRow ? (claseGasto === 'GG_OBRA' && cRow.ggObra.presupuesto != null ? cRow.ggObra.presupuesto - cRow.ggObra.ejecutado : cRow.cd.presupuesto - cRow.cd.ejecutado) : null;
+                        const excedeRow = excedenteBolsa(cRow, claseGasto, parseFloat(row.monto) || 0);
+                        return (
                         <div key={i} className="flex items-center gap-1.5">
                           <select className={cn(inputCls, 'flex-1 min-w-0')} value={row.proyectoId} onChange={(e) => setReparto((rs) => rs.map((x, j) => (j === i ? { ...x, proyectoId: e.target.value } : x)))}>
                             <option value="">— obra —</option>
                             {proyectos.map((p) => <option key={p.id} value={p.id}>{p.codigo}</option>)}
                           </select>
-                          <input className={cn(inputCls, 'w-24 text-right font-mono')} type="number" step="0.01" placeholder="0.00" value={row.monto} onChange={(e) => setReparto((rs) => rs.map((x, j) => (j === i ? { ...x, monto: e.target.value } : x)))} />
+                          {quedaRow != null && <span className={cn('shrink-0 font-mono text-[10px]', excedeRow > 0 ? 'text-rose-600 font-semibold' : quedaRow < 0 ? 'text-rose-600' : 'text-ink-3')} title={`saldo ${claseGasto === 'GG_OBRA' ? 'GG' : 'CD'} de la obra`}>queda {fmtPEN(quedaRow)}</span>}
+                          <input className={cn(inputCls, 'w-24 text-right font-mono', excedeRow > 0 && 'border-rose-500')} type="number" step="0.01" placeholder="0.00" value={row.monto} onChange={(e) => setReparto((rs) => rs.map((x, j) => (j === i ? { ...x, monto: e.target.value } : x)))} />
                           {reparto.length > 2 && <button type="button" onClick={() => setReparto((rs) => rs.filter((_, j) => j !== i))} className="text-ink-4 hover:text-rose-600"><X className="h-3.5 w-3.5" /></button>}
                         </div>
-                      ))}
+                        );
+                      })}
                       <div className="flex items-center justify-between text-[10.5px]">
                         <button type="button" onClick={() => setReparto((rs) => [...rs, { proyectoId: '', monto: '' }])} className="text-primary hover:underline">+ Agregar obra</button>
                         {(() => { const suma = reparto.reduce((s, r) => s + (parseFloat(r.monto) || 0), 0); const dif = totalComp - suma; return (
                           <span className={cn('font-mono', Math.abs(dif) < 0.01 ? 'text-emerald-600' : 'text-amber-600')}>Σ {fmtPEN(suma)} de {fmtPEN(totalComp)}{Math.abs(dif) >= 0.01 ? ` · falta ${fmtPEN(dif)}` : ' ✓'}</span>
                         ); })()}
                       </div>
+                    </div>
+                  )}
+                  {/* F5.2 · sobrecosto: exige confirmación explícita (la realidad se registra, pero consciente) */}
+                  {sobrecostos.length > 0 && (
+                    <div className="rounded-md border border-rose-300/60 bg-rose-50 dark:bg-rose-950/30 px-3 py-2 text-[11.5px] text-rose-700 space-y-1">
+                      <div className="font-semibold">Sobrecosto sobre el saldo {claseGasto === 'GG_OBRA' ? 'GG' : 'CD'}: {sobrecostos.map((s) => `${s.codigo} +${fmtPEN(s.excede)}`).join(' · ')}</div>
+                      <label className="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" checked={sobrecostoOk} onChange={(e) => setSobrecostoOk(e.target.checked)} className="rounded border-line" /> Registrar sobrecosto igual · entra a los costos reales de la obra</label>
                     </div>
                   )}
                   {!prorratear && <label className="flex items-center gap-1.5 cursor-pointer text-[11.5px]"><input type="checkbox" checked={inventariable} onChange={(e) => setInventariable(e.target.checked)} className="rounded border-line" /> Registrar en inventario</label>}
