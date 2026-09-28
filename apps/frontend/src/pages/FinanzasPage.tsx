@@ -76,18 +76,19 @@ export function FinanzasPage() {
               </option>
             ))}
           </select>
+          {/* F5.4 · SWAP aprobado: el formulario del mockup es el principal; el clásico queda de respaldo temporal */}
           <button
-            onClick={() => setMovOpen(true)}
+            onClick={() => setMovV2Open(true)}
             className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md bg-primary text-primary-foreground text-[12px] font-medium hover:opacity-90"
           >
             <Plus className="h-3.5 w-3.5" /> Registrar movimiento
           </button>
           <button
-            onClick={() => setMovV2Open(true)}
-            title="Formulario nuevo (diseño confirmado con Kelly/Mario) · en prueba en paralelo"
-            className="inline-flex items-center gap-1 h-9 px-2.5 rounded-md border border-dashed border-primary/60 text-primary text-[11.5px] font-medium hover:bg-primary/5"
+            onClick={() => setMovOpen(true)}
+            title="Formulario anterior · respaldo temporal mientras se estabiliza el nuevo"
+            className="h-9 px-2 rounded-md text-[10.5px] text-ink-4 hover:text-ink-2 hover:bg-bg-sunken"
           >
-            Nuevo <span className="rounded bg-primary/10 px-1 text-[9.5px] font-bold uppercase">beta</span>
+            clásico
           </button>
         </div>
       </header>
@@ -1600,9 +1601,10 @@ const TIPO_CPE_NOMBRE: Record<string, string> = { '01': 'Factura', '03': 'Boleta
 function MovModalV2({ proyectos, defaultProyecto, onClose }: { proyectos: { id: string; codigo: string; nombre: string }[]; defaultProyecto: string; onClose: () => void }) {
   const qc = useQueryClient();
   const hoy = new Date().toISOString().slice(0, 10);
-  type Entrada = 'compra' | 'gasto' | 'bancario' | 'ingreso';
+  type Entrada = 'compra' | 'gasto' | 'pago' | 'bancario' | 'ingreso';
   const [entrada, setEntrada] = useState<Entrada>('compra');
   const esCompraGasto = entrada === 'compra' || entrada === 'gasto';
+  const esPagoIngreso = entrada === 'pago' || entrada === 'ingreso';
 
   // ── Documento ──
   const [doc, setDoc] = useState({ tipo: '01', serie: '', numero: '', fechaEmision: hoy, fechaVencimiento: '', periodoContable: hoy.slice(0, 7), moneda: 'PEN', tipoCambio: '', modSerie: '', modNumero: '' });
@@ -1631,9 +1633,32 @@ function MovModalV2({ proyectos, defaultProyecto, onClose }: { proyectos: { id: 
   const [tipoGasto, setTipoGasto] = useState('Compra Materiales');
   const [sobrecostoOk, setSobrecostoOk] = useState(false);
   const [glosa, setGlosa] = useState('');
-  // ── Bancario / Ingreso (básico) ──
-  const [bi, setBi] = useState({ fecha: hoy, monto: '', cuentaId: '', cuentaDestinoId: '', numOperacion: '', contraparte: '', descripcion: '' });
+  // F5.4 · prorrateo (solo entrada Gasto: un comprobante repartido chocaría con el dedup de compras)
+  const [prorratear, setProrratear] = useState(false);
+  const [reparto, setReparto] = useState<{ proyectoId: string; monto: string }[]>([{ proyectoId: '', monto: '' }, { proyectoId: '', monto: '' }]);
+  const repartoObras = useMemo(() => [...new Set(reparto.map((r) => r.proyectoId).filter(Boolean))], [reparto]);
+  const repartoCostosQ = useQueries({ queries: (prorratear ? repartoObras : []).map((pid) => ({ queryKey: ['costos-obra', pid], queryFn: () => api.proyectos.getCostosObra(pid) })) });
+  const costosPorObra = useMemo(() => {
+    const m = new Map<string, CostosObra>();
+    repartoObras.forEach((pid, i) => { const d = repartoCostosQ[i]?.data; if (d) m.set(pid, d); });
+    return m;
+  }, [repartoObras, repartoCostosQ]);
+  // ── Pago / Bancario / Ingreso ──
+  const [bi, setBi] = useState({ fecha: hoy, monto: '', cuentaId: '', cuentaDestinoId: '', numOperacion: '', ruc: '', contraparte: '', descripcion: '' });
   const biset = (p: Partial<typeof bi>) => setBi((s) => ({ ...s, ...p }));
+  // F5.4 · swap: aplicaciones a facturas (F2.2), provisión 48 y cuenta contra manual viven ahora en V2
+  const [aplicSel, setAplicSel] = useState<Record<string, string>>({});
+  const [pago48, setPago48] = useState(false); // pago sin factura → 4811
+  const [cuentaContra, setCuentaContra] = useState<string | null>(null); // cuenta contra manual (Kelly)
+  const pendTerm = /^\d{11}$/.test(bi.ruc) ? bi.ruc : bi.contraparte;
+  const pendQ = useQuery({
+    queryKey: ['docs-pend', entrada === 'ingreso' ? 'cxc' : 'cxp', pendTerm],
+    queryFn: () => api.finanzas.listDocumentosPendientes(entrada === 'ingreso' ? 'cxc' : 'cxp', pendTerm),
+    enabled: esPagoIngreso && pendTerm.trim().length >= 3,
+  });
+  const docsPend = pendQ.data?.documentos ?? [];
+  const apList = Object.entries(aplicSel).map(([documentoPendienteId, m]) => ({ documentoPendienteId, monto: parseFloat(m) || 0 })).filter((a) => a.monto > 0);
+  const totalAplicado = apList.reduce((s, a) => s + a.monto, 0);
 
   const [error, setError] = useState<string | null>(null);
   const [emitting, setEmitting] = useState(false);
@@ -1730,7 +1755,13 @@ function MovModalV2({ proyectos, defaultProyecto, onClose }: { proyectos: { id: 
   const invCount = lineasCalc.filter((l) => l.inv).length;
 
   // ── sobrecosto (bolsa CD por defecto · la clase fina la deriva el motor por cuenta) ──
-  const excede = proyectoId && esCompraGasto && !esNC ? excedenteBolsa(costosQ.data, 'CD', total) : 0;
+  const excede = proyectoId && esCompraGasto && !esNC && !prorratear ? excedenteBolsa(costosQ.data, 'CD', total) : 0;
+  const excedeProrrateo = prorratear ? reparto.reduce((s, r) => s + excedenteBolsa(costosPorObra.get(r.proyectoId), 'CD', parseFloat(r.monto) || 0), 0) : 0;
+  const repartoValido = !prorratear || (() => {
+    const rows = reparto.filter((r) => r.proyectoId && (parseFloat(r.monto) || 0) > 0);
+    const suma = rows.reduce((s, r) => s + parseFloat(r.monto), 0);
+    return rows.length >= 2 && Math.abs(total - suma) < 0.01;
+  })();
 
   // ── validez por sección (steps) ──
   const okDoc = sinCpe || (!!doc.serie.trim() && !!doc.numero.trim() && (!esNC || (!!doc.modSerie && !!doc.modNumero)));
@@ -1740,22 +1771,57 @@ function MovModalV2({ proyectos, defaultProyecto, onClose }: { proyectos: { id: 
   const okPago = pago.estado === 'pendiente' || (!!pago.cuentaId && !!pago.numOperacion.trim() && (pago.estado !== 'parcial' || pagadoNum > 0));
   const okDest = true;
   const tcOk = doc.moneda === 'PEN' || parseFloat(doc.tipoCambio) > 0;
+  const aplicOk = totalAplicado <= (parseFloat(bi.monto) || 0) + 0.005; // lo aplicado no excede el pago/cobro
   const okTodo = esCompraGasto
-    ? okDoc && okProv && okDet && okPago && tcOk && (excede <= 0 || sobrecostoOk)
-    : parseFloat(bi.monto) > 0 && !!bi.cuentaId && (entrada === 'ingreso' ? !!bi.contraparte.trim() : true);
+    ? okDoc && okProv && okDet && okPago && tcOk && repartoValido && !(prorratear && pago.estado === 'parcial')
+      && (excede + excedeProrrateo <= 0 || sobrecostoOk)
+    : parseFloat(bi.monto) > 0 && !!bi.cuentaId && aplicOk
+      && (entrada === 'bancario' ? !!bi.cuentaDestinoId && bi.cuentaDestinoId !== bi.cuentaId : !!bi.contraparte.trim());
 
   const registrar = useMutation({
     mutationFn: async () => {
       if (!esCompraGasto) {
         const monto = parseFloat(bi.monto) || 0;
+        // F5.4 · pago/cobro con aplicaciones (F2.2) + provisión 48 + cuenta contra manual (del clásico)
+        const contraManual = entrada === 'pago' && pago48 ? '4811' : cuentaContra;
         await api.finanzas.createMovimientoGlobal({
           fecha: bi.fecha, tipoMovimiento: entrada === 'ingreso' ? 'Ingreso' : 'Egreso', proyectoId: proyectoId || null,
           cuentaId: bi.cuentaId || null, cuentaDestinoId: entrada === 'bancario' ? bi.cuentaDestinoId || null : null,
           subtipo: entrada === 'bancario' ? 'Transferencia entre cuentas' : null,
-          naturalezaContable: entrada === 'bancario' ? 'TRANSFERENCIA' : 'OTRO_INGRESO',
+          naturalezaContable: entrada === 'bancario' ? 'TRANSFERENCIA' : entrada === 'ingreso' ? 'OTRO_INGRESO' : 'GASTO_OPERATIVO',
           clienteNombre: bi.contraparte || null, monto, subtotal: monto, igv: 0,
           numOperacion: bi.numOperacion || null, descripcion: bi.descripcion || null,
+          ...(contraManual ? { cuentaContable: contraManual, cuentaContableOrigen: 'USUARIO' as const } : {}),
+          aplicaciones: apList.length && !pago48 ? apList : undefined,
         });
+        return;
+      }
+      // F5.4 · prorrateo (solo Gasto sin comprobante): N gastos ligados por la referencia de operación
+      if (entrada === 'gasto' && prorratear) {
+        const rows = reparto.filter((r) => r.proyectoId && (parseFloat(r.monto) || 0) > 0);
+        const opRef = pago.numOperacion || `PRORR-${Date.now().toString(36).toUpperCase()}`;
+        for (const row of rows) {
+          const totalRow = parseFloat(row.monto);
+          const baseRow = aplicaIgv ? r2(totalRow / 1.18) : totalRow;
+          const { gasto } = await api.finanzas.createGastoGlobal({
+            fecha: doc.fechaEmision, proyectoId: row.proyectoId,
+            proveedorRuc: prov.ruc || null, proveedorRazon: prov.razon || null,
+            tipoComprobante: 'Sin comprobante', moneda: doc.moneda,
+            tipoCambio: doc.moneda !== 'PEN' ? parseFloat(doc.tipoCambio) || null : null,
+            subtotal: baseRow, igv: r2(totalRow - baseRow), total: totalRow,
+            tipoGasto, destino: 'proyecto',
+            descripcionItem: `${glosa || lineasCalc[0]?.descripcion || tipoGasto} · prorrateo ${opRef}`.slice(0, 250),
+            cuentaContable: lineasCalc[0]?.cuenta || cuentaSug || null,
+            cuentaContableOrigen: lineasCalc[0]?.cuenta ? 'USUARIO' : cuentaSug ? 'SUGERIDO' : null,
+          });
+          if (pago.estado === 'pagado' && gasto) {
+            await api.finanzas.createMovimientoGlobal({
+              fecha: pago.fecha, tipoMovimiento: 'Egreso', proyectoId: row.proyectoId, cuentaId: pago.cuentaId,
+              monto: totalRow, subtotal: baseRow, igv: r2(totalRow - baseRow),
+              clienteNombre: prov.razon || null, numOperacion: opRef, gastoId: gasto.id,
+            });
+          }
+        }
         return;
       }
       const payload: GastoInput & { proyectoId?: string | null; docModifica?: { serie: string; numero: string } } = {
@@ -1828,7 +1894,7 @@ function MovModalV2({ proyectos, defaultProyecto, onClose }: { proyectos: { id: 
       <div className="w-full max-w-5xl max-h-[92vh] overflow-hidden rounded-xl border border-line bg-bg-elev shadow-2xl flex flex-col animate-modalPop">
         <div className="shrink-0 flex items-center justify-between border-b border-line px-5 py-3">
           <div>
-            <h2 className="text-[16px] font-bold tracking-[-0.01em]">Registrar {entrada === 'compra' ? 'compra' : entrada === 'gasto' ? 'gasto' : entrada === 'bancario' ? 'operación bancaria' : 'ingreso'} <span className="ml-1 rounded bg-primary/10 px-1.5 py-0.5 text-[9.5px] font-bold uppercase text-primary">beta</span></h2>
+            <h2 className="text-[16px] font-bold tracking-[-0.01em]">Registrar {entrada === 'compra' ? 'compra' : entrada === 'gasto' ? 'gasto' : entrada === 'pago' ? 'pago' : entrada === 'bancario' ? 'operación bancaria' : 'ingreso'}</h2>
             {esCompraGasto && (
               <div className="mt-1 flex items-center gap-2.5">
                 <Step id="v2-doc" ok={okDoc} label="Documento" /><span className="text-ink-4">/</span>
@@ -1847,8 +1913,8 @@ function MovModalV2({ proyectos, defaultProyecto, onClose }: { proyectos: { id: 
           <div className="grid grid-cols-[1fr_250px] gap-4 p-5 items-start">
             <div className="space-y-3.5 min-w-0">
               {/* Entradas */}
-              <div className="grid grid-cols-4 gap-2">
-                {([['compra', 'Compra', 'Con comprobante · RCE y SIRE'], ['gasto', 'Gasto', 'Sin comprobante fiscal'], ['bancario', 'Bancario', 'Transferencia entre cuentas'], ['ingreso', 'Ingreso', 'Cobro / otro ingreso']] as const).map(([v, l, s]) => (
+              <div className="grid grid-cols-5 gap-2">
+                {([['compra', 'Compra', 'Con comprobante · RCE y SIRE'], ['gasto', 'Gasto', 'Sin comprobante fiscal'], ['pago', 'Pago', 'Deuda registrada · provisión 48'], ['bancario', 'Bancario', 'Transferencia entre cuentas'], ['ingreso', 'Ingreso', 'Cobro · aplica a facturas']] as const).map(([v, l, s]) => (
                   <button key={v} type="button" onClick={() => setEntrada(v)}
                     className={cn('rounded-lg border-2 p-2 text-left transition-colors', entrada === v ? 'border-primary bg-primary/5' : 'border-line hover:bg-bg-elev')}>
                     <div className="text-[12px] font-bold">{l}</div>
@@ -1858,18 +1924,54 @@ function MovModalV2({ proyectos, defaultProyecto, onClose }: { proyectos: { id: 
               </div>
 
               {!esCompraGasto && (
-                <SecBox title={entrada === 'bancario' ? 'Operación bancaria' : 'Ingreso'}>
+                <SecBox title={entrada === 'bancario' ? 'Operación bancaria' : entrada === 'pago' ? 'Pago · cancela deuda registrada o provisiona (48)' : 'Ingreso / cobro'}>
                   <div className="grid grid-cols-3 gap-3">
                     <Field label="Fecha"><input type="date" className={inputCls} value={bi.fecha} onChange={(e) => biset({ fecha: e.target.value })} /></Field>
-                    <Field label={entrada === 'bancario' ? 'Cuenta origen' : 'Entra a'}><select className={inputCls} value={bi.cuentaId} onChange={(e) => biset({ cuentaId: e.target.value })}><option value="">— cuenta —</option>{cuentas.map((c) => <option key={c.id} value={c.id}>{c.descripcion ?? c.codigo}</option>)}</select></Field>
+                    <Field label={entrada === 'ingreso' ? 'Entra a' : 'Sale de'}><select className={inputCls} value={bi.cuentaId} onChange={(e) => biset({ cuentaId: e.target.value })}><option value="">— cuenta —</option>{cuentas.map((c) => <option key={c.id} value={c.id}>{c.descripcion ?? c.codigo}</option>)}</select></Field>
                     {entrada === 'bancario'
                       ? <Field label="Cuenta destino"><select className={inputCls} value={bi.cuentaDestinoId} onChange={(e) => biset({ cuentaDestinoId: e.target.value })}><option value="">— destino —</option>{cuentas.filter((c) => c.id !== bi.cuentaId).map((c) => <option key={c.id} value={c.id}>{c.descripcion ?? c.codigo}</option>)}</select></Field>
-                      : <Field label="Cliente / contraparte"><input className={inputCls} value={bi.contraparte} onChange={(e) => biset({ contraparte: e.target.value })} /></Field>}
-                    <Field label="Monto"><input type="number" step="0.01" className={cn(inputCls, 'font-mono')} value={bi.monto} onChange={(e) => biset({ monto: e.target.value })} /></Field>
+                      : <Field label="Monto"><input type="number" step="0.01" className={cn(inputCls, 'font-mono')} value={bi.monto} onChange={(e) => biset({ monto: e.target.value })} /></Field>}
+                    {entrada === 'bancario' && <Field label="Monto"><input type="number" step="0.01" className={cn(inputCls, 'font-mono')} value={bi.monto} onChange={(e) => biset({ monto: e.target.value })} /></Field>}
+                    {esPagoIngreso && <>
+                      <Field label="RUC" right="jala facturas pendientes"><input className={cn(inputCls, 'font-mono')} maxLength={11} value={bi.ruc} onChange={(e) => biset({ ruc: e.target.value.replace(/\D/g, '') })} placeholder="20XXXXXXXXX" /></Field>
+                      <Field label={entrada === 'ingreso' ? 'Cliente *' : 'Proveedor / tercero *'}><input className={inputCls} value={bi.contraparte} onChange={(e) => biset({ contraparte: e.target.value })} placeholder="razón social" /></Field>
+                    </>}
                     <Field label="N° operación"><input className={cn(inputCls, 'font-mono')} value={bi.numOperacion} onChange={(e) => biset({ numOperacion: e.target.value })} /></Field>
                     <Field label="Descripción"><input className={inputCls} value={bi.descripcion} onChange={(e) => biset({ descripcion: e.target.value })} /></Field>
                   </div>
-                  <div className="mt-2 text-[10.5px] text-ink-4">Para aplicar un cobro a facturas pendientes usa por ahora el formulario clásico (Registrar movimiento).</div>
+                  {entrada === 'pago' && (
+                    <label className="flex items-start gap-2 cursor-pointer rounded-md border border-line p-2.5 text-[11.5px] hover:bg-bg-sunken/50">
+                      <input type="checkbox" checked={pago48} onChange={(e) => { setPago48(e.target.checked); if (e.target.checked) setAplicSel({}); }} className="mt-0.5 rounded border-line" />
+                      <span><span className="font-semibold">Pago sin factura · provisión 48</span>
+                        <span className="block text-[10px] text-ink-4">Carga la 4811 · cuando llegue el comprobante se extorna desde Compras → Provisiones 48.</span></span>
+                    </label>
+                  )}
+                  {esPagoIngreso && !pago48 && (
+                    <Field label="Cuenta contra · manual" right="opcional · si no, la infiere el sistema">
+                      <CuentaContableSelect value={cuentaContra} onChange={(cod) => setCuentaContra(cod)} />
+                    </Field>
+                  )}
+                  {/* F2.2 · facturas pendientes del tercero → aplicar el pago/cobro */}
+                  {esPagoIngreso && !pago48 && pendTerm.trim().length >= 3 && (
+                    docsPend.length === 0 ? <div className="text-[10.5px] text-ink-4">Sin facturas {entrada === 'ingreso' ? 'por cobrar' : 'por pagar'} de ese tercero.</div> : (
+                    <div className="rounded-md border border-line divide-y divide-line/40 max-h-44 overflow-y-auto">
+                      {docsPend.map((d) => (
+                        <div key={d.id} className="flex items-center gap-2.5 px-3 py-1.5 text-[11.5px]">
+                          <div className="flex-1 min-w-0">
+                            <span className="font-mono">{[d.docSerie, d.docNumero].filter(Boolean).join('-') || 's/n'}</span>
+                            <span className="text-ink-3"> · {d.terceroRazon ?? d.terceroRuc} · saldo </span>
+                            <span className="font-mono">{fmtPEN(Number(d.saldoPendiente))}</span>
+                          </div>
+                          <input type="number" step="0.01" className={cn(inputCls, 'h-7 w-24 font-mono text-right')} placeholder="0.00"
+                            value={aplicSel[d.id] ?? ''} onChange={(e) => setAplicSel((s) => ({ ...s, [d.id]: e.target.value }))} />
+                          <button type="button" className="text-[10px] text-primary hover:underline" onClick={() => setAplicSel((s) => ({ ...s, [d.id]: String(Math.min(Number(d.saldoPendiente), parseFloat(bi.monto) || Number(d.saldoPendiente))) }))}>todo</button>
+                        </div>
+                      ))}
+                      <div className={cn('px-3 py-1.5 text-[10.5px] font-mono text-right', totalAplicado > (parseFloat(bi.monto) || 0) + 0.005 ? 'text-rose-600 font-semibold' : 'text-ink-3')}>
+                        aplicado {fmtPEN(totalAplicado)} de {fmtPEN(parseFloat(bi.monto) || 0)}
+                      </div>
+                    </div>
+                  ))}
                 </SecBox>
               )}
 
@@ -2035,10 +2137,39 @@ function MovModalV2({ proyectos, defaultProyecto, onClose }: { proyectos: { id: 
                   <Field label="Tipo de gasto"><select className={inputCls} value={tipoGasto} onChange={(e) => setTipoGasto(e.target.value)}>{TIPOS_GASTO.map((t) => <option key={t}>{t}</option>)}</select></Field>
                 </div>
                 <Field label="Glosa / descripción"><input className={inputCls} value={glosa} onChange={(e) => setGlosa(e.target.value)} placeholder="opcional · aparece en el libro y el asiento" /></Field>
-                {proyectoId && costosQ.data && <SaldoObraBox c={costosQ.data} clase={null} />}
-                {excede > 0 && (
+                {entrada === 'gasto' && (
+                  <label className="flex items-center gap-1.5 cursor-pointer text-[11.5px]"><input type="checkbox" checked={prorratear} onChange={(e) => setProrratear(e.target.checked)} className="rounded border-line" /> Repartir entre varias obras (prorrateo)</label>
+                )}
+                {entrada === 'gasto' && prorratear && (
+                  <div className="rounded-md border border-line p-2 space-y-1.5">
+                    {reparto.map((row, i) => {
+                      const cRow = row.proyectoId ? costosPorObra.get(row.proyectoId) : undefined;
+                      const quedaRow = cRow ? cRow.cd.presupuesto - cRow.cd.ejecutado : null;
+                      const excedeRow = excedenteBolsa(cRow, 'CD', parseFloat(row.monto) || 0);
+                      return (
+                        <div key={i} className="flex items-center gap-1.5">
+                          <select className={cn(inputCls, 'flex-1 min-w-0')} value={row.proyectoId} onChange={(e) => setReparto((rs) => rs.map((x, j) => (j === i ? { ...x, proyectoId: e.target.value } : x)))}>
+                            <option value="">— obra —</option>
+                            {proyectos.map((p) => <option key={p.id} value={p.id}>{p.codigo}</option>)}
+                          </select>
+                          {quedaRow != null && <span className={cn('shrink-0 font-mono text-[10px]', excedeRow > 0 ? 'text-rose-600 font-semibold' : 'text-ink-3')}>queda {fmtPEN(quedaRow)}</span>}
+                          <input className={cn(inputCls, 'w-24 text-right font-mono', excedeRow > 0 && 'border-rose-500')} type="number" step="0.01" placeholder="0.00" value={row.monto} onChange={(e) => setReparto((rs) => rs.map((x, j) => (j === i ? { ...x, monto: e.target.value } : x)))} />
+                          {reparto.length > 2 && <button type="button" onClick={() => setReparto((rs) => rs.filter((_, j) => j !== i))} className="text-ink-4 hover:text-rose-600"><X className="h-3.5 w-3.5" /></button>}
+                        </div>
+                      );
+                    })}
+                    <div className="flex items-center justify-between text-[10.5px]">
+                      <button type="button" onClick={() => setReparto((rs) => [...rs, { proyectoId: '', monto: '' }])} className="text-primary hover:underline">+ Agregar obra</button>
+                      {(() => { const suma = reparto.reduce((s, r) => s + (parseFloat(r.monto) || 0), 0); const dif = total - suma; return (
+                        <span className={cn('font-mono', Math.abs(dif) < 0.01 ? 'text-emerald-600' : 'text-amber-600')}>Σ {fmtPEN(suma)} de {fmtPEN(total)}{Math.abs(dif) >= 0.01 ? ` · falta ${fmtPEN(dif)}` : ' ✓'}</span>
+                      ); })()}
+                    </div>
+                  </div>
+                )}
+                {proyectoId && !prorratear && costosQ.data && <SaldoObraBox c={costosQ.data} clase={null} />}
+                {excede + excedeProrrateo > 0 && (
                   <div className="rounded-md border border-rose-300/60 bg-rose-50 dark:bg-rose-950/30 px-3 py-2 text-[11.5px] text-rose-700 space-y-1">
-                    <div className="font-semibold">Sobrecosto: +{fmtPEN(excede)} sobre el saldo CD de la obra</div>
+                    <div className="font-semibold">Sobrecosto: +{fmtPEN(excede + excedeProrrateo)} sobre el saldo CD</div>
                     <label className="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" checked={sobrecostoOk} onChange={(e) => setSobrecostoOk(e.target.checked)} className="rounded border-line" /> Registrar sobrecosto igual · entra a los costos reales</label>
                   </div>
                 )}
