@@ -16,6 +16,7 @@ import { requireAuth, requireRole } from '../middleware/auth.js';
 import { audit } from '../lib/audit.js';
 import { freezePeriodo, unfreezePeriodo } from '../lib/periodos.js';
 import { derivarClaseCore, cargarDerivarCtx, type DerivarCtx } from '../lib/clasificacion.js';
+import { aplicarPagoAOrigen, DocumentoError } from '../lib/documentosPendientes.js';
 import { construirTaxonomia } from '../lib/conciliacionTaxonomia.js';
 import * as ple from '../lib/ple.js';
 
@@ -796,6 +797,8 @@ router.post('/generar', async (req, res) => {
   let corrN = corrRows.reduce((m, r) => Math.max(m, Number(r.c.slice(corrPref.length)) || 0), 0);
   // F1.1 · retención de garantía segregada: asegura la divisionaria 12122 (hija de 1212) · idempotente
   await db.insert(schema.planContable).values({ codigo: '12122', descripcion: 'Retención de garantía por cobrar', tipo: 'activo', parentCodigo: '1212', nivel: 4, esDivisionaria: true }).onConflictDoNothing();
+  // F3.4 · provisiones de gastos sin factura (Kelly): el pago sin comprobante carga la 4811
+  await db.insert(schema.planContable).values({ codigo: '4811', descripcion: 'Provisión de gastos sin factura', tipo: 'Pasivo', parentCodigo: '48', nivel: 2, esDivisionaria: true }).onConflictDoNothing();
   const planCodes = new Set((await db.select({ codigo: schema.planContable.codigo }).from(schema.planContable)).map((r) => r.codigo));
   const derivarCtx = await cargarDerivarCtx(); // WS1 · preload clasificable+mapa 1 vez (deriva clase sin N queries)
   const asientoBase = { nextCorrelativo: () => `${corrPref}${String(++corrN).padStart(4, '0')}`, skipPeriodoCheck: true as const, validCuentas: planCodes, userId: req.user!.id, derivarCtx };
@@ -1125,7 +1128,8 @@ router.post('/generar', async (req, res) => {
     }
     if (dryRunMov) { resultado.movimientos++; continue; } // dry-run: cuenta pero no escribe
     try {
-      await gen({ fecha: fmov, glosa: m.descripcion ?? `Movimiento ${m.tipoMovimiento}`, origen: 'movimiento', origenId: m.id, proyectoId: m.proyectoId, lineas });
+      // F3.4 · contraparte en el header: el auxiliar por tercero y las provisiones 48 la necesitan
+      await gen({ fecha: fmov, glosa: m.descripcion ?? `Movimiento ${m.tipoMovimiento}`, origen: 'movimiento', origenId: m.id, proyectoId: m.proyectoId, contraparteRazon: esTransfer ? null : m.clienteNombre, lineas });
       resultado.movimientos++;
     } catch (e) {
       resultado.errores.push(`movimiento ${m.codigo ?? m.id}: ${(e as Error).message}`);
@@ -1203,6 +1207,90 @@ router.get('/auxiliar', async (req, res) => {
     .sort((a, b) => Math.abs(b.saldo) - Math.abs(a.saldo));
   const tot = filas.reduce((t, f) => ({ debe: t.debe + f.debe, haber: t.haber + f.haber, saldo: t.saldo + f.saldo, movs: t.movs + f.movs }), { debe: 0, haber: 0, saldo: 0, movs: 0 });
   res.json({ cuenta: cta, modo: 'mayor', filas, totales: tot });
+});
+
+// ── F3.4 · PROVISIONES 48 · «hago mi cierre y el siguiente mes tengo un montón de 48» ────
+// Provisión = movimiento Egreso con cuenta contra manual 4811 (el motor asienta Debe 4811 /
+// Haber 104x). Abierta = sin asiento de extorno. Al llegar la factura se registra la compra
+// normal (63x+40111/4212) y el extorno la limpia: Debe 4212 / Haber 4811 + la CxP queda
+// pagada por el movimiento ORIGINAL (el banco ya salió con la provisión · no hay pago nuevo).
+router.get('/provisiones', async (_req, res) => {
+  const m = schema.movimientos;
+  const movs = await db.select().from(m)
+    .where(and(dsql`${m.cuentaContable} LIKE '4811%'`, eq(m.tipoMovimiento, 'Egreso'), eq(m.anulado, false)))
+    .orderBy(desc(m.fecha));
+  const ids = movs.map((x) => x.id);
+  const extornos = ids.length
+    ? await db.select().from(schema.asientos).where(and(eq(schema.asientos.origen, 'extorno_provision'), inArray(schema.asientos.origenId, ids), ne(schema.asientos.status, 'anulado')))
+    : [];
+  const asentadas = new Set(ids.length
+    ? (await db.select({ o: schema.asientos.origenId }).from(schema.asientos).where(and(eq(schema.asientos.origen, 'movimiento'), inArray(schema.asientos.origenId, ids), ne(schema.asientos.status, 'anulado')))).map((r) => r.o)
+    : []);
+  const cuentasB = new Map((await db.select({ id: schema.cuentasBancarias.id, nombre: schema.cuentasBancarias.descripcion }).from(schema.cuentasBancarias)).map((c) => [c.id, c.nombre]));
+  const extPorMov = new Map(extornos.map((a) => [a.origenId, a]));
+  const provisiones = movs.map((mv) => {
+    const ext = extPorMov.get(mv.id);
+    return {
+      movimientoId: mv.id,
+      fecha: String(mv.fecha).slice(0, 10),
+      tercero: mv.clienteNombre,
+      descripcion: mv.descripcion,
+      monto: Number(mv.montoBase ?? mv.monto),
+      numOperacion: mv.numOperacion,
+      cuentaBanco: mv.cuentaId ? cuentasB.get(mv.cuentaId) ?? null : null,
+      asentada: asentadas.has(mv.id), // el asiento 4811/104x nace en /generar del periodo
+      estado: ext ? ('extornada' as const) : ('abierta' as const),
+      extorno: ext ? { asiento: ext.correlativo, fecha: String(ext.fecha).slice(0, 10), docOrigen: ext.docOrigen } : null,
+    };
+  });
+  const abiertas = provisiones.filter((p) => p.estado === 'abierta');
+  res.json({ provisiones, totales: { abiertas: abiertas.length, montoAbierto: Math.round(abiertas.reduce((s, p) => s + p.monto, 0) * 100) / 100 } });
+});
+
+// POST /provisiones/:movimientoId/extornar {gastoId, fecha?} · llegó el comprobante
+router.post('/provisiones/:movimientoId/extornar', async (req, res, next) => {
+  try {
+    const { gastoId, fecha: fechaBody } = req.body as { gastoId?: string; fecha?: string };
+    if (!gastoId) return res.status(400).json({ error: 'gastoId requerido: la compra registrada que sustenta la provisión' });
+    const [mov] = await db.select().from(schema.movimientos).where(eq(schema.movimientos.id, req.params.movimientoId!));
+    if (!mov) return res.status(404).json({ error: 'Movimiento no encontrado' });
+    if (mov.anulado) return res.status(400).json({ error: 'El movimiento está anulado' });
+    if (mov.tipoMovimiento !== 'Egreso' || !(mov.cuentaContable ?? '').startsWith('4811')) return res.status(400).json({ error: 'El movimiento no es una provisión 48 (egreso con cuenta contra 4811)' });
+    const [previo] = await db.select().from(schema.asientos).where(and(eq(schema.asientos.origen, 'extorno_provision'), eq(schema.asientos.origenId, mov.id), ne(schema.asientos.status, 'anulado'))).limit(1);
+    if (previo) return res.status(409).json({ error: `Provisión ya extornada (asiento ${previo.correlativo})` });
+    const [gasto] = await db.select().from(schema.gastos).where(eq(schema.gastos.id, gastoId));
+    if (!gasto) return res.status(404).json({ error: 'Compra no encontrada' });
+    const dp = schema.documentoPendiente;
+    const [doc] = await db.select().from(dp).where(and(eq(dp.docOrigenTipo, 'gasto'), eq(dp.docOrigenId, gastoId)));
+    if (!doc) return res.status(400).json({ error: 'La compra no tiene CxP en el sub-mayor (histórica o nota de crédito)' });
+    const saldo = Number(doc.saldoPendiente);
+    if (saldo <= 0.004) return res.status(400).json({ error: 'La CxP de esa compra ya está saldada' });
+    // el extorno vive en el periodo de la FACTURA (ahí nace la 4212 que cancela)
+    const fecha = String(fechaBody ?? gasto.fecha).slice(0, 10);
+    if (!(await periodoAbierto(periodoDe(fecha)))) return res.status(423).json({ error: `Periodo ${periodoDe(fecha)} cerrado` });
+    const monto = Math.min(Number(mov.montoBase ?? mov.monto), saldo);
+    const docRef = [gasto.serie, gasto.numero].filter(Boolean).join('-') || null;
+    // 1· la CxP queda pagada por el movimiento original (aplicación · anular el mov la devuelve)
+    await aplicarPagoAOrigen(db, { docOrigenTipo: 'gasto', docOrigenId: gastoId, movimientoId: mov.id, monto, fecha, userId: req.user!.id });
+    // 2· asiento de extorno: Debe 4212 / Haber 4811 limpia ambas cuentas
+    const asiento = await crearAsiento({
+      fecha,
+      glosa: `Extorno provisión 48 · ${gasto.proveedorRazon ?? mov.clienteNombre ?? 's/tercero'} · ${docRef ?? 's/n'}`.slice(0, 250),
+      origen: 'extorno_provision', origenId: mov.id, proyectoId: gasto.proyectoId,
+      docOrigen: docRef, tipoDoc: gasto.tipoComprobante,
+      contraparteRuc: gasto.proveedorRuc, contraparteRazon: gasto.proveedorRazon ?? mov.clienteNombre,
+      userId: req.user!.id,
+      lineas: [
+        { cuenta: '4212', descripcion: 'CxP cancelada con el pago provisionado', debe: monto, haber: 0, obraId: null },
+        { cuenta: mov.cuentaContable!, descripcion: 'Extorno provisión de gasto sin factura', debe: 0, haber: monto, obraId: null },
+      ],
+    });
+    await audit(req, { action: 'extornar_provision', entityType: 'movimiento', entityId: mov.id, after: { gastoId, monto, asiento: asiento.correlativo } });
+    res.json({ ok: true, asiento, aplicado: monto });
+  } catch (e) {
+    if (e instanceof DocumentoError) return res.status(e.status).json({ error: e.message });
+    next(e); // D5 · Express 4 no atrapa el throw async
+  }
 });
 
 // ── F3-B · REPORTE SOMBRA (read-only · 0 escrituras · no toca CUTOVER) ──────────

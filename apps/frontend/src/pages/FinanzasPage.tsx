@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { Suspense, lazy, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { type FinanzasResumen, type MovimientoInput, type GastoInput, type ConciliacionResumen, type PartidaConcil, type PlanCuentaBusqueda, type CpeBorrador, type CajaRow, type CuentaBancaria, api } from '@/lib/api.js';
+import { type FinanzasResumen, type MovimientoInput, type GastoInput, type ConciliacionResumen, type PartidaConcil, type PlanCuentaBusqueda, type CpeBorrador, type CajaRow, type CuentaBancaria, type ProvisionRow, api } from '@/lib/api.js';
 import { cn, fmtPEN } from '@/lib/utils.js';
 import { CuentaContableSelect, claseDerivadaUI } from '@/components/contabilidad/CuentaContableSelect.js';
 import { invalidateResumen } from '@/lib/invalidate.js';
@@ -722,19 +722,155 @@ function SegTabs<T extends string>({ value, onChange, opts }: { value: T; onChan
 // ─── Tab Compras · segmentos: Registro · Bandeja CPE ──
 // El segmento "Órdenes por aprobar/pagar" murió: la aprobación de OC vive en Logística
 // (su casa natural) y el pago vive en Registrar movimiento con aplicaciones (F2.2).
-function ComprasHub({ proyectoId, proyectos, initialVista = 'registro' }: { proyectoId: string; proyectos: { id: string; codigo: string; nombre: string }[]; initialVista?: 'registro' | 'bandeja' }) {
-  const [vista, setVista] = useState<'registro' | 'bandeja'>(initialVista);
+function ComprasHub({ proyectoId, proyectos, initialVista = 'registro' }: { proyectoId: string; proyectos: { id: string; codigo: string; nombre: string }[]; initialVista?: 'registro' | 'bandeja' | 'provisiones' }) {
+  const [vista, setVista] = useState<'registro' | 'bandeja' | 'provisiones'>(initialVista);
   const bandejaQ = useQuery({ queryKey: ['cpe-bandeja'], queryFn: () => api.cpe.listBandeja() });
+  const provQ = useQuery({ queryKey: ['provisiones-48'], queryFn: () => api.contabilidad.listProvisiones() });
   const pendientes = bandejaQ.data?.borradores.length ?? 0;
+  const abiertas = provQ.data?.totales.abiertas ?? 0;
   return (
     <div className="space-y-3">
       <SegTabs value={vista} onChange={setVista} opts={[
         { v: 'registro', l: 'Registro' },
         { v: 'bandeja', l: 'Bandeja CPE', n: pendientes },
+        { v: 'provisiones', l: 'Provisiones 48', n: abiertas },
       ] as const} />
       {vista === 'registro' && <GlobalLedger proyectoId={proyectoId} proyectos={proyectos} kind="gastos" />}
       {vista === 'bandeja' && <BandejaCpeView proyectos={proyectos} />}
+      {vista === 'provisiones' && <ProvisionesView />}
     </div>
+  );
+}
+
+// ─── F3.4 · Provisiones 48 · «reviso a quién pagué y cuántas facturas me faltan» ──
+// Pago sin factura = egreso (Movimiento financiero → "Pago sin factura") contra la 4811.
+// Al registrar la compra del tercero, Extornar limpia 4212/4811 y salda la CxP con el pago original.
+function ProvisionesView() {
+  const q = useQuery({ queryKey: ['provisiones-48'], queryFn: () => api.contabilidad.listProvisiones() });
+  const provisiones = q.data?.provisiones ?? [];
+  const tot = q.data?.totales;
+  const [verTodas, setVerTodas] = useState(false);
+  const [extornar, setExtornar] = useState<ProvisionRow | null>(null);
+  const filas = verTodas ? provisiones : provisiones.filter((p) => p.estado === 'abierta');
+  return (
+    <div className="space-y-3">
+      <div className="rounded-md border border-line bg-bg-elev px-3 py-2 text-[11.5px] text-ink-2">
+        Pagaste sin factura: regístralo como <b>Egreso → Movimiento financiero → «Pago sin factura (provisión 48)»</b>.
+        Cuando llegue el comprobante, registra la compra y usa <b>Extornar</b>: la 48 se limpia y la factura queda pagada con ese mismo pago.
+      </div>
+      <div className="rounded-lg border border-line bg-bg-elev overflow-hidden">
+        <div className="flex items-center gap-2 border-b border-line px-3 py-2.5">
+          <h3 className="text-[13px] font-semibold">Provisiones {verTodas ? '' : 'abiertas '}
+            <span className="text-ink-4 font-normal">{filas.length}{tot ? ` · ${fmtPEN(tot.montoAbierto)} por sustentar` : ''}</span>
+          </h3>
+          <div className="flex-1" />
+          <label className="flex items-center gap-1.5 cursor-pointer text-[11px] text-ink-3">
+            <input type="checkbox" checked={verTodas} onChange={(e) => setVerTodas(e.target.checked)} className="rounded border-line" /> ver extornadas
+          </label>
+        </div>
+        {q.isLoading ? <SkelRows rows={4} />
+          : filas.length === 0 ? <div className="text-center py-8 text-[12px] text-ink-3">Sin provisiones {verTodas ? '' : 'abiertas'} · la 4811 está limpia</div>
+          : (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead><tr className="border-b border-line bg-bg-sunken">{['Fecha', 'Tercero', 'Detalle', 'Banco / N° op', 'Monto', 'Estado', ''].map((h, i) => <th key={i} className={cn('px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-ink-4', i === 4 ? 'text-right' : 'text-left')}>{h}</th>)}</tr></thead>
+              <tbody>
+                {filas.map((p) => (
+                  <tr key={p.movimientoId} className="border-b border-line/40 last:border-0 hover:bg-bg-sunken/50">
+                    <td className="px-3 py-2 font-mono text-[11px]">{p.fecha}</td>
+                    <td className="px-3 py-2 text-[12px] font-medium">{p.tercero ?? '— sin tercero'}</td>
+                    <td className="px-3 py-2 text-[11.5px] text-ink-2 max-w-[260px] truncate">{p.descripcion ?? '—'}</td>
+                    <td className="px-3 py-2 font-mono text-[11px] text-ink-3">{[p.cuentaBanco, p.numOperacion].filter(Boolean).join(' · ') || '—'}</td>
+                    <td className="px-3 py-2 text-right font-mono text-[12px]">{fmtPEN(p.monto)}</td>
+                    <td className="px-3 py-2">
+                      {p.estado === 'abierta'
+                        ? <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10.5px] font-medium bg-amber-50 text-amber-700">Espera factura{!p.asentada && ' · sin asentar'}</span>
+                        : <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10.5px] font-medium bg-emerald-50 text-emerald-700" title={p.extorno?.docOrigen ?? ''}>Extornada · {p.extorno?.asiento}</span>}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      {p.estado === 'abierta' && <button onClick={() => setExtornar(p)} className="rounded-md border border-line px-2 py-1 text-[11px] font-semibold hover:bg-bg-sunken">Extornar</button>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+      {extornar && <ExtornarProvisionModal provision={extornar} onClose={() => setExtornar(null)} />}
+    </div>
+  );
+}
+
+function ExtornarProvisionModal({ provision, onClose }: { provision: ProvisionRow; onClose: () => void }) {
+  const qc = useQueryClient();
+  const [term, setTerm] = useState(provision.tercero ?? '');
+  const [gastoId, setGastoId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const docsQ = useQuery({
+    queryKey: ['docs-pend', 'cxp', term],
+    queryFn: () => api.finanzas.listDocumentosPendientes('cxp', term),
+    enabled: term.trim().length >= 3,
+  });
+  // solo compras (gasto) con saldo: el extorno cancela su CxP con el pago provisionado
+  const docs = (docsQ.data?.documentos ?? []).filter((d) => d.docOrigenTipo === 'gasto' && d.docOrigenId && Number(d.saldoPendiente) > 0);
+  const mut = useMutation({
+    mutationFn: () => api.contabilidad.extornarProvision(provision.movimientoId, gastoId!),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['provisiones-48'] });
+      qc.invalidateQueries({ queryKey: ['gas-global'] });
+      qc.invalidateQueries({ queryKey: ['docs-pend'] });
+      invalidateResumen(qc);
+      onClose();
+    },
+    onError: (e: Error) => setError(e.message),
+  });
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 animate-backdropIn" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="w-full max-w-lg rounded-xl border border-line bg-bg-elev shadow-2xl animate-modalPop">
+        <div className="flex items-center justify-between border-b border-line px-5 py-3.5">
+          <div>
+            <h2 className="text-[15px] font-bold">Extornar provisión 48</h2>
+            <div className="text-[11px] text-ink-3">{provision.tercero ?? 's/tercero'} · {fmtPEN(provision.monto)} · pagado el {provision.fecha}</div>
+          </div>
+          <button onClick={onClose} className="h-8 w-8 rounded-md inline-flex items-center justify-center text-ink-3 hover:bg-bg-sunken"><X className="h-4 w-4" /></button>
+        </div>
+        <div className="p-5 space-y-3">
+          <Field label="Buscar la compra registrada (RUC o razón social)">
+            <input className={inputCls} value={term} onChange={(e) => { setTerm(e.target.value); setGastoId(null); }} placeholder="RUC o nombre del proveedor" />
+          </Field>
+          {term.trim().length >= 3 && (
+            docsQ.isLoading ? <div className="text-[11.5px] text-ink-3 py-2">Buscando facturas…</div>
+            : docs.length === 0 ? <div className="rounded-md border border-amber-300/60 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-[11.5px] text-amber-700">Ese tercero no tiene compras con saldo. Registra primero la factura en Compras → Registro y vuelve a extornar.</div>
+            : (
+            <div className="rounded-md border border-line divide-y divide-line/40 max-h-52 overflow-y-auto">
+              {docs.map((d) => (
+                <label key={d.id} className={cn('flex items-center gap-2.5 px-3 py-2 cursor-pointer text-[11.5px]', gastoId === d.docOrigenId && 'bg-primary/5')}>
+                  <input type="radio" name="doc-extorno" checked={gastoId === d.docOrigenId} onChange={() => setGastoId(d.docOrigenId)} />
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium truncate">{d.terceroRazon ?? d.terceroRuc}</div>
+                    <div className="font-mono text-[10px] text-ink-3">{[d.docSerie, d.docNumero].filter(Boolean).join('-') || 's/n'} · emitida {d.fechaEmision}</div>
+                  </div>
+                  <div className="font-mono text-[11.5px]">saldo {fmtPEN(Number(d.saldoPendiente))}</div>
+                </label>
+              ))}
+            </div>
+          ))}
+          <div className="rounded-md bg-bg-sunken/60 border border-line px-3 py-2 text-[10.5px] text-ink-3">
+            El extorno asienta <span className="font-mono">Debe 4212 / Haber 4811</span> en el periodo de la factura y aplica el pago original a la CxP: la compra queda pagada sin registrar un pago nuevo.
+          </div>
+          {error && <div className="rounded-md border border-rose-300/60 bg-rose-50 dark:bg-rose-950/30 px-3 py-2 text-[11.5px] text-rose-700">{error}</div>}
+        </div>
+        <div className="flex justify-end gap-2 border-t border-line px-5 py-3">
+          <button onClick={onClose} className="rounded-md border border-line px-3 py-1.5 text-[12px] hover:bg-bg-sunken">Cancelar</button>
+          <button disabled={!gastoId || mut.isPending} onClick={() => { setError(null); mut.mutate(); }}
+            className={cn('rounded-md px-3 py-1.5 text-[12px] font-semibold text-white bg-violet-600 hover:bg-violet-700', (!gastoId || mut.isPending) && 'opacity-50 pointer-events-none')}>
+            {mut.isPending ? 'Extornando…' : 'Extornar provisión'}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -1391,6 +1527,8 @@ function MovModal({ proyectos, defaultProyecto, onClose }: { proyectos: { id: st
   const [proyectoId, setProyectoId] = useState(defaultProyecto === 'todos' ? '' : defaultProyecto);
   // ponytail: UI-only por ahora — esGasto/estadoPago/clasificación aún no se envían al backend
   const [esGasto, setEsGasto] = useState(true);
+  // F3.4 · pago sin factura → provisión 48 (cuenta contra 4811 · se extorna al llegar el comprobante)
+  const [sinFactura, setSinFactura] = useState(false);
   const [estadoPago, setEstadoPago] = useState<'pagado' | 'pendiente'>('pagado');
   const [tipoGasto, setTipoGasto] = useState('Compra Materiales');
   const [inventariable, setInventariable] = useState(false);
@@ -1500,6 +1638,8 @@ function MovModal({ proyectos, defaultProyecto, onClose }: { proyectos: { id: st
     descripcion: f.descripcion || null,
     gastoId: gastoId ?? null,
     aplicaciones: !gastoId && apList.length ? apList : undefined, // F2.2 · pago suelto aplicado a documentos
+    // F3.4 · pago sin factura → el motor asienta Debe 4811 / Haber banco (provisión abierta)
+    ...(tipo === 'Egreso' && !esGasto && sinFactura ? { cuentaContable: '4811', cuentaContableOrigen: 'USUARIO' as const } : {}),
   });
 
   const create = useMutation({
@@ -1622,6 +1762,15 @@ function MovModal({ proyectos, defaultProyecto, onClose }: { proyectos: { id: st
                   <div className="text-[10px] text-ink-4">Préstamo, pago de deuda ya registrada, impuesto provisionado</div>
                 </button>
               </div>
+              {!esGasto && (
+                <label className="mt-3 flex items-start gap-2 cursor-pointer rounded-md border border-line p-2.5 text-[11.5px] hover:bg-bg-sunken/50">
+                  <input type="checkbox" checked={sinFactura} onChange={(e) => setSinFactura(e.target.checked)} className="mt-0.5 rounded border-line" />
+                  <span>
+                    <span className="font-semibold">Pago sin factura · provisión 48</span>
+                    <span className="block text-[10px] text-ink-4">El pago carga la cuenta 4811. Cuando llegue el comprobante, regístralo en Compras y extórnalo desde Compras → Provisiones 48.</span>
+                  </span>
+                </label>
+              )}
               {esGasto && (
                 <div className="mt-3 space-y-3">
                   <div className="grid grid-cols-2 gap-3">

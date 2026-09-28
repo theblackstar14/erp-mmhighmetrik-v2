@@ -753,6 +753,11 @@ export const api = {
       if (opts?.periodo) qs.set('periodo', opts.periodo);
       return req<AuxiliarResult>(`/api/contabilidad/auxiliar?${qs}`);
     },
+    // F3.4 · provisiones 48 (pago sin factura) + extorno al llegar el comprobante
+    listProvisiones: () =>
+      req<{ provisiones: ProvisionRow[]; totales: { abiertas: number; montoAbierto: number } }>('/api/contabilidad/provisiones'),
+    extornarProvision: (movimientoId: string, gastoId: string) =>
+      req<{ ok: boolean; asiento: { correlativo: string }; aplicado: number }>(`/api/contabilidad/provisiones/${movimientoId}/extornar`, { method: 'POST', body: JSON.stringify({ gastoId }) }),
     // PLE SUNAT (C5)
     pleResumen: (periodo: string) =>
       req<{ periodo: string; libros: Record<'5.1' | '6.1' | '8.1' | '14.1' | 'RCE' | 'RVIE', { nombre: string; filas: number }> }>(`/api/contabilidad/ple/resumen?periodo=${periodo}`),
@@ -1879,6 +1884,14 @@ export type GastoInput = {
 export type AuxiliarResult =
   | { cuenta: string; modo: 'documentos'; filas: { tercero: string; ruc: string | null; corriente: number; d30: number; d60: number; d90: number; mas90: number; saldo: number; docs: number }[]; totales: { corriente: number; d30: number; d60: number; d90: number; mas90: number; saldo: number; docs: number } }
   | { cuenta: string; modo: 'mayor'; filas: { tercero: string; ruc: string | null; debe: number; haber: number; saldo: number; movs: number }[]; totales: { debe: number; haber: number; saldo: number; movs: number } };
+
+// F3.4 · provisión 48: pago sin factura (movimiento con cuenta contra 4811)
+export type ProvisionRow = {
+  movimientoId: string; fecha: string; tercero: string | null; descripcion: string | null;
+  monto: number; numOperacion: string | null; cuentaBanco: string | null;
+  asentada: boolean; estado: 'abierta' | 'extornada';
+  extorno: { asiento: string; fecha: string; docOrigen: string | null } | null;
+};
 
 // F2.3 · borrador de la bandeja CPE
 export type CpeBorrador = {
