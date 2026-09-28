@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Conciliación · rediseño (números reales EECC Ene2026)</title>
+<style>
+:root{--bg:#f7f7f8;--elev:#fff;--line:#e5e5e7;--ink:#1c1c1e;--ink2:#48484a;--ink3:#8e8e93;
+--primary:#3b5bdb;--emerald:#0a7d4f;--emerald-bg:#e7f6ef;--rose:#e11d48;--rose-bg:#fff1f2;
+--amber:#b45309;--amber-bg:#fef3c7;--violet:#7c3aed;--violet-bg:#f3e8ff;--mono:'JetBrains Mono',Consolas,monospace}
+*{box-sizing:border-box;margin:0}
+body{font:13px/1.45 Inter,system-ui,sans-serif;background:var(--bg);color:var(--ink);padding:22px}
+h1{font-size:19px;letter-spacing:-.02em}
+.sub{color:var(--ink3);font-size:12px;margin-top:2px}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.card{background:var(--elev);border:1px solid var(--line);border-radius:10px;padding:14px}
+.mono{font-family:var(--mono)}
+.chip{display:inline-flex;align-items:center;padding:2px 7px;border-radius:5px;font-size:10.5px;font-weight:600}
+.c-green{background:var(--emerald-bg);color:var(--emerald)}.c-rose{background:var(--rose-bg);color:var(--rose)}
+.c-amber{background:var(--amber-bg);color:var(--amber)}.c-violet{background:var(--violet-bg);color:var(--violet)}
+.btn{display:inline-flex;align-items:center;gap:5px;height:30px;padding:0 11px;border-radius:7px;border:1px solid var(--line);background:var(--elev);font-size:11.5px;font-weight:600;cursor:pointer}
+.btn.pri{background:var(--primary);border-color:var(--primary);color:#fff}
+.btn.sm{height:24px;padding:0 8px;font-size:10.5px}
+.sel{height:30px;padding:0 9px;border-radius:7px;border:1px solid var(--line);background:var(--elev);font-size:12px}
+table{width:100%;border-collapse:collapse}
+th{font-family:var(--mono);font-size:9.5px;text-transform:uppercase;letter-spacing:.07em;color:var(--ink3);text-align:left;padding:7px 9px;border-bottom:1px solid var(--line);background:#fafafa}
+td{padding:6.5px 9px;border-bottom:1px solid #f0f0f1;font-size:11.5px;vertical-align:middle}
+.r{text-align:right}
+.kpi{flex:1;min-width:150px}
+.kpi .l{font-family:var(--mono);font-size:9.5px;text-transform:uppercase;letter-spacing:.07em;color:var(--ink3)}
+.kpi .v{font-size:19px;font-weight:700;font-family:var(--mono);letter-spacing:-.02em;margin-top:2px}
+.kpi .s{font-size:10.5px;color:var(--ink3)}
+.drop{border:2px dashed var(--line);border-radius:10px;padding:13px;text-align:center;color:var(--ink3);font-size:11.5px;background:var(--elev)}
+.bar{height:7px;border-radius:4px;background:#ececee;overflow:hidden;display:flex}
+.bar i{display:block;height:100%}
+.note{border:1px solid var(--line);border-left:3px solid var(--violet);background:var(--elev);border-radius:8px;padding:10px 13px;font-size:11.5px;color:var(--ink2)}
+.tag{font-family:var(--mono);font-size:10px;color:var(--ink3)}
+</style>
+</head>
+<body>
+
+<div class="row" style="justify-content:space-between;margin-bottom:14px">
+  <div>
+    <h1>Conciliación bancaria</h1>
+    <div class="sub">banco (EECC) contra libro (movimientos) · los números de esta maqueta son del EECC Ene2026 REAL ya importado</div>
+  </div>
+  <div class="row">
+    <select class="sel"><option>10411 · BCP Cuenta Corriente Principal</option><option>1071 · Cuenta de detracciones</option></select>
+    <select class="sel"><option>Enero 2026</option><option>Abril 2026</option></select>
+    <button class="btn pri">⭱ Importar extracto</button>
+  </div>
+</div>
+
+<!-- 1 · CUADRE DEL MES: la pregunta de Kelly primero -->
+<div class="row" style="margin-bottom:12px">
+  <div class="card kpi"><div class="l">Saldo banco al 31/01</div><div class="v">S/ 189,403.38</div><div class="s">EECC_Ene2026.pdf · 215 movimientos</div></div>
+  <div class="card kpi"><div class="l">Saldo libro (10411)</div><div class="v">S/ 186,725.88</div><div class="s">movimientos del ERP a la misma fecha</div></div>
+  <div class="card kpi" style="border-color:#fca5a5"><div class="l">Diferencia</div><div class="v" style="color:var(--rose)">S/ 2,677.50</div><div class="s">explícala abajo: 36 líneas sin pareja</div></div>
+  <div class="card kpi">
+    <div class="l">Conciliado</div><div class="v" style="color:var(--emerald)">83%</div>
+    <div class="bar" style="margin-top:6px"><i style="width:83%;background:var(--emerald)"></i><i style="width:9%;background:var(--amber)"></i><i style="width:8%;background:var(--rose)"></i></div>
+    <div class="s" style="margin-top:4px">179 sugeridas · 20 cargos del banco · 16 sin pareja</div>
+  </div>
+</div>
+
+<!-- 2 · IMPORT: PDF directo (ya funciona con Gemini) -->
+<div class="drop" style="margin-bottom:12px">
+  Suelta el <b>PDF del estado de cuenta BCP</b> (o el Excel de cualquier banco) · el sistema lee las ~200 líneas, deduplica y sugiere parejas al toque
+  <span class="tag" style="display:block;margin-top:3px">último: EECC_Ene2026.pdf · 215 líneas · hace 2 min · parser IA validado 202/202 con Abr2026</span>
+</div>
+
+<!-- 3 · BANDEJA DE TRABAJO: una sola lista, ordenada por lo que falta decidir -->
+<div class="card" style="padding:0;margin-bottom:12px">
+  <div class="row" style="justify-content:space-between;padding:11px 13px;border-bottom:1px solid var(--line)">
+    <b style="font-size:12.5px">Líneas del extracto · Enero 2026</b>
+    <div class="row" style="gap:6px">
+      <button class="btn sm" style="border-color:var(--emerald);color:var(--emerald)">✓ Confirmar las 179 sugeridas</button>
+      <button class="btn sm" style="border-color:var(--amber);color:var(--amber)">Registrar 20 cargos del banco en lote</button>
+      <select class="sel" style="height:24px;font-size:10.5px"><option>Pendientes primero</option><option>Solo sin pareja</option><option>Solo cargos banco</option><option>Solo abonos</option><option>Conciliadas</option></select>
+    </div>
+  </div>
+  <table>
+    <thead><tr><th>Fecha</th><th>Descripción del banco</th><th>N° op</th><th class="r">Monto</th><th>Estado / pareja en el ERP</th><th style="width:190px"></th></tr></thead>
+    <tbody>
+      <tr>
+        <td class="mono">09-01</td><td>DE CONSTRUCTORA Y CONS <span class="tag">TLC</span></td><td class="mono">236812</td>
+        <td class="r mono" style="color:var(--emerald)">+81,171.40</td>
+        <td><span class="chip c-green">≈ sugerida</span> <span class="tag">BN-090112 · Cobro Val 03 TENORIO · mismo N° op y monto</span></td>
+        <td><button class="btn sm pri">Confirmar</button> <button class="btn sm">Otra pareja</button></td>
+      </tr>
+      <tr>
+        <td class="mono">12-01</td><td>A 194 2107872 0 <span class="tag">TLC</span></td><td class="mono">203802</td>
+        <td class="r mono" style="color:var(--rose)">−216,000.00</td>
+        <td><span class="chip c-green">≈ sugerida</span> <span class="tag">BN-090134 · Pago DORATTA · monto exacto, fecha +0d</span></td>
+        <td><button class="btn sm pri">Confirmar</button> <button class="btn sm">Otra pareja</button></td>
+      </tr>
+      <tr style="background:var(--rose-bg)">
+        <td class="mono">16-01</td><td>DSCTO. CP Z00001873466 <span class="tag">INT · ¿factoring?</span></td><td class="mono">744140</td>
+        <td class="r mono" style="color:var(--emerald)">+316,975.55</td>
+        <td><span class="chip c-rose">sin pareja</span> <span class="tag">no hay movimiento parecido en el ERP</span></td>
+        <td><button class="btn sm" style="border-color:var(--primary);color:var(--primary)">+ Registrar desde extracto</button></td>
+      </tr>
+      <tr style="background:var(--amber-bg)">
+        <td class="mono">02-01</td><td>IMPUESTO ITF <span class="tag">INT</span></td><td class="mono">—</td>
+        <td class="r mono" style="color:var(--rose)">−2.25</td>
+        <td><span class="chip c-amber">cargo del banco</span> <span class="tag">ITF · entra al lote → gasto 679 automático</span></td>
+        <td><button class="btn sm">Incluir en lote</button></td>
+      </tr>
+      <tr>
+        <td class="mono">17-01</td><td>DEVOL. PAGO 000032 <span class="tag">INT</span></td><td class="mono">400136</td>
+        <td class="r mono" style="color:var(--emerald)">+2,677.50</td>
+        <td><span class="chip c-rose">sin pareja</span> <span class="tag">coincide con la DIFERENCIA del mes ← el sistema lo señala</span></td>
+        <td><button class="btn sm" style="border-color:var(--primary);color:var(--primary)">+ Registrar desde extracto</button></td>
+      </tr>
+      <tr style="opacity:.55">
+        <td class="mono">12-01</td><td>ENTR.EFEC. 0376533 <span class="tag">VEN · SUC SAN ISIDRO</span></td><td class="mono">376533</td>
+        <td class="r mono" style="color:var(--emerald)">+78,500.00</td>
+        <td><span class="chip c-green">✓ conciliada</span> <span class="tag">BN-090101 · depósito efectivo obra</span></td>
+        <td><button class="btn sm">Deshacer</button></td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="row" style="justify-content:space-between;padding:9px 13px;color:var(--ink3);font-size:10.5px">
+    <span>215 líneas · 179 con sugerencia · 20 cargos del banco (ITF/COM/MANT) · 16 sin pareja</span>
+    <span class="mono">Σ abonos +474,588.21 · Σ cargos −678,804.80 · cuadra con el resumen del EECC ✓</span>
+  </div>
+</div>
+
+<!-- 4 · Registrar desde extracto = abre el formulario NUEVO prellenado -->
+<div class="note">
+  <b>«Registrar desde extracto»</b> abre el formulario nuevo con todo prellenado desde la línea del banco
+  (fecha, monto, N° de operación, cuenta, descripción) y la entrada ya elegida: abono → <b>Ingreso</b> ·
+  cargo → <b>Pago</b> (con las facturas del tercero listas para aplicar) o <b>Gasto</b>. Al guardar, la línea
+  queda conciliada sola. Los <b>cargos del banco</b> (ITF, comisiones, portes, mantenimiento) se registran en
+  UN clic como lote → gastos 679/1041 con su N° de operación cada uno.
+</div>
+
+</body>
+</html>
