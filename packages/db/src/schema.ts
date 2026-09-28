@@ -831,6 +831,10 @@ export const gastos = pgTable(
     docModificaSerie: varchar('doc_modifica_serie', { length: 20 }),
     docModificaNumero: varchar('doc_modifica_numero', { length: 40 }),
     motivoNota: varchar('motivo_nota', { length: 2 }), // catálogo SUNAT 09
+    // F3.5 · tributario fino: periodo de ANOTACIÓN en el RCE (crédito fiscal hasta 12 meses,
+    // null = mes de emisión) + destino del crédito fiscal (DNG → IGV al costo, DGNG → prorrata manual)
+    periodoContable: varchar('periodo_contable', { length: 7 }), // YYYY-MM
+    destinoCredito: varchar('destino_credito', { length: 4 }).notNull().default('DG'), // DG | DGNG | DNG
     lockedAt: timestamp('locked_at'), // H2 · congelado por cierre de periodo
     createdAt: timestamp('created_at').notNull().defaultNow(),
   },

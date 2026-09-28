@@ -1875,6 +1875,9 @@ export type GastoInput = {
   prorrateable?: boolean;
   cuentaContable?: string | null; // WS1 · cuenta contable manual (Kelly). CD/GG se deriva de ella.
   cuentaContableOrigen?: 'USUARIO' | 'SUGERIDO' | null;
+  // F3.5 · anotación RCE en otro periodo (crédito 12 meses) + destino del crédito fiscal
+  periodoContable?: string | null; // YYYY-MM · null = mes de emisión
+  destinoCredito?: 'DG' | 'DGNG' | 'DNG';
   // Fase 1 · extras del alta de compra (gastoCompraSchema): líneas + fechas + tributos
   fechaVencimiento?: string | null;
   lineas?: { descripcion: string; unidad?: string | null; cantidad: number; valorUnitario: number; descuento?: number; afectacionIgv?: string; cuentaContable?: string | null; aInventario?: boolean }[];

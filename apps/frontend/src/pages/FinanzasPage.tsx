@@ -962,6 +962,9 @@ function CompletarCpeModal({ borrador: b, proyectos, onClose, onDone }: { borrad
   const [proyectoId, setProyectoId] = useState('');
   const [tipoGasto, setTipoGasto] = useState('Compra Materiales');
   const [cuenta, setCuenta] = useState<string | null>(null);
+  // F3.5 · Kelly decide el periodo de anotación (crédito 12 meses) y el destino del crédito fiscal
+  const [periodoContable, setPeriodoContable] = useState((b.fechaEmision ?? new Date().toISOString()).slice(0, 7));
+  const [destinoCredito, setDestinoCredito] = useState<'DG' | 'DGNG' | 'DNG'>('DG');
   const [error, setError] = useState<string | null>(null);
   const p = b.payload;
   const registrar = useMutation({
@@ -972,9 +975,11 @@ function CompletarCpeModal({ borrador: b, proyectos, onClose, onDone }: { borrad
         proveedorRuc: b.emisorRuc, proveedorRazon: b.emisorRazon,
         tipoComprobante: TIPO_CPE_LABEL[b.tipoCpe ?? ''] ?? 'Factura',
         serie: b.serie, numero: b.numero, moneda: b.moneda,
-        subtotal: p.totales.valorVenta, igv: p.totales.igv, total: b.clasificacion === 'nc' ? -Math.abs(p.totales.total) : p.totales.total,
+        // F3.5 fix · la NC se guarda con total POSITIVO: aplicar() y el motor (asiento invertido) lo esperan así
+        subtotal: p.totales.valorVenta, igv: p.totales.igv, total: p.totales.total,
         tipoGasto, destino: proyectoId ? 'proyecto' : 'corporativo',
         cuentaContable: cuenta, cuentaContableOrigen: cuenta ? 'USUARIO' : null,
+        periodoContable, destinoCredito,
         fechaVencimiento: p.fechaVencimiento ?? null,
         lineas: p.lineas.length
           ? p.lineas.map((l) => ({
@@ -1019,7 +1024,20 @@ function CompletarCpeModal({ borrador: b, proyectos, onClose, onDone }: { borrad
             <Field label="Cuenta contable · manual">
               <CuentaContableSelect value={cuenta} onChange={(cod) => setCuenta(cod)} />
             </Field>
-            {p.detraccion && <div className="text-[11.5px] text-amber-700">Detracción {p.detraccion.codigo} · {p.detraccion.porcentaje}% = {fmtPEN(p.detraccion.monto)} (leída del XML · la constancia se completa en la compra)</div>}
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Periodo de anotación (RCE)">
+                <input type="month" className="h-9 w-full px-2.5 rounded-md border border-line bg-bg-elev text-[12px]" value={periodoContable} onChange={(e) => setPeriodoContable(e.target.value)} />
+              </Field>
+              <Field label="Destino del crédito fiscal">
+                <select className="h-9 w-full px-2.5 rounded-md border border-line bg-bg-elev text-[12px]" value={destinoCredito} onChange={(e) => setDestinoCredito(e.target.value as 'DG' | 'DGNG' | 'DNG')}>
+                  <option value="DG">DG · operaciones gravadas</option>
+                  <option value="DGNG">DGNG · mixtas (prorrata)</option>
+                  <option value="DNG">DNG · no gravadas (IGV al costo)</option>
+                </select>
+              </Field>
+            </div>
+            {periodoContable !== (b.fechaEmision ?? '').slice(0, 7) && <div className="text-[11.5px] text-amber-700">Anotación en {periodoContable}, distinta del mes de emisión: el crédito fiscal se toma en ese periodo (límite 12 meses).</div>}
+            {p.detraccion && <div className="text-[11.5px] text-amber-700">Detracción {p.detraccion.codigo} · {p.detraccion.porcentaje}% = {fmtPEN(p.detraccion.monto)} (leída del XML · sin constancia el crédito queda diferido)</div>}
             {b.clasificacion === 'boleta' && <div className="text-[11.5px] text-amber-700">Boleta: se registra como gasto, no entra al Registro de Compras ni da crédito fiscal.</div>}
             {b.clasificacion === 'nc' && p.modifica && <div className="text-[11.5px] text-violet-600">Nota de crédito de {p.modifica.serieNumero}: al registrarla devuelve el saldo a esa factura.</div>}
           </SecBox>

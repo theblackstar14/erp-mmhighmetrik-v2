@@ -49,6 +49,10 @@ export type FilaCompra = {
   fecha: string; tipoComprobante: string | null; serie: string | null; numero: string | null;
   proveedorRuc: string | null; proveedorRazon: string | null;
   baseGravada: number; igv: number; noGravado: number; total: number; moneda: string | null; tipoCambio: number | null;
+  // F3.5 · destino del crédito fiscal (columnas 13-18) + constancia detracción (24/25) + doc modificado (NC · 27-30)
+  destinoCredito?: 'DG' | 'DGNG' | 'DNG';
+  constanciaNumero?: string | null; constanciaFecha?: string | null;
+  modSerie?: string | null; modNumero?: string | null;
 };
 export type FilaVenta = {
   fecha: string; tipoComprobante: string; serie: string; numero: string;
@@ -66,6 +70,8 @@ export function compras80100(periodo: string, filas: FilaCompra[]): string {
   const P = periodoTxt(periodo);
   return filas.map((f, i) => {
     const cuo = String(i + 1);
+    // F3.5 · la base y su IGV caen en la columna del DESTINO del crédito (DG 13/14 · DGNG 15/16 · DNG 17/18)
+    const dc = f.destinoCredito ?? 'DG';
     return pipe([
       P,                                  // 1 Periodo
       cuo,                                // 2 CUO
@@ -79,24 +85,24 @@ export function compras80100(periodo: string, filas: FilaCompra[]): string {
       tablaDocIdentidad(f.proveedorRuc),  // 10 Tipo doc identidad proveedor (Tabla 2)
       f.proveedorRuc ?? '',               // 11 Número doc proveedor
       f.proveedorRazon ?? '',             // 12 Razón social proveedor
-      n2(f.baseGravada),                  // 13 BI gravada destinada a operac. gravadas
-      n2(f.igv),                          // 14 IGV de 13
-      0,                                  // 15 BI gravada destinada a gravadas y no gravadas
-      0,                                  // 16 IGV de 15
-      0,                                  // 17 BI gravada destinada a no gravadas
-      0,                                  // 18 IGV de 17
+      dc === 'DG' ? n2(f.baseGravada) : 0,   // 13 BI gravada destinada a operac. gravadas
+      dc === 'DG' ? n2(f.igv) : 0,           // 14 IGV de 13
+      dc === 'DGNG' ? n2(f.baseGravada) : 0, // 15 BI gravada destinada a gravadas y no gravadas
+      dc === 'DGNG' ? n2(f.igv) : 0,         // 16 IGV de 15
+      dc === 'DNG' ? n2(f.baseGravada) : 0,  // 17 BI gravada destinada a no gravadas
+      dc === 'DNG' ? n2(f.igv) : 0,          // 18 IGV de 17
       n2(f.noGravado),                    // 19 Valor adquisiciones no gravadas
       0,                                  // 20 ISC
       0,                                  // 21 Otros tributos y cargos
       n2(f.total),                        // 22 Importe total
       '',                                 // 23 N° CP sujeto no domiciliado
-      '',                                 // 24 N° constancia depósito detracción
-      '',                                 // 25 Fecha constancia detracción
+      f.constanciaNumero ?? '',           // 24 N° constancia depósito detracción
+      f.constanciaFecha ? dmy(f.constanciaFecha) : '', // 25 Fecha constancia detracción
       f.tipoCambio ? n2(f.tipoCambio) : 0,// 26 Tipo de cambio
       '',                                 // 27 Fecha CP modificado
-      '',                                 // 28 Tipo CP modificado
-      '',                                 // 29 Serie CP modificado
-      '',                                 // 30 Número CP modificado
+      f.modSerie ? '01' : '',             // 28 Tipo CP modificado (NC sobre factura)
+      f.modSerie ?? '',                   // 29 Serie CP modificado
+      f.modNumero ?? '',                  // 30 Número CP modificado
       '1',                                // 31 Estado (1 = anotado oportunamente)
     ]);
   }).join('\r\n');
@@ -254,12 +260,12 @@ export function rceCompras(periodo: string, filas: FilaCompra[]): string {
       tablaDocIdentidad(f.proveedorRuc),   // 10 Tipo doc identidad proveedor
       f.proveedorRuc ?? '',                // 11 N° documento proveedor
       f.proveedorRazon ?? '',              // 12 Razón social
-      m2(f.baseGravada),                   // 13 Base imponible gravada
-      m2(f.igv),                           // 14 IGV
-      m2(0),                               // 15 Base imponible gravada mixta
-      m2(0),                               // 16 IGV mixto
-      m2(0),                               // 17 Base imponible no gravada
-      m2(0),                               // 18 IGV no gravado
+      m2(f.destinoCredito === 'DGNG' || f.destinoCredito === 'DNG' ? 0 : f.baseGravada), // 13 BI gravada (DG)
+      m2(f.destinoCredito === 'DGNG' || f.destinoCredito === 'DNG' ? 0 : f.igv),         // 14 IGV
+      m2(f.destinoCredito === 'DGNG' ? f.baseGravada : 0), // 15 Base imponible gravada mixta
+      m2(f.destinoCredito === 'DGNG' ? f.igv : 0),         // 16 IGV mixto
+      m2(f.destinoCredito === 'DNG' ? f.baseGravada : 0),  // 17 Base imponible no gravada
+      m2(f.destinoCredito === 'DNG' ? f.igv : 0),          // 18 IGV no gravado
       m2(f.noGravado),                     // 19 Adquisiciones no gravadas
       m2(0),                               // 20 ISC
       m2(0),                               // 21 IVAP
@@ -268,7 +274,7 @@ export function rceCompras(periodo: string, filas: FilaCompra[]): string {
       m2(f.total),                         // 24 Importe total
       f.moneda ?? 'PEN',                   // 25 Moneda
       tc3(f.tipoCambio),                   // 26 Tipo de cambio
-      '',                                  // 27 Detracción (constancia · s/dato)
+      f.constanciaNumero ?? '',            // 27 Detracción (N° constancia · vacío = crédito diferido)
       '',                                  // 28 Percepción (s/dato)
       '',                                  // 29 Retención (s/dato)
       '',                                  // 30 Código de anotación CAR (lo asigna SUNAT)

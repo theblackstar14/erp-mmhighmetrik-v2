@@ -97,6 +97,9 @@ const gastoSchema = z.object({
   // WS1 · cuenta contable MANUAL (Kelly). CD/GG NUNCA es input: se deriva de la cuenta en el motor.
   cuentaContable: z.string().max(10).optional().nullable(),
   cuentaContableOrigen: z.enum(['USUARIO', 'SUGERIDO']).optional().nullable(),
+  // F3.5 · anotación RCE en otro periodo (crédito 12 meses) + destino del crédito fiscal
+  periodoContable: z.string().regex(/^\d{4}-\d{2}$/).optional().nullable(),
+  destinoCredito: z.enum(['DG', 'DGNG', 'DNG']).optional(),
 });
 
 // Fase 1 · el alta de compra acepta los datos de documento; el PUT sigue usando gastoSchema (edición de cabecera)
@@ -159,6 +162,9 @@ function toValues(d: z.infer<typeof gastoSchema>) {
     // WS1 · cuenta manual + procedencia. Si no viene cuenta, origen queda null (motor infiere).
     cuentaContable: d.cuentaContable ?? null,
     cuentaContableOrigen: d.cuentaContable ? (d.cuentaContableOrigen ?? 'USUARIO') : null,
+    // F3.5 · tributario fino
+    periodoContable: d.periodoContable ?? null,
+    destinoCredito: d.destinoCredito ?? 'DG',
   };
 }
 

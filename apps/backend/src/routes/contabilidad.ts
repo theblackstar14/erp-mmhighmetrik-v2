@@ -16,7 +16,7 @@ import { requireAuth, requireRole } from '../middleware/auth.js';
 import { audit } from '../lib/audit.js';
 import { freezePeriodo, unfreezePeriodo } from '../lib/periodos.js';
 import { derivarClaseCore, cargarDerivarCtx, type DerivarCtx } from '../lib/clasificacion.js';
-import { aplicarPagoAOrigen, DocumentoError } from '../lib/documentosPendientes.js';
+import { aplicarPagoAOrigen, DocumentoError, esNotaCredito } from '../lib/documentosPendientes.js';
 import { construirTaxonomia } from '../lib/conciliacionTaxonomia.js';
 import * as ple from '../lib/ple.js';
 
@@ -816,9 +816,24 @@ router.post('/generar', async (req, res) => {
       const igv = Number(g.igv);
       const total = Number(g.total);
       if (total <= 0) continue;
+      // F3.5 · boleta o destino DNG: el IGV no es crédito → va al costo (la 40111 no nace).
+      // DGNG conserva la 40111 completa; la prorrata es ajuste manual de Kelly al cierre.
+      const sinCredito = /^03\b|boleta/i.test(g.tipoComprobante ?? '') || g.destinoCredito === 'DNG';
+      const montoGasto = sinCredito ? subtotal + igv : subtotal;
+      const igvLinea = sinCredito ? 0 : igv;
+      // WS1 · cuenta del gasto: la manual (Kelly) si la eligió, si no la inferida (mapa/fallback). obra en la línea.
+      const lGasto = {
+        cuenta: g.cuentaContable ?? cm?.cuenta ?? cuentaGasto(g.tipoGasto),
+        descripcion: g.tipoGasto ?? 'Gasto',
+        obraId: g.proyectoId,
+        cuentaOrigen: g.cuentaContable ? ((g.cuentaContableOrigen as 'USUARIO' | 'SUGERIDO' | 'AUTOMATICO' | null) ?? 'AUTOMATICO') : 'AUTOMATICO',
+      };
+      // F3.5 · la NC de compra (se guarda con total POSITIVO) asienta INVERTIDA: reduce el gasto
+      // y el crédito, y baja la CxP (antes asentaba como compra normal → gasto duplicado).
+      const esNC = esNotaCredito(g.tipoComprobante);
       await gen({
         fecha: g.fecha,
-        glosa: `Compra · ${g.proveedorRazon ?? 's/proveedor'} · ${g.descripcionItem ?? g.codigo ?? ''}`.slice(0, 250),
+        glosa: `${esNC ? 'NC compra' : 'Compra'} · ${g.proveedorRazon ?? 's/proveedor'} · ${g.descripcionItem ?? g.codigo ?? ''}`.slice(0, 250),
         origen: 'gasto',
         origenId: g.id,
         proyectoId: g.proyectoId,
@@ -826,17 +841,17 @@ router.post('/generar', async (req, res) => {
         tipoDoc: g.tipoComprobante,
         contraparteRuc: g.proveedorRuc,
         contraparteRazon: g.proveedorRazon,
-        lineas: [
-          // WS1 · cuenta del gasto: la manual (Kelly) si la eligió, si no la inferida (mapa/fallback). obra en la línea.
-          {
-            cuenta: g.cuentaContable ?? cm?.cuenta ?? cuentaGasto(g.tipoGasto),
-            descripcion: g.tipoGasto ?? 'Gasto', debe: subtotal, haber: 0,
-            obraId: g.proyectoId,
-            cuentaOrigen: g.cuentaContable ? ((g.cuentaContableOrigen as 'USUARIO' | 'SUGERIDO' | 'AUTOMATICO' | null) ?? 'AUTOMATICO') : 'AUTOMATICO',
-          },
-          { cuenta: '40111', descripcion: 'IGV crédito fiscal', debe: igv, haber: 0, obraId: null },
-          { cuenta: '4212', descripcion: 'Por pagar', debe: 0, haber: total, obraId: null },
-        ],
+        lineas: esNC
+          ? [
+              { cuenta: '4212', descripcion: `NC aplicada${g.docModificaSerie ? ` a ${g.docModificaSerie}-${g.docModificaNumero}` : ''}`, debe: total, haber: 0, obraId: null },
+              { ...lGasto, debe: 0, haber: montoGasto },
+              { cuenta: '40111', descripcion: 'IGV crédito fiscal (reversa NC)', debe: 0, haber: igvLinea, obraId: null },
+            ]
+          : [
+              { ...lGasto, debe: montoGasto, haber: 0 },
+              { cuenta: '40111', descripcion: 'IGV crédito fiscal', debe: igvLinea, haber: 0, obraId: null },
+              { cuenta: '4212', descripcion: 'Por pagar', debe: 0, haber: total, obraId: null },
+            ],
       });
       resultado.gastos++;
     } catch (e) {
@@ -2170,17 +2185,34 @@ router.get('/audit-log', async (req, res) => {
 // Construye las filas normalizadas de cada libro desde la data real del periodo.
 async function filasComprasPeriodo(periodo: string): Promise<ple.FilaCompra[]> {
   const { fechaInicio, fechaFin } = partesPeriodo(periodo);
+  // F3.5 · el periodo de ANOTACIÓN manda (crédito fiscal hasta 12 meses); sin periodoContable → mes de emisión
   const gs = await db.select().from(schema.gastos)
-    .where(and(gte(schema.gastos.fecha, fechaInicio), lte(schema.gastos.fecha, fechaFin)))
+    .where(or(
+      eq(schema.gastos.periodoContable, periodo),
+      and(isNull(schema.gastos.periodoContable), gte(schema.gastos.fecha, fechaInicio), lte(schema.gastos.fecha, fechaFin)),
+    )!)
     .orderBy(asc(schema.gastos.fecha));
-  return gs
+  const filables = gs
     .filter((g) => g.serie || g.numero) // sin comprobante no entra al registro
-    .map((g) => ({
+    .filter((g) => !/^03\b|boleta/i.test(g.tipoComprobante ?? '')); // Kelly: la boleta es gasto, NO entra al RCE
+  // F3.5 · constancia de detracción (campos 24/25 del 8.1): sin ella el crédito está diferido
+  const det = filables.length
+    ? await db.select().from(schema.detraccionDocumento).where(and(eq(schema.detraccionDocumento.docOrigenTipo, 'gasto'), inArray(schema.detraccionDocumento.docOrigenId, filables.map((g) => g.id))))
+    : [];
+  const detMap = new Map(det.map((d) => [d.docOrigenId, d]));
+  return filables.map((g) => {
+    const dd = detMap.get(g.id);
+    return {
       fecha: g.fecha, tipoComprobante: g.tipoComprobante, serie: g.serie, numero: g.numero,
       proveedorRuc: g.proveedorRuc, proveedorRazon: g.proveedorRazon,
       baseGravada: Number(g.subtotal), igv: Number(g.igv), noGravado: Number(g.exonerado), total: Number(g.total),
-      moneda: g.moneda, tipoCambio: null,
-    }));
+      moneda: g.moneda, tipoCambio: g.tipoCambio ? Number(g.tipoCambio) : null,
+      destinoCredito: (g.destinoCredito ?? 'DG') as 'DG' | 'DGNG' | 'DNG',
+      constanciaNumero: dd?.constanciaNumero ?? null,
+      constanciaFecha: dd?.fechaDeposito ?? null,
+      modSerie: g.docModificaSerie, modNumero: g.docModificaNumero,
+    };
+  });
 }
 
 async function filasVentasPeriodo(periodo: string): Promise<ple.FilaVenta[]> {

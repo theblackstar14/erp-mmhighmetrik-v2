@@ -71,6 +71,9 @@ export async function registrarCompra(q: DbLike, input: { values: typeof schema.
     Object.assign(values, { subtotal: subtotal.toFixed(2), exonerado: exonerado.toFixed(2), igv: igv.toFixed(2), total: r2(subtotal + exonerado + igv).toFixed(2) });
   }
 
+  // F3.5 · duplicados: los cubre crearDocumentoDesdeGasto (409 por RUC+serie+número al crear la CxP).
+  // ponytail: un prorrateo con el MISMO comprobante en varias filas también choca ahí — repartirlo
+  // por gasto_lineas (una compra, N obras) cuando duela.
   if (extras.retencion?.tipo === 'igv3') {
     const [emp] = await q.select({ config: schema.empresas.config }).from(schema.empresas).where(eq(schema.empresas.id, empresaId)).limit(1);
     if ((emp?.config as Record<string, unknown> | null)?.agenteRetencion !== true) throw new DocumentoError(400, 'La empresa no está configurada como agente de retención del IGV');
