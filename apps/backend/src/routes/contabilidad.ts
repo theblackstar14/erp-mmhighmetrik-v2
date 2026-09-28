@@ -2064,11 +2064,11 @@ async function filasVentasPeriodo(periodo: string): Promise<ple.FilaVenta[]> {
     .where(and(gte(schema.ventas.fechaEmision, fechaInicio), lte(schema.ventas.fechaEmision, fechaFin)))
     .orderBy(asc(schema.ventas.fechaEmision));
   const detrV = standalone.length
-    ? await db.select({ origen: schema.detraccionDocumento.docOrigenId, monto: schema.detraccionDocumento.monto })
+    ? await db.select({ origen: schema.detraccionDocumento.docOrigenId, monto: schema.detraccionDocumento.monto, montoDeclarado: schema.detraccionDocumento.montoDeclarado })
       .from(schema.detraccionDocumento)
       .where(and(eq(schema.detraccionDocumento.docOrigenTipo, 'venta'), inArray(schema.detraccionDocumento.docOrigenId, standalone.map((v) => v.id))))
     : [];
-  const dMap = new Map(detrV.map((d) => [d.origen, Number(d.monto)]));
+  const dMap = new Map(detrV.map((d) => [d.origen, Number(d.montoDeclarado ?? d.monto)])); // declarado manda
   const pmv = standalone.some((v) => v.proyectoId)
     ? new Map((await db.select({ id: schema.proyectos.id, codigo: schema.proyectos.codigo }).from(schema.proyectos)).map((p) => [p.id, p.codigo]))
     : new Map<string, string>();

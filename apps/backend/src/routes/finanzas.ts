@@ -699,7 +699,7 @@ router.get('/ventas', async (req, res) => {
     .orderBy(desc(schema.ventas.fechaEmision));
   const [detrV, docsV] = await Promise.all([
     standalone.length
-      ? db.select({ origen: schema.detraccionDocumento.docOrigenId, monto: schema.detraccionDocumento.monto, estado: schema.detraccionDocumento.estado })
+      ? db.select({ origen: schema.detraccionDocumento.docOrigenId, monto: schema.detraccionDocumento.monto, montoDeclarado: schema.detraccionDocumento.montoDeclarado, estado: schema.detraccionDocumento.estado })
         .from(schema.detraccionDocumento)
         .where(and(eq(schema.detraccionDocumento.docOrigenTipo, 'venta'), inArray(schema.detraccionDocumento.docOrigenId, standalone.map((v) => v.id))))
       : [],
@@ -735,7 +735,9 @@ router.get('/ventas', async (req, res) => {
       retencion: v.retencionIgv,
       amortizacion: null as string | null,
       totalContratista: null as string | null,
-      detraccion: d ? Number(d.monto) : null,
+      // el monto DECLARADO en el comprobante manda (es lo que el cliente deposita);
+      // el calculado con la tabla vigente queda en la detracción como contraste
+      detraccion: d ? Number(d.montoDeclarado ?? d.monto) : null,
       detraccionEstado: d?.estado ?? null,
       cobrada: doc?.estado === 'cancelado',
       fuente: 'venta' as const,
