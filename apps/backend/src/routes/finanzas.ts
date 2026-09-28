@@ -613,6 +613,127 @@ router.post('/movimientos', async (req, res) => {
   }
 });
 
+// ─── F3.2 · Cajas y rendiciones por proyecto ─────────────────────
+// La caja agrupa; el dinero vive en una cuenta tipo 'caja' (contable 1413 Entregas a rendir).
+// Entrega = transferencia banco→caja · rendición = egresos desde la caja · cierre devuelve el saldo.
+
+async function saldosDeCajas(cuentaIds: string[]) {
+  if (!cuentaIds.length) return new Map<string, { entregado: number; rendido: number; docs: number }>();
+  const movs = await db.select({ cuentaId: schema.movimientos.cuentaId, tipo: schema.movimientos.tipoMovimiento, monto: schema.movimientos.monto })
+    .from(schema.movimientos)
+    .where(and(inArray(schema.movimientos.cuentaId, cuentaIds), eq(schema.movimientos.anulado, false)));
+  const m = new Map<string, { entregado: number; rendido: number; docs: number }>();
+  for (const mv of movs) {
+    const e = m.get(mv.cuentaId!) ?? { entregado: 0, rendido: 0, docs: 0 };
+    if (mv.tipo === 'Ingreso') e.entregado += Number(mv.monto);
+    else { e.rendido += Number(mv.monto); e.docs += 1; }
+    m.set(mv.cuentaId!, e);
+  }
+  return m;
+}
+
+router.get('/cajas', async (_req, res) => {
+  const list = await db.select().from(schema.cajas).orderBy(desc(schema.cajas.createdAt));
+  const saldos = await saldosDeCajas(list.map((c) => c.cuentaId));
+  const pm = await proyectoMap();
+  res.json({
+    cajas: list.map((c) => {
+      const s = saldos.get(c.cuentaId) ?? { entregado: 0, rendido: 0, docs: 0 };
+      return { ...c, proyectoCodigo: pm.get(c.proyectoId)?.codigo ?? null, ...s, saldo: Math.round((s.entregado - s.rendido) * 100) / 100 };
+    }),
+  });
+});
+
+const cajaSchema = z.object({
+  proyectoId: z.string().uuid(),
+  encargado: z.string().min(2).max(150),
+  monto: z.number().positive(),
+  cuentaOrigenId: z.string().uuid(), // banco del que sale la plata
+  numOperacion: z.string().min(1).max(40), // cruza con el extracto (obligatorio, modelo Kelly)
+  fecha: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  notas: z.string().optional().nullable(),
+});
+
+router.post('/cajas', async (req, res, next) => {
+  const parse = cajaSchema.safeParse(req.body);
+  if (!parse.success) return res.status(400).json({ error: parse.error.flatten() });
+  const d = parse.data;
+  if (await bloqueoPeriodo(d.fecha, res)) return;
+  const anio = d.fecha.slice(0, 4);
+  try {
+    const r = await db.transaction(async (tx) => {
+      // correlativo CAJA-YYYY-NNN
+      const prev = await tx.select({ codigo: schema.cajas.codigo }).from(schema.cajas).where(sql`${schema.cajas.codigo} LIKE ${`CAJA-${anio}-%`}`);
+      const n = prev.reduce((m, x) => Math.max(m, Number(x.codigo.split('-')[2]) || 0), 0) + 1;
+      const codigo = `CAJA-${anio}-${String(n).padStart(3, '0')}`;
+      // cuenta tipo caja (contable 1413 · aparece en el selector de Bancos y en el motor 104x)
+      const [cuenta] = await tx.insert(schema.cuentasBancarias).values({
+        codigo, banco: 'CAJA', moneda: 'PEN', descripcion: `Caja ${d.encargado}`, cuentaContable: '1413', tipo: 'caja', activo: true,
+      }).returning();
+      const [caja] = await tx.insert(schema.cajas).values({
+        empresaId: req.empresaId ?? 1, codigo, proyectoId: d.proyectoId, encargado: d.encargado,
+        cuentaId: cuenta!.id, fechaApertura: d.fecha, notas: d.notas ?? null, userId: req.user!.id,
+      }).returning();
+      // entrega = transferencia banco→caja (2 filas ligadas · el motor asienta 1413/banco)
+      const transferenciaId = randomUUID();
+      const base = {
+        fecha: d.fecha, moneda: 'PEN', monto: d.monto.toFixed(2), montoBase: d.monto.toFixed(2), tipoCambio: '1.0000',
+        subtipo: 'Entrega a rendir', numOperacion: d.numOperacion, descripcion: `Entrega caja ${codigo} · ${d.encargado}`,
+        proyectoId: d.proyectoId, transferenciaId, userId: req.user!.id,
+      };
+      await tx.insert(schema.movimientos).values([
+        { ...base, tipoMovimiento: 'Egreso', cuentaId: d.cuentaOrigenId, cuentaDestinoId: cuenta!.id },
+        { ...base, tipoMovimiento: 'Ingreso', cuentaId: cuenta!.id, cuentaDestinoId: d.cuentaOrigenId },
+      ]);
+      return { caja: caja!, cuenta: cuenta! };
+    });
+    await audit(req, { action: 'create', entityType: 'caja', entityId: r.caja.id, after: { codigo: r.caja.codigo, encargado: r.caja.encargado, monto: d.monto, numOperacion: d.numOperacion } });
+    res.json(r);
+  } catch (e) {
+    next(e);
+  }
+});
+
+// Cierre: si hay saldo, exige devolución (transferencia caja→banco con su N° de operación).
+router.post('/cajas/:id/cerrar', async (req, res, next) => {
+  const body = z.object({
+    fecha: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    devolucion: z.object({ cuentaDestinoId: z.string().uuid(), numOperacion: z.string().min(1).max(40) }).optional().nullable(),
+  }).safeParse(req.body);
+  if (!body.success) return res.status(400).json({ error: body.error.flatten() });
+  const [caja] = await db.select().from(schema.cajas).where(eq(schema.cajas.id, req.params.id!));
+  if (!caja) return res.status(404).json({ error: 'Caja no encontrada' });
+  if (caja.estado === 'cerrada') return res.status(400).json({ error: 'La caja ya está cerrada' });
+  if (await bloqueoPeriodo(body.data.fecha, res)) return;
+  const saldos = await saldosDeCajas([caja.cuentaId]);
+  const s = saldos.get(caja.cuentaId) ?? { entregado: 0, rendido: 0, docs: 0 };
+  const saldo = Math.round((s.entregado - s.rendido) * 100) / 100;
+  if (saldo < -0.004) return res.status(400).json({ error: `La caja está sobregirada (${saldo.toFixed(2)}): registra la reposición antes de cerrar` });
+  if (saldo > 0.004 && !body.data.devolucion) return res.status(400).json({ error: `Saldo por rendir ${saldo.toFixed(2)}: indica la devolución al banco (o regístralo como gasto) antes de cerrar` });
+  try {
+    await db.transaction(async (tx) => {
+      if (saldo > 0.004 && body.data.devolucion) {
+        const transferenciaId = randomUUID();
+        const base = {
+          fecha: body.data.fecha, moneda: 'PEN', monto: saldo.toFixed(2), montoBase: saldo.toFixed(2), tipoCambio: '1.0000',
+          subtipo: 'Devolución de caja', numOperacion: body.data.devolucion.numOperacion,
+          descripcion: `Devolución caja ${caja.codigo}`, proyectoId: caja.proyectoId, transferenciaId, userId: req.user!.id,
+        };
+        await tx.insert(schema.movimientos).values([
+          { ...base, tipoMovimiento: 'Egreso', cuentaId: caja.cuentaId, cuentaDestinoId: body.data.devolucion.cuentaDestinoId },
+          { ...base, tipoMovimiento: 'Ingreso', cuentaId: body.data.devolucion.cuentaDestinoId, cuentaDestinoId: caja.cuentaId },
+        ]);
+      }
+      await tx.update(schema.cajas).set({ estado: 'cerrada', fechaCierre: body.data.fecha, updatedAt: new Date() }).where(eq(schema.cajas.id, caja.id));
+      await tx.update(schema.cuentasBancarias).set({ activo: false }).where(eq(schema.cuentasBancarias.id, caja.cuentaId));
+    });
+    await audit(req, { action: 'update', entityType: 'caja', entityId: caja.id, after: { estado: 'cerrada', saldoDevuelto: saldo } });
+    res.json({ ok: true, saldoDevuelto: saldo });
+  } catch (e) {
+    next(e);
+  }
+});
+
 // F2.2 · GET /documentos-pendientes?tipo=cxp|cxc&q= · facturas con saldo, para "proveedor → jala facturas"
 router.get('/documentos-pendientes', async (req, res) => {
   const { tipo, q } = req.query as { tipo?: string; q?: string };
@@ -908,6 +1029,12 @@ router.get('/finanzas/resumen', async (req, res) => {
     db.select({ proyectoId: schema.gastos.proyectoId, gastado: sql<number>`coalesce(sum(${schema.gastos.subtotal}),0)::float8` })
       .from(schema.gastos).where(sql`${schema.gastos.proyectoId} IS NOT NULL`).groupBy(schema.gastos.proyectoId),
   ]);
+  // F3.2 · cajas abiertas con saldo por rendir → inbox
+  const cajasAbiertas = await db.select().from(schema.cajas).where(eq(schema.cajas.estado, 'abierta'));
+  const saldosCajas = await saldosDeCajas(cajasAbiertas.map((c) => c.cuentaId));
+  const porRendir = cajasAbiertas
+    .map((c) => { const s = saldosCajas.get(c.cuentaId) ?? { entregado: 0, rendido: 0, docs: 0 }; return { codigo: c.codigo, encargado: c.encargado, saldo: Math.round((s.entregado - s.rendido) * 100) / 100 }; })
+    .filter((c) => c.saldo > 0.004);
   const sumBy = (rows: typeof docsAbiertos, f: (r: (typeof docsAbiertos)[number]) => boolean) =>
     rows.filter(f).reduce((s, r) => s + Number(r.saldo), 0);
   const enDias = (venc: string | null, d: number) => venc != null && venc <= new Date(Date.now() + d * 86400000).toISOString().slice(0, 10);
@@ -931,6 +1058,7 @@ router.get('/finanzas/resumen', async (req, res) => {
       valosSinComprobante: { n: valosSinCpe.length, items: valosSinCpe.slice(0, 4).map((v) => ({ numero: v.numero, proyectoCodigo: codigoOf(v.proyectoId) })) },
       bandejaCpe: bandejaN[0]?.n ?? 0,
       conciliacionPendiente: concilN[0]?.n ?? 0,
+      cajasPorRendir: { n: porRendir.length, monto: porRendir.reduce((s, c) => s + c.saldo, 0), items: porRendir.slice(0, 3) },
     },
     proyeccion: {
       hoy: 0 as number, // se completa abajo con totalCaja

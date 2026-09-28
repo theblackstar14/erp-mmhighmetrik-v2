@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { Suspense, lazy, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { type FinanzasResumen, type MovimientoInput, type GastoInput, type ConciliacionResumen, type PartidaConcil, type PlanCuentaBusqueda, type CpeBorrador, api } from '@/lib/api.js';
+import { type FinanzasResumen, type MovimientoInput, type GastoInput, type ConciliacionResumen, type PartidaConcil, type PlanCuentaBusqueda, type CpeBorrador, type CajaRow, type CuentaBancaria, api } from '@/lib/api.js';
 import { cn, fmtPEN } from '@/lib/utils.js';
 import { CuentaContableSelect, claseDerivadaUI } from '@/components/contabilidad/CuentaContableSelect.js';
 import { invalidateResumen } from '@/lib/invalidate.js';
@@ -172,6 +172,8 @@ function ResumenView({ r, loading, onJump }: { r: FinanzasResumen | undefined; l
     inbox.push({ tono: 'bg-warn', titulo: `${v2.accion.valosSinComprobante.n} valorización(es) sin comprobante`, detalle: `${v2.accion.valosSinComprobante.items.map((i) => `VAL-${i.numero} ${i.proyectoCodigo ?? ''}`).join(' · ')} · sin serie/número el 14.1 sale con placeholder`, btn: 'Registrar', jump: () => onJump('ventas') });
   if (v2.accion.bandejaCpe > 0)
     inbox.push({ tono: 'bg-violet-600', titulo: `${v2.accion.bandejaCpe} XML en la bandeja CPE`, detalle: 'falta asignarles cuenta y destino', btn: 'Bandeja', jump: () => onJump('compras', 'bandeja') });
+  if (v2.accion.cajasPorRendir.n > 0)
+    inbox.push({ tono: 'bg-warn', titulo: `${v2.accion.cajasPorRendir.n} caja(s) con saldo por rendir`, detalle: `${v2.accion.cajasPorRendir.items.map((c) => `${c.codigo} ${c.encargado} (${fmtPEN(c.saldo)})`).join(' · ')}`, btn: 'Cajas', jump: () => onJump('caja') });
   if (v2.accion.conciliacionPendiente > 0)
     inbox.push({ tono: 'bg-primary', titulo: `${v2.accion.conciliacionPendiente} línea(s) de extracto sin conciliar`, detalle: 'match por N° de operación', btn: 'Conciliar', jump: () => onJump('conciliacion') });
   const urgentes = inbox.filter((i) => i.tono === 'bg-destructive').length;
@@ -919,18 +921,158 @@ function CompletarCpeModal({ borrador: b, proyectos, onClose, onDone }: { borrad
 
 // ─── Tab Caja y bancos · segmentos: Libro por cuenta · Todos los movimientos · Cuentas (+ Cajas en F3.2) ──
 function CajaBancosHub({ proyectoId, proyectos }: { proyectoId: string; proyectos: { id: string; codigo: string; nombre: string }[] }) {
-  const [vista, setVista] = useState<'cuenta' | 'todos' | 'cuentas'>('cuenta');
+  const [vista, setVista] = useState<'cuenta' | 'todos' | 'cajas' | 'cuentas'>('cuenta');
+  const cajasQ = useQuery({ queryKey: ['cajas'], queryFn: () => api.finanzas.listCajas() });
+  const abiertas = (cajasQ.data?.cajas ?? []).filter((c) => c.estado === 'abierta').length;
   return (
     <div className="space-y-3">
       <SegTabs value={vista} onChange={setVista} opts={[
         { v: 'cuenta', l: 'Libro por cuenta' },
         { v: 'todos', l: 'Todos los movimientos' },
+        { v: 'cajas', l: 'Cajas y rendiciones', n: abiertas },
         { v: 'cuentas', l: 'Cuentas' },
       ] as const} />
       {vista === 'cuenta' && <BancosView />}
       {vista === 'todos' && <GlobalLedger proyectoId={proyectoId} proyectos={proyectos} kind="movimientos" />}
+      {vista === 'cajas' && <CajasView proyectos={proyectos} />}
       {vista === 'cuentas' && <TesoreriaConfig />}
     </div>
+  );
+}
+
+// ─── F3.2 · Cajas por proyecto · entregado contra rendido, cruzado con el N° de operación ──
+function CajasView({ proyectos }: { proyectos: { id: string; codigo: string; nombre: string }[] }) {
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ['cajas'], queryFn: () => api.finanzas.listCajas() });
+  const cuentasQ = useQuery({ queryKey: ['cuentas'], queryFn: () => api.finanzas.listCuentas() });
+  const bancos = (cuentasQ.data?.cuentas ?? []).filter((c) => c.activo && c.tipo !== 'caja');
+  const cajas = q.data?.cajas ?? [];
+  const [nueva, setNueva] = useState(false);
+  const [cerrar, setCerrar] = useState<CajaRow | null>(null);
+  const inval = () => { qc.invalidateQueries({ queryKey: ['cajas'] }); qc.invalidateQueries({ queryKey: ['cuentas'] }); qc.invalidateQueries({ queryKey: ['mov-global'] }); invalidateResumen(qc); };
+  return (
+    <div className="space-y-3">
+      <div className="rounded-lg border border-line bg-bg-elev overflow-hidden">
+        <div className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-2.5">
+          <h3 className="text-[13px] font-semibold mr-auto">Cajas <span className="text-ink-4 font-normal">{cajas.length}</span></h3>
+          <button onClick={() => setNueva(true)} className="inline-flex items-center gap-1 h-8 px-2.5 rounded-md bg-primary text-primary-foreground text-[11.5px] font-medium hover:opacity-90"><Plus className="h-3.5 w-3.5" /> Nueva entrega</button>
+        </div>
+        {q.isLoading ? <SkelRows rows={4} />
+          : cajas.length === 0 ? <div className="text-center py-8 text-[12px] text-ink-3">Sin cajas · la entrega sale del banco con su N° de operación y queda cruzada</div>
+          : (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead><tr className="border-b border-line bg-bg-sunken">{['Caja', 'Proyecto', 'Encargado', 'Apertura', 'Entregado', 'Rendido', 'Saldo', 'Docs', 'Estado', ''].map((h, i) => <th key={i} className={cn('px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-ink-4', i >= 4 && i <= 7 ? 'text-right' : 'text-left')}>{h}</th>)}</tr></thead>
+              <tbody>
+                {cajas.map((c) => (
+                  <tr key={c.id} className="border-b border-line hover:bg-bg-sunken/30">
+                    <td className="px-3 py-1.5 text-[11px] font-mono">{c.codigo}</td>
+                    <td className="px-3 py-1.5 text-[11px] font-mono text-ink-3">{c.proyectoCodigo ?? '—'}</td>
+                    <td className="px-3 py-1.5 text-[11.5px] max-w-[160px] truncate">{c.encargado}</td>
+                    <td className="px-3 py-1.5 text-[11px] font-mono tabular-nums">{c.fechaApertura}</td>
+                    <td className="px-3 py-1.5 text-[11px] font-mono tabular-nums text-right">{fmtPEN(c.entregado)}</td>
+                    <td className="px-3 py-1.5 text-[11px] font-mono tabular-nums text-right text-ink-3">{fmtPEN(c.rendido)}</td>
+                    <td className={cn('px-3 py-1.5 text-[11px] font-mono tabular-nums text-right font-semibold', c.saldo > 0.004 ? 'text-amber-700' : c.saldo < -0.004 ? 'text-rose-600' : 'text-ink-4')}>{fmtPEN(c.saldo)}</td>
+                    <td className="px-3 py-1.5 text-[11px] font-mono tabular-nums text-right text-ink-3">{c.docs}</td>
+                    <td className="px-3 py-1.5"><span className={cn('text-[10.5px] font-medium px-1.5 py-0.5 rounded', c.estado === 'abierta' ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700')}>{c.estado === 'abierta' ? 'Abierta' : 'Cerrada'}</span></td>
+                    <td className="px-3 py-1.5 whitespace-nowrap text-right">
+                      {c.estado === 'abierta' && <button onClick={() => setCerrar(c)} className="h-7 px-2 rounded-md border border-line text-[11px] text-ink-2 hover:bg-bg-sunken">Cerrar</button>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+      <p className="text-[10.5px] text-ink-4">Los gastos de la caja se registran con "Registrar movimiento" eligiendo la caja en "Sale de" (jalan facturas del proveedor igual que un banco). El libro de cada caja vive en "Libro por cuenta".</p>
+      {nueva && <NuevaCajaModal proyectos={proyectos} bancos={bancos} onClose={() => setNueva(false)} onDone={() => { setNueva(false); inval(); }} />}
+      {cerrar && <CerrarCajaModal caja={cerrar} bancos={bancos} onClose={() => setCerrar(null)} onDone={() => { setCerrar(null); inval(); }} />}
+    </div>
+  );
+}
+
+function NuevaCajaModal({ proyectos, bancos, onClose, onDone }: { proyectos: { id: string; codigo: string; nombre: string }[]; bancos: CuentaBancaria[]; onClose: () => void; onDone: () => void }) {
+  const [f, setF] = useState({ proyectoId: '', encargado: '', monto: '', cuentaOrigenId: bancos[0]?.id ?? '', numOperacion: '', fecha: new Date().toISOString().slice(0, 10), notas: '' });
+  const set = (x: Partial<typeof f>) => setF((s) => ({ ...s, ...x }));
+  const [error, setError] = useState<string | null>(null);
+  const save = useMutation({
+    mutationFn: () => api.finanzas.createCaja({ proyectoId: f.proyectoId, encargado: f.encargado.trim(), monto: parseFloat(f.monto), cuentaOrigenId: f.cuentaOrigenId, numOperacion: f.numOperacion.trim(), fecha: f.fecha, notas: f.notas || null }),
+    onSuccess: onDone,
+    onError: (e: Error) => setError(e.message),
+  });
+  const valid = f.proyectoId && f.encargado.trim().length >= 2 && (parseFloat(f.monto) || 0) > 0 && f.cuentaOrigenId && f.numOperacion.trim();
+  const inputCls = 'h-9 w-full px-2.5 rounded-md border border-line bg-bg-elev text-[12px]';
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 animate-backdropIn" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="w-full max-w-md rounded-xl border border-line bg-bg-elev shadow-2xl animate-modalPop overflow-hidden">
+        <div className="flex items-center justify-between border-b border-line px-5 py-3.5">
+          <div><h2 className="text-[15px] font-bold">Nueva entrega a rendir</h2><p className="text-[11px] cuenta text-ink-4">Sale del banco con su N° de operación · queda cruzada con la caja</p></div>
+          <button onClick={onClose} className="h-8 w-8 rounded-md inline-flex items-center justify-center text-ink-3 hover:bg-bg-sunken"><X className="h-4 w-4" /></button>
+        </div>
+        <div className="p-5 space-y-3 bg-bg-sunken/40">
+          <Field label="Proyecto · obligatorio"><select className={inputCls} value={f.proyectoId} onChange={(e) => set({ proyectoId: e.target.value })}><option value="">Elegir…</option>{proyectos.map((p) => <option key={p.id} value={p.id}>{p.codigo} · {p.nombre.slice(0, 36)}</option>)}</select></Field>
+          <Field label="Encargado"><input className={inputCls} value={f.encargado} onChange={(e) => set({ encargado: e.target.value })} placeholder="Andrea García" /></Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Monto entregado"><input className={cn(inputCls, 'font-mono')} type="number" step="0.01" value={f.monto} onChange={(e) => set({ monto: e.target.value })} placeholder="0.00" /></Field>
+            <Field label="Fecha"><input className={inputCls} type="date" value={f.fecha} onChange={(e) => set({ fecha: e.target.value })} /></Field>
+          </div>
+          <Field label="Sale de"><select className={inputCls} value={f.cuentaOrigenId} onChange={(e) => set({ cuentaOrigenId: e.target.value })}>{bancos.map((b) => <option key={b.id} value={b.id}>{b.cuentaContable ? `${b.cuentaContable} · ` : ''}{b.descripcion ?? b.codigo}</option>)}</select></Field>
+          <Field label="N° de operación · obligatorio"><input className={cn(inputCls, 'font-mono')} value={f.numOperacion} onChange={(e) => set({ numOperacion: e.target.value })} placeholder="5404001" /></Field>
+        </div>
+        <div className="border-t border-line px-5 py-3">
+          {error && <div className="mb-2 rounded-md border border-destructive/30 bg-destructive-soft px-3 py-1.5 text-[11.5px] text-destructive">{error}</div>}
+          <div className="flex items-center gap-3 justify-end">
+            <button onClick={onClose} className="h-9 px-4 rounded-md border border-line text-[12px] hover:bg-bg-sunken">Cancelar</button>
+            <button disabled={!valid || save.isPending} onClick={() => { setError(null); save.mutate(); }} className="inline-flex items-center gap-1.5 h-9 px-4 rounded-md bg-primary text-primary-foreground text-[12px] font-medium hover:opacity-90 disabled:opacity-50"><Check className="h-3.5 w-3.5" /> {save.isPending ? 'Abriendo…' : 'Abrir caja'}</button>
+          </div>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+function CerrarCajaModal({ caja, bancos, onClose, onDone }: { caja: CajaRow; bancos: CuentaBancaria[]; onClose: () => void; onDone: () => void }) {
+  const conSaldo = caja.saldo > 0.004;
+  const [f, setF] = useState({ fecha: new Date().toISOString().slice(0, 10), cuentaDestinoId: bancos[0]?.id ?? '', numOperacion: '' });
+  const [error, setError] = useState<string | null>(null);
+  const save = useMutation({
+    mutationFn: () => api.finanzas.cerrarCaja(caja.id, { fecha: f.fecha, devolucion: conSaldo ? { cuentaDestinoId: f.cuentaDestinoId, numOperacion: f.numOperacion.trim() } : null }),
+    onSuccess: onDone,
+    onError: (e: Error) => setError(e.message),
+  });
+  const valid = !conSaldo || (f.cuentaDestinoId && f.numOperacion.trim());
+  const inputCls = 'h-9 w-full px-2.5 rounded-md border border-line bg-bg-elev text-[12px]';
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 animate-backdropIn" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="w-full max-w-md rounded-xl border border-line bg-bg-elev shadow-2xl animate-modalPop overflow-hidden">
+        <div className="flex items-center justify-between border-b border-line px-5 py-3.5">
+          <div><h2 className="text-[15px] font-bold">Cerrar {caja.codigo}</h2><p className="text-[11px] text-ink-4">Entregado {fmtPEN(caja.entregado)} · rendido {fmtPEN(caja.rendido)} · saldo <b className="font-mono">{fmtPEN(caja.saldo)}</b></p></div>
+          <button onClick={onClose} className="h-8 w-8 rounded-md inline-flex items-center justify-center text-ink-3 hover:bg-bg-sunken"><X className="h-4 w-4" /></button>
+        </div>
+        <div className="p-5 space-y-3 bg-bg-sunken/40">
+          <Field label="Fecha de cierre"><input className={inputCls} type="date" value={f.fecha} onChange={(e) => setF((s) => ({ ...s, fecha: e.target.value }))} /></Field>
+          {conSaldo ? (
+            <>
+              <div className="text-[11.5px] text-amber-700">El saldo de {fmtPEN(caja.saldo)} se devuelve al banco (o regístralo antes como gasto desde la caja).</div>
+              <Field label="Devolver a"><select className={inputCls} value={f.cuentaDestinoId} onChange={(e) => setF((s) => ({ ...s, cuentaDestinoId: e.target.value }))}>{bancos.map((b) => <option key={b.id} value={b.id}>{b.cuentaContable ? `${b.cuentaContable} · ` : ''}{b.descripcion ?? b.codigo}</option>)}</select></Field>
+              <Field label="N° de operación de la devolución"><input className={cn(inputCls, 'font-mono')} value={f.numOperacion} onChange={(e) => setF((s) => ({ ...s, numOperacion: e.target.value }))} placeholder="5404099" /></Field>
+            </>
+          ) : (
+            <div className="text-[11.5px] text-emerald-700">Saldo en cero: la caja se cierra y su cuenta se desactiva.</div>
+          )}
+        </div>
+        <div className="border-t border-line px-5 py-3">
+          {error && <div className="mb-2 rounded-md border border-destructive/30 bg-destructive-soft px-3 py-1.5 text-[11.5px] text-destructive">{error}</div>}
+          <div className="flex items-center gap-3 justify-end">
+            <button onClick={onClose} className="h-9 px-4 rounded-md border border-line text-[12px] hover:bg-bg-sunken">Cancelar</button>
+            <button disabled={!valid || save.isPending} onClick={() => { setError(null); save.mutate(); }} className="inline-flex items-center gap-1.5 h-9 px-4 rounded-md bg-primary text-primary-foreground text-[12px] font-medium hover:opacity-90 disabled:opacity-50"><Check className="h-3.5 w-3.5" /> {save.isPending ? 'Cerrando…' : 'Cerrar caja'}</button>
+          </div>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 

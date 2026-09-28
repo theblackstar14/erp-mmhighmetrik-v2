@@ -260,6 +260,12 @@ export const api = {
       if (proyectoId && proyectoId !== 'todos') qs.set('proyectoId', proyectoId);
       return req<{ movimientos: Movimiento[]; stats: { count: number; ingresos: number; egresos: number; neto: number } }>(`/api/movimientos${qs.toString() ? `?${qs}` : ''}`);
     },
+    // F3.2 · cajas y rendiciones por proyecto (entrega = transferencia banco→caja · 1413)
+    listCajas: () => req<{ cajas: CajaRow[] }>('/api/cajas'),
+    createCaja: (data: { proyectoId: string; encargado: string; monto: number; cuentaOrigenId: string; numOperacion: string; fecha: string; notas?: string | null }) =>
+      req<{ caja: CajaRow; cuenta: CuentaBancaria }>('/api/cajas', { method: 'POST', body: JSON.stringify(data) }),
+    cerrarCaja: (id: string, data: { fecha: string; devolucion?: { cuentaDestinoId: string; numOperacion: string } | null }) =>
+      req<{ ok: boolean; saldoDevuelto: number }>(`/api/cajas/${id}/cerrar`, { method: 'POST', body: JSON.stringify(data) }),
     // F2.2 · facturas con saldo del tercero (proveedor → jala facturas)
     listDocumentosPendientes: (tipo: 'cxp' | 'cxc', q?: string) => {
       const qs = new URLSearchParams({ tipo });
@@ -1914,7 +1920,7 @@ export type VentaInput = {
   lineas?: { descripcion: string; cantidad?: number; unidad?: string | null; valorVenta: number; igv?: number }[] | null;
   descripcion?: string | null;
 };
-export type CuentaBancaria = { id: string; codigo: string; banco: string | null; moneda: string; descripcion: string | null; cuentaContable: string | null; activo: boolean };
+export type CuentaBancaria = { id: string; codigo: string; banco: string | null; moneda: string; descripcion: string | null; cuentaContable: string | null; tipo?: 'banco' | 'caja' | 'detracciones' | null; activo: boolean };
 
 // ─── Finanzas FIN-2 · movimientos (Flujo de Cuentas) ──────────
 export type Movimiento = {
@@ -1971,6 +1977,12 @@ export type MovimientoInput = {
   aplicaciones?: { documentoPendienteId: string; monto: number }[]; // F2.2 · pago/cobro aplicado a documentos
 };
 export type SaldoCuenta = { cuenta: CuentaBancaria; ingresos: number; egresos: number; saldo: number; movimientos: number };
+// F3.2 · caja por proyecto con saldos derivados de sus movimientos
+export type CajaRow = {
+  id: string; codigo: string; proyectoId: string; proyectoCodigo: string | null; encargado: string;
+  cuentaId: string; estado: 'abierta' | 'cerrada'; fechaApertura: string; fechaCierre: string | null; notas: string | null;
+  entregado: number; rendido: number; docs: number; saldo: number;
+};
 // F2.2 · documento pendiente (CxP/CxC) con saldo derivado de aplicaciones
 export type DocumentoPendiente = {
   id: string; tipo: 'cxp' | 'cxc'; terceroRuc: string | null; terceroRazon: string | null;
@@ -1999,6 +2011,7 @@ export type FinanzasResumen = {
       valosSinComprobante: { n: number; items: { numero: number; proyectoCodigo: string | null }[] };
       bandejaCpe: number;
       conciliacionPendiente: number;
+      cajasPorRendir: { n: number; monto: number; items: { codigo: string; encargado: string; saldo: number }[] };
     };
     proyeccion: { hoy: number; d30: { cobros: number; pagos: number }; d60: { cobros: number; pagos: number } };
     aging: Record<'cxc' | 'cxp', { corriente: number; v30: number; mas30: number; total: number }>;

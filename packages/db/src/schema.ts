@@ -2326,6 +2326,30 @@ export const ventas = pgTable(
 );
 export type Venta = typeof ventas.$inferSelect;
 
+// ─── F3.2 · Cajas y rendiciones por proyecto (migración 0026) ──
+// La caja agrupa; el dinero vive en una cuentasBancarias tipo 'caja' (contable 1413).
+// Entrega = transferencia banco→caja · rendición = egresos desde la caja · cierre devuelve saldo.
+export const cajas = pgTable(
+  'cajas',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    empresaId: integer('empresa_id').notNull().default(1),
+    codigo: varchar('codigo', { length: 20 }).notNull().unique(),
+    proyectoId: uuid('proyecto_id').notNull().references(() => proyectos.id, { onDelete: 'restrict' }),
+    encargado: varchar('encargado', { length: 150 }).notNull(),
+    cuentaId: uuid('cuenta_id').notNull().references(() => cuentasBancarias.id),
+    estado: varchar('estado', { length: 10 }).notNull().default('abierta'), // abierta | cerrada
+    fechaApertura: date('fecha_apertura').notNull(),
+    fechaCierre: date('fecha_cierre'),
+    notas: text('notas'),
+    userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+    updatedAt: timestamp('updated_at'),
+  },
+  (t) => ({ proyectoIdx: index('cajas_proyecto_idx').on(t.proyectoId, t.estado) }),
+);
+export type Caja = typeof cajas.$inferSelect;
+
 // ─── Correlativos globales (OC, RQ por año) ──────────────────
 export const correlativos = pgTable('correlativos', {
   clave: varchar('clave', { length: 50 }).primaryKey(), // 'OC-2026', 'REQ-2026'
