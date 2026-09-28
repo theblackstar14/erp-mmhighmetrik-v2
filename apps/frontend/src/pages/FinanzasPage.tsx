@@ -743,7 +743,7 @@ const CLASIF_CHIP: Record<string, { l: string; c: string }> = {
   boleta: { l: 'Gasto con boleta · no entra al RCE', c: 'bg-amber-50 text-amber-700' },
   nc: { l: 'Nota de crédito', c: 'bg-violet-50 text-violet-700' },
   nd: { l: 'Nota de débito', c: 'bg-violet-50 text-violet-700' },
-  venta: { l: 'Venta · llega con F3.1', c: 'bg-bg-sunken text-ink-3' },
+  venta: { l: 'Venta emitida', c: 'bg-emerald-50 text-emerald-700' },
 };
 
 function BandejaCpeView({ proyectos }: { proyectos: { id: string; codigo: string; nombre: string }[] }) {
@@ -755,6 +755,7 @@ function BandejaCpeView({ proyectos }: { proyectos: { id: string; codigo: string
   const [subiendo, setSubiendo] = useState(false);
   const [resultado, setResultado] = useState<string | null>(null);
   const [completar, setCompletar] = useState<CpeBorrador | null>(null);
+  const [completarVenta, setCompletarVenta] = useState<CpeBorrador | null>(null);
   const inval = () => { qc.invalidateQueries({ queryKey: ['cpe-bandeja'] }); qc.invalidateQueries({ queryKey: ['gas-global'] }); };
   const subir = async (files: FileList | null) => {
     if (!files?.length) return;
@@ -802,9 +803,7 @@ function BandejaCpeView({ proyectos }: { proyectos: { id: string; codigo: string
                     <td className="px-3 py-1.5 text-[11px] font-mono tabular-nums text-right text-amber-700">{b.payload.detraccion ? fmtPEN(b.payload.detraccion.monto) : '—'}</td>
                     <td className="px-3 py-1.5"><span className={cn('text-[10.5px] font-medium px-1.5 py-0.5 rounded', CLASIF_CHIP[b.clasificacion]?.c)}>{CLASIF_CHIP[b.clasificacion]?.l ?? b.clasificacion}</span></td>
                     <td className="px-3 py-1.5 whitespace-nowrap text-right">
-                      {b.rol === 'compra'
-                        ? <button onClick={() => setCompletar(b)} className="h-7 px-2.5 rounded-md bg-primary text-primary-foreground text-[11px] font-medium hover:opacity-90 mr-1.5">Completar</button>
-                        : <span className="text-[10.5px] text-ink-4 mr-1.5">se registra con F3.1</span>}
+                      <button onClick={() => (b.rol === 'compra' ? setCompletar(b) : setCompletarVenta(b))} className="h-7 px-2.5 rounded-md bg-primary text-primary-foreground text-[11px] font-medium hover:opacity-90 mr-1.5">Completar</button>
                       <button onClick={() => { if (confirm(`¿Descartar ${b.serie}-${b.numero}?`)) descartar.mutate(b.id); }} className="h-7 px-2 rounded-md border border-line text-[11px] text-ink-3 hover:bg-bg-sunken">Descartar</button>
                     </td>
                   </tr>
@@ -815,6 +814,7 @@ function BandejaCpeView({ proyectos }: { proyectos: { id: string; codigo: string
         )}
       </div>
       {completar && <CompletarCpeModal borrador={completar} proyectos={proyectos} onClose={() => setCompletar(null)} onDone={() => { setCompletar(null); inval(); }} />}
+      {completarVenta && <VentaModal borrador={completarVenta} onClose={() => { setCompletarVenta(null); inval(); }} />}
     </div>
   );
 }
@@ -848,7 +848,7 @@ function CompletarCpeModal({ borrador: b, proyectos, onClose, onDone }: { borrad
         detraccion: p.detraccion ? { codigo: p.detraccion.codigo, montoDeclarado: p.detraccion.monto } : null,
         ...(b.clasificacion === 'nc' && p.modifica ? { docModifica: { serie: p.modifica.serieNumero.split('-')[0] ?? '', numero: p.modifica.serieNumero.split('-').slice(1).join('-') } } : {}),
       } as GastoInput & { proyectoId?: string | null; docModifica?: { serie: string; numero: string } });
-      if (gasto) await api.cpe.marcarRegistrado(b.id, gasto.id);
+      if (gasto) await api.cpe.marcarRegistrado(b.id, { gastoId: gasto.id });
     },
     onSuccess: onDone,
     onError: (e: Error) => setError(e.message),
@@ -947,6 +947,7 @@ function VentasView({ proyectoId }: { proyectoId: string }) {
   const q = useQuery({ queryKey: ['ventas-global', proyectoId], queryFn: () => api.finanzas.listVentas(proyectoId) });
   const ventas = q.data?.ventas ?? [];
   const st = q.data?.stats;
+  const [nueva, setNueva] = useState(false);
   const csv = () => {
     const head = ['Emisión', 'Obra', 'Valo', 'Comprobante', 'Cuenta', 'Base', 'IGV', 'Total', 'Detracción', 'Retención', 'Estado'];
     const lines = ventas.map((v) => [v.fechaEmision, v.proyectoCodigo ?? '', `VAL-${v.numero}`, [v.comprobanteSerie, v.comprobanteNumero].filter(Boolean).join('-'), v.cuentaContable ?? '', Number(v.base).toFixed(2), Number(v.igv).toFixed(2), v.total.toFixed(2), v.detraccion != null ? v.detraccion.toFixed(2) : '', v.retencion ? Number(v.retencion).toFixed(2) : '', v.status].map((c) => `"${String(c).replace(/"/g, '""')}"`).join(';'));
@@ -965,6 +966,7 @@ function VentasView({ proyectoId }: { proyectoId: string }) {
         <div className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-2.5">
           <h3 className="text-[13px] font-semibold mr-auto">Registro de ventas <span className="text-ink-4 font-normal">{ventas.length}</span></h3>
           <button onClick={csv} disabled={ventas.length === 0} className="inline-flex items-center gap-1 h-8 px-2.5 rounded-md border border-line text-[11.5px] font-medium hover:bg-bg-sunken disabled:opacity-40"><Download className="h-3.5 w-3.5" /> CSV</button>
+          <button onClick={() => setNueva(true)} className="inline-flex items-center gap-1 h-8 px-2.5 rounded-md bg-primary text-primary-foreground text-[11.5px] font-medium hover:opacity-90"><Plus className="h-3.5 w-3.5" /> Nueva venta</button>
         </div>
         {q.isLoading ? <SkelRows rows={6} />
           : ventas.length === 0 ? <div className="text-center py-8 text-[12px] text-ink-3">Sin ventas registradas · las valorizaciones facturadas aparecen aquí</div>
@@ -993,8 +995,147 @@ function VentasView({ proyectoId }: { proyectoId: string }) {
           </div>
         )}
       </div>
-      <p className="text-[10.5px] text-ink-4">Vista del registro 14.1 · el alta de ventas sin valorización (venta directa / contrato) llega con el registro de ventas standalone (F3.1).</p>
+      <p className="text-[10.5px] text-ink-4">Registro 14.1 · valorizaciones facturadas + ventas standalone (contrato / adicional / directa). El cobro se registra en Caja y bancos aplicando a la factura.</p>
+      {nueva && <VentaModal onClose={() => setNueva(false)} />}
     </div>
+  );
+}
+
+// ─── F3.1 · Nueva venta standalone (factura ya emitida · alimenta 14.1/RVIE con serie real) ──
+function VentaModal({ onClose, borrador }: { onClose: () => void; borrador?: CpeBorrador }) {
+  const qc = useQueryClient();
+  const proyectosQ = useQuery({ queryKey: ['proyectos-list'], queryFn: () => api.proyectos.list() });
+  const proyectos = proyectosQ.data?.proyectos ?? [];
+  const p = borrador?.payload;
+  const [f, setF] = useState({
+    clienteRuc: p?.cliente?.numero ?? '',
+    clienteRazon: p?.cliente?.razonSocial ?? '',
+    tipoCpe: (borrador?.tipoCpe ?? '01') as '01' | '03' | '07' | '08',
+    serie: borrador?.serie ?? '', numero: borrador?.numero ?? '',
+    fechaEmision: borrador?.fechaEmision ?? new Date().toISOString().slice(0, 10),
+    fechaVencimiento: p?.fechaVencimiento ?? '',
+    base: p ? String(p.totales.valorVenta) : '',
+    proyectoId: '', numContrato: '',
+    formaPago: (p?.formaPago ?? 'Contado') as 'Contado' | 'Credito',
+    retencion3: (p?.retencion?.monto ?? 0) > 0, comprobanteRetencion: '',
+    detraccionCodigo: p?.detraccion?.codigo ?? '',
+    docModSerie: p?.modifica?.serieNumero?.split('-')[0] ?? '', docModNumero: p?.modifica?.serieNumero?.split('-').slice(1).join('-') ?? '',
+    descripcion: p?.lineas?.[0]?.descripcion ?? '',
+  });
+  const set = (x: Partial<typeof f>) => setF((s) => ({ ...s, ...x }));
+  const [cuenta, setCuenta] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const esNc = f.tipoCpe === '07';
+  const base = parseFloat(f.base) || 0;
+  const igv = Math.round(base * 18) / 100;
+  const total = Math.round((base + igv) * 100) / 100;
+  const retencion = f.retencion3 ? Math.round(total * 3) / 100 : 0;
+  const save = useMutation({
+    mutationFn: async () => {
+      const { venta } = await api.finanzas.createVenta({
+        clienteRuc: f.clienteRuc || null, clienteRazon: f.clienteRazon || null,
+        tipoCpe: f.tipoCpe, serie: f.serie, numero: f.numero,
+        fechaEmision: f.fechaEmision, fechaVencimiento: f.fechaVencimiento || null,
+        base, igv, total,
+        cuentaContable: cuenta, cuentaContableOrigen: cuenta ? 'USUARIO' : null,
+        origenTipo: f.numContrato ? 'contrato' : 'directa', numContrato: f.numContrato || null,
+        proyectoId: f.proyectoId || null,
+        formaPago: f.formaPago,
+        cuotas: f.formaPago === 'Credito' && f.fechaVencimiento ? [{ monto: Math.round((total - retencion) * 100) / 100, vence: f.fechaVencimiento }] : null,
+        retencionIgv: retencion, comprobanteRetencion: f.comprobanteRetencion || null,
+        // montoDeclarado: lo que dice el XML · si difiere del calculado con la tabla vigente, queda la evidencia
+        detraccion: f.detraccionCodigo ? { codigo: f.detraccionCodigo, montoDeclarado: p?.detraccion?.codigo === f.detraccionCodigo ? p.detraccion.monto : null } : null,
+        docModifica: esNc && f.docModSerie ? { serie: f.docModSerie, numero: f.docModNumero } : null,
+        motivoNota: esNc ? '01' : null,
+        lineas: p?.lineas?.length ? p.lineas.map((l) => ({ descripcion: l.descripcion, cantidad: l.cantidad || 1, unidad: l.unidad, valorVenta: l.valorVenta, igv: l.igv })) : null,
+        descripcion: f.descripcion || null,
+      });
+      if (borrador) await api.cpe.marcarRegistrado(borrador.id, { ventaId: venta.id });
+      return venta;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['ventas-global'] });
+      qc.invalidateQueries({ queryKey: ['cpe-bandeja'] });
+      invalidateResumen(qc);
+      onClose();
+    },
+    onError: (e: Error) => setError(e.message),
+  });
+  const valid = f.serie.trim() && f.numero.trim() && f.fechaEmision && base > 0 && (!esNc || f.docModSerie.trim());
+  const inputCls = 'h-9 w-full px-2.5 rounded-md border border-line bg-bg-elev text-[12px]';
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 animate-backdropIn" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="w-full max-w-xl max-h-[88vh] overflow-hidden rounded-xl border border-line bg-bg-elev shadow-2xl flex flex-col animate-modalPop">
+        <div className="shrink-0 flex items-center justify-between border-b border-line px-5 py-3.5">
+          <div>
+            <h2 className="text-[15px] font-bold">{borrador ? `Completar venta ${borrador.serie}-${borrador.numero}` : 'Registrar venta'}</h2>
+            <p className="text-[11px] text-ink-4">Factura ya emitida · alimenta el 14.1/RVIE con serie y número reales</p>
+          </div>
+          <button onClick={onClose} className="h-8 w-8 rounded-md inline-flex items-center justify-center text-ink-3 hover:bg-bg-sunken"><X className="h-4 w-4" /></button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-5 space-y-3.5 bg-bg-sunken/40">
+          <SecBox title="Documento">
+            <div className="grid grid-cols-[1fr_90px_110px] gap-3">
+              <Field label="Tipo"><select className={inputCls} value={f.tipoCpe} onChange={(e) => set({ tipoCpe: e.target.value as typeof f.tipoCpe })} disabled={!!borrador}><option value="01">01 · Factura</option><option value="03">03 · Boleta</option><option value="07">07 · Nota de crédito</option><option value="08">08 · Nota de débito</option></select></Field>
+              <Field label="Serie"><input className={cn(inputCls, 'font-mono')} value={f.serie} onChange={(e) => set({ serie: e.target.value })} disabled={!!borrador} placeholder="E001" /></Field>
+              <Field label="Número"><input className={cn(inputCls, 'font-mono')} value={f.numero} onChange={(e) => set({ numero: e.target.value })} disabled={!!borrador} placeholder="52" /></Field>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Emisión"><input className={inputCls} type="date" value={f.fechaEmision} onChange={(e) => set({ fechaEmision: e.target.value })} /></Field>
+              <Field label="Vencimiento" right="si es crédito"><input className={inputCls} type="date" value={f.fechaVencimiento ?? ''} onChange={(e) => set({ fechaVencimiento: e.target.value })} /></Field>
+            </div>
+            {esNc && (
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Modifica · serie"><input className={cn(inputCls, 'font-mono')} value={f.docModSerie} onChange={(e) => set({ docModSerie: e.target.value })} placeholder="E001" /></Field>
+                <Field label="Modifica · número"><input className={cn(inputCls, 'font-mono')} value={f.docModNumero} onChange={(e) => set({ docModNumero: e.target.value })} placeholder="52" /></Field>
+              </div>
+            )}
+          </SecBox>
+          <SecBox title="Cliente y destino">
+            <div className="grid grid-cols-[130px_1fr] gap-3">
+              <Field label="RUC"><input className={cn(inputCls, 'font-mono')} value={f.clienteRuc} onChange={(e) => set({ clienteRuc: e.target.value.replace(/\D/g, '') })} maxLength={11} /></Field>
+              <Field label="Razón social"><input className={inputCls} value={f.clienteRazon} onChange={(e) => set({ clienteRazon: e.target.value })} /></Field>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Proyecto" right="opcional"><select className={inputCls} value={f.proyectoId} onChange={(e) => set({ proyectoId: e.target.value })}><option value="">Sin proyecto</option>{proyectos.map((pr) => <option key={pr.id} value={pr.id}>{pr.codigo} · {pr.nombre.slice(0, 34)}</option>)}</select></Field>
+              <Field label="N° contrato" right="documento no condicional"><input className={cn(inputCls, 'font-mono')} value={f.numContrato} onChange={(e) => set({ numContrato: e.target.value })} placeholder="CT-2026-004" /></Field>
+            </div>
+            <Field label="Cuenta de ingreso · manual" right="default 7041"><CuentaContableSelect value={cuenta} onChange={(c) => setCuenta(c)} /></Field>
+          </SecBox>
+          <SecBox title="Montos y tributos">
+            <div className="grid grid-cols-3 gap-3">
+              <Field label="Base (sin IGV)"><input className={cn(inputCls, 'font-mono')} type="number" step="0.01" value={f.base} onChange={(e) => set({ base: e.target.value })} /></Field>
+              <Field label="IGV 18%"><div className={cn(inputCls, 'font-mono flex items-center text-ink-3')}>{igv.toFixed(2)}</div></Field>
+              <Field label="Total"><div className={cn(inputCls, 'font-mono flex items-center font-bold')}>{total.toFixed(2)}</div></Field>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Detracción · código" right={p?.detraccion ? `del XML · ${p.detraccion.porcentaje}%` : 'vacío = no sujeta'}><input className={cn(inputCls, 'font-mono')} value={f.detraccionCodigo} onChange={(e) => set({ detraccionCodigo: e.target.value.replace(/\D/g, '').slice(0, 3) })} placeholder="030" /></Field>
+              <Field label="Forma de pago · RVIE"><div className="flex gap-2 h-9 items-center">
+                {(['Contado', 'Credito'] as const).map((m) => (
+                  <button key={m} type="button" onClick={() => set({ formaPago: m })} className={cn('flex-1 h-9 rounded-md border text-[11.5px] font-medium', f.formaPago === m ? 'border-primary bg-primary/5 text-primary' : 'border-line text-ink-3 hover:bg-bg-sunken')}>{m}</button>
+                ))}</div></Field>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="flex items-center gap-1.5 cursor-pointer text-[11.5px] h-9"><input type="checkbox" checked={f.retencion3} onChange={(e) => set({ retencion3: e.target.checked })} className="rounded border-line" /> Cliente agente · retiene IGV 3%{retencion > 0 ? ` · −${fmtPEN(retencion)}` : ''}</label>
+              {f.retencion3 && <Field label="Comprobante de retención" right="→ 40114"><input className={cn(inputCls, 'font-mono')} value={f.comprobanteRetencion} onChange={(e) => set({ comprobanteRetencion: e.target.value })} placeholder="R001-0045" /></Field>}
+            </div>
+            {(retencion > 0 || f.detraccionCodigo) && <div className="text-[11px] text-ink-3">Neto a cobrar estimado: <span className="font-mono font-semibold text-foreground">{fmtPEN(total - retencion - (p?.detraccion?.monto ?? 0))}</span>{f.detraccionCodigo && !p?.detraccion ? ' (menos la detracción que calcule el sistema)' : ''}</div>}
+            <Field label="Descripción" right="opcional"><input className={inputCls} value={f.descripcion} onChange={(e) => set({ descripcion: e.target.value })} /></Field>
+          </SecBox>
+        </div>
+        <div className="shrink-0 border-t border-line bg-bg-elev px-5 py-3">
+          {error && <div className="mb-2 rounded-md border border-destructive/30 bg-destructive-soft px-3 py-1.5 text-[11.5px] text-destructive">{error}</div>}
+          <div className="flex items-center gap-3">
+            <span className="text-[11px] text-ink-3 mr-auto">Se registra: venta en el 14.1, CxC {esNc ? '(la NC devuelve saldo a la factura)' : `de ${fmtPEN(total)}`}{f.detraccionCodigo ? ' y detracción' : ''}.</span>
+            <button onClick={onClose} className="h-9 px-4 rounded-md border border-line text-[12px] hover:bg-bg-sunken">Cancelar</button>
+            <button disabled={!valid || save.isPending} onClick={() => { setError(null); save.mutate(); }} className="inline-flex items-center gap-1.5 h-9 px-4 rounded-md bg-primary text-primary-foreground text-[12px] font-medium hover:opacity-90 disabled:opacity-50">
+              <Check className="h-3.5 w-3.5" /> {save.isPending ? 'Registrando…' : 'Registrar venta'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 

@@ -266,11 +266,14 @@ export const api = {
       if (q?.trim()) qs.set('q', q.trim());
       return req<{ documentos: DocumentoPendiente[] }>(`/api/documentos-pendientes?${qs}`);
     },
-    // F2.1 · registro de ventas (valorizaciones con comprobante)
+    // F2.1 · registro de ventas (valorizaciones con comprobante + standalone F3.1)
     listVentas: (proyectoId?: string) => {
       const qs = proyectoId && proyectoId !== 'todos' ? `?proyectoId=${proyectoId}` : '';
       return req<{ ventas: VentaRow[]; stats: VentasStats }>(`/api/ventas${qs}`);
     },
+    // F3.1 · venta standalone (contrato/adicional/directa) → CxC + detracción + 14.1 real
+    createVenta: (data: VentaInput) =>
+      req<{ venta: { id: string; serie: string; numero: string }; documento: DocumentoPendiente | null }>('/api/ventas', { method: 'POST', body: JSON.stringify(data) }),
     createGastoGlobal: (data: GastoInput & { proyectoId?: string | null }) =>
       req<{ gasto: Gasto }>('/api/gastos', { method: 'POST', body: JSON.stringify(data) }),
     createMovimientoGlobal: (data: MovimientoInput & { proyectoId?: string | null }) =>
@@ -759,8 +762,8 @@ export const api = {
       req<{ borradores: CpeBorrador[] }>(`/api/cpe/bandeja${rol ? `?rol=${rol}` : ''}`),
     descartar: (id: string, motivo?: string) =>
       req<{ borrador: CpeBorrador }>(`/api/cpe/bandeja/${id}/descartar`, { method: 'POST', body: JSON.stringify({ motivo }) }),
-    marcarRegistrado: (id: string, gastoId: string) =>
-      req<{ borrador: CpeBorrador }>(`/api/cpe/bandeja/${id}/registrado`, { method: 'POST', body: JSON.stringify({ gastoId }) }),
+    marcarRegistrado: (id: string, ref: { gastoId?: string; ventaId?: string }) =>
+      req<{ borrador: CpeBorrador }>(`/api/cpe/bandeja/${id}/registrado`, { method: 'POST', body: JSON.stringify(ref) }),
   },
 
   // H3 · Conciliación bancaria
@@ -1867,9 +1870,13 @@ export type CpeBorrador = {
   fechaEmision: string | null; moneda: string; total: string | null;
   payload: {
     fechaVencimiento?: string | null;
+    cliente?: { numero: string | null; razonSocial: string | null };
     totales: { valorVenta: number; igv: number; total: number };
     lineas: { descripcion: string; cantidad: number; unidad: string | null; valorUnitario: number | null; valorVenta: number; igv: number; afectacionIgv: string | null }[];
     detraccion: { codigo: string; porcentaje: number; monto: number } | null;
+    retencion?: { monto: number } | null;
+    formaPago?: 'Contado' | 'Credito' | null;
+    cuotas?: { monto: number; vence: string | null }[];
     modifica: { serieNumero: string } | null;
   };
   detraccionInfo: unknown; estado: 'pendiente' | 'registrado' | 'descartado'; motivo: string | null;
@@ -1886,8 +1893,27 @@ export type VentaRow = {
   cuentaContable: string | null; base: string; igv: string; total: number;
   retencion: string | null; amortizacion: string | null; totalContratista: string | null;
   detraccion: number | null; detraccionEstado: string | null; cobrada: boolean;
+  fuente?: 'valo' | 'venta'; // F3.1 · de valorización o standalone
 };
 export type VentasStats = { count: number; total: number; porCobrar: number; retencion: number; detraccion: number };
+// F3.1 · alta de venta standalone (espejo de ventaSchema del backend)
+export type VentaInput = {
+  proyectoId?: string | null;
+  clienteRuc?: string | null; clienteRazon?: string | null;
+  tipoCpe?: '01' | '03' | '07' | '08';
+  serie: string; numero: string;
+  fechaEmision: string; fechaVencimiento?: string | null;
+  moneda?: string; tipoCambio?: number | null;
+  base: number; igv?: number; total: number;
+  cuentaContable?: string | null; cuentaContableOrigen?: 'USUARIO' | 'SUGERIDO' | null;
+  origenTipo?: 'directa' | 'contrato' | 'valorizacion'; numContrato?: string | null;
+  formaPago?: 'Contado' | 'Credito'; cuotas?: { monto: number; vence: string | null }[] | null;
+  retencionIgv?: number; comprobanteRetencion?: string | null;
+  detraccion?: { codigo: string; montoDeclarado?: number | null } | null;
+  docModifica?: { serie: string; numero: string } | null; motivoNota?: string | null;
+  lineas?: { descripcion: string; cantidad?: number; unidad?: string | null; valorVenta: number; igv?: number }[] | null;
+  descripcion?: string | null;
+};
 export type CuentaBancaria = { id: string; codigo: string; banco: string | null; moneda: string; descripcion: string | null; cuentaContable: string | null; activo: boolean };
 
 // ─── Finanzas FIN-2 · movimientos (Flujo de Cuentas) ──────────

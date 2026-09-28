@@ -2264,6 +2264,7 @@ export const cpeBandeja = pgTable(
     estado: varchar('estado', { length: 12 }).notNull().default('pendiente'), // pendiente | registrado | descartado
     motivo: varchar('motivo', { length: 200 }),
     gastoId: uuid('gasto_id').references(() => gastos.id, { onDelete: 'set null' }),
+    ventaId: uuid('venta_id'), // → ventas.id (FK en 0025 · sin .references() para no crear ciclo de declaración)
     nombreArchivo: varchar('nombre_archivo', { length: 255 }),
     hash: varchar('hash', { length: 64 }).notNull().unique(),
     createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
@@ -2276,6 +2277,54 @@ export const cpeBandeja = pgTable(
   }),
 );
 export type CpeBandeja = typeof cpeBandeja.$inferSelect;
+
+// ─── F3.1 · Ventas standalone (migración 0025) ────────────────
+// Ventas sin valorización (contratos, adicionales, venta directa). Alimenta 14.1/RVIE con
+// serie/número reales, CxC (documento_pendiente docOrigenTipo='venta'), detracción por
+// documento y retención IGV 3% que sufre MM cuando el cliente es agente.
+export const ventas = pgTable(
+  'ventas',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    empresaId: integer('empresa_id').notNull().default(1),
+    proyectoId: uuid('proyecto_id').references(() => proyectos.id, { onDelete: 'set null' }),
+    clienteRuc: varchar('cliente_ruc', { length: 15 }),
+    clienteRazon: varchar('cliente_razon', { length: 300 }),
+    tipoCpe: varchar('tipo_cpe', { length: 4 }).notNull().default('01'), // 01 factura | 03 boleta | 07 NC | 08 ND
+    serie: varchar('serie', { length: 10 }).notNull(),
+    numero: varchar('numero', { length: 20 }).notNull(),
+    fechaEmision: date('fecha_emision').notNull(),
+    fechaVencimiento: date('fecha_vencimiento'),
+    moneda: varchar('moneda', { length: 3 }).notNull().default('PEN'),
+    tipoCambio: decimal('tipo_cambio', { precision: 8, scale: 4 }),
+    base: decimal('base', { precision: 14, scale: 2 }).notNull(),
+    igv: decimal('igv', { precision: 14, scale: 2 }).notNull().default('0'),
+    total: decimal('total', { precision: 14, scale: 2 }).notNull(),
+    cuentaContable: varchar('cuenta_contable', { length: 10 }).references(() => planContable.codigo), // ingreso manual Kelly
+    cuentaContableOrigen: varchar('cuenta_contable_origen', { length: 10 }),
+    origenTipo: varchar('origen_tipo', { length: 20 }).notNull().default('directa'),
+    numContrato: varchar('num_contrato', { length: 50 }),
+    formaPago: varchar('forma_pago', { length: 10 }).notNull().default('Contado'),
+    cuotas: jsonb('cuotas'),
+    retencionIgv: decimal('retencion_igv', { precision: 14, scale: 2 }).notNull().default('0'),
+    comprobanteRetencion: varchar('comprobante_retencion', { length: 30 }),
+    docModificaSerie: varchar('doc_modifica_serie', { length: 10 }),
+    docModificaNumero: varchar('doc_modifica_numero', { length: 20 }),
+    motivoNota: varchar('motivo_nota', { length: 2 }),
+    lineas: jsonb('lineas'),
+    descripcion: text('descripcion'),
+    lockedAt: timestamp('locked_at'),
+    userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+    updatedAt: timestamp('updated_at'),
+  },
+  (t) => ({
+    docUq: uniqueIndex('ventas_doc_uq').on(t.empresaId, t.tipoCpe, t.serie, t.numero),
+    fechaIdx: index('ventas_fecha_idx').on(t.fechaEmision),
+    clienteIdx: index('ventas_cliente_idx').on(t.clienteRuc),
+  }),
+);
+export type Venta = typeof ventas.$inferSelect;
 
 // ─── Correlativos globales (OC, RQ por año) ──────────────────
 export const correlativos = pgTable('correlativos', {

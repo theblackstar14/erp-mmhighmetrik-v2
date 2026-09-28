@@ -140,13 +140,14 @@ router.post('/bandeja/:id/descartar', requirePermiso('finanzas', 'escritura'), a
   }
 });
 
-// POST /bandeja/:id/registrado {gastoId} · el alta real la hace POST /gastos (frontend arma el payload
-// desde el borrador); aquí solo se marca el borrador como registrado y se vincula.
+// POST /bandeja/:id/registrado {gastoId | ventaId} · el alta real la hacen POST /gastos o POST /ventas
+// (frontend arma el payload desde el borrador); aquí solo se marca como registrado y se vincula.
 router.post('/bandeja/:id/registrado', requirePermiso('finanzas', 'escritura'), async (req, res, next) => {
   try {
-    const { gastoId } = req.body as { gastoId?: string };
-    if (!gastoId) return res.status(400).json({ error: 'gastoId requerido' });
-    const [row] = await db.update(schema.cpeBandeja).set({ estado: 'registrado', gastoId, updatedAt: new Date() })
+    const { gastoId, ventaId } = req.body as { gastoId?: string; ventaId?: string };
+    if (!gastoId && !ventaId) return res.status(400).json({ error: 'gastoId o ventaId requerido' });
+    const [row] = await db.update(schema.cpeBandeja)
+      .set({ estado: 'registrado', gastoId: gastoId ?? null, ventaId: ventaId ?? null, updatedAt: new Date() })
       .where(and(eq(schema.cpeBandeja.id, req.params.id!), eq(schema.cpeBandeja.estado, 'pendiente'))).returning();
     if (!row) return res.status(404).json({ error: 'Borrador no encontrado o ya procesado' });
     res.json({ borrador: row });

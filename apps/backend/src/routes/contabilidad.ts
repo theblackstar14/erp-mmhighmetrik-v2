@@ -779,7 +779,7 @@ router.post('/generar', async (req, res) => {
     .from(schema.asientos)
     .where(and(dsql`${schema.asientos.origen} != 'manual'`, dsql`${schema.asientos.status} != 'anulado'`));
   const yaSet = new Set(yaGenerados.map((a) => `${a.origen}:${a.origenId}`));
-  const resultado = { gastos: 0, pagosOc: 0, valorizaciones: 0, cobros: 0, adelantos: 0, planillas: 0, movimientos: 0, movSkip: { preCutover: 0, sinCuenta104x: 0, transferEspejo: 0 }, errores: [] as string[] };
+  const resultado = { gastos: 0, pagosOc: 0, valorizaciones: 0, cobros: 0, adelantos: 0, ventas: 0, planillas: 0, movimientos: 0, movSkip: { preCutover: 0, sinCuenta104x: 0, transferEspejo: 0 }, errores: [] as string[] };
 
   // F3 · CUTOVER del 104x · legacy (pago_oc/cobro_valo) manda ANTES del cutover, movimientos DESPUÉS.
   // cutover=null → inerte: legacy asienta todo (comportamiento actual), pass de movimientos no asienta nada.
@@ -933,6 +933,45 @@ router.post('/generar', async (req, res) => {
       } catch (e) {
         resultado.errores.push(`cobro valo ${v.numero}: ${(e as Error).message}`);
       }
+    }
+  }
+
+  // 3c· VENTAS standalone (F3.1) → 1212 / cuenta ingreso (manual Kelly · default 7041) + 40111.
+  // NC (tipoCpe 07) asienta invertido. Devengo documental → sin gate de cutover; el cobro es movimiento.
+  const ventasStand = await db.select().from(schema.ventas)
+    .where(and(gte(schema.ventas.fechaEmision, desde), lte(schema.ventas.fechaEmision, hasta)));
+  for (const v of ventasStand) {
+    if (yaSet.has(`venta:${v.id}`)) continue;
+    try {
+      const total = Number(v.total);
+      const base = Number(v.base);
+      const igvV = Number(v.igv);
+      if (total <= 0) continue;
+      const nc = v.tipoCpe === '07';
+      const cta = v.cuentaContable ?? '7041';
+      const origen = v.cuentaContable ? ((v.cuentaContableOrigen as 'USUARIO' | 'SUGERIDO' | null) ?? 'USUARIO') : 'AUTOMATICO';
+      const lineas: LineaIn[] = nc
+        ? [
+            { cuenta: cta, descripcion: `NC ${v.serie}-${v.numero}`, debe: base, haber: 0, obraId: v.proyectoId, cuentaOrigen: origen },
+            { cuenta: '40111', descripcion: 'IGV débito · reversa NC', debe: igvV, haber: 0, obraId: null },
+            { cuenta: '1212', descripcion: `NC ${v.serie}-${v.numero}`, debe: 0, haber: total, obraId: null },
+          ]
+        : [
+            { cuenta: '1212', descripcion: `Venta ${v.serie}-${v.numero}`, debe: total, haber: 0, obraId: null },
+            { cuenta: cta, descripcion: v.descripcion ?? 'Venta de servicios', debe: 0, haber: base, obraId: v.proyectoId, cuentaOrigen: origen },
+            { cuenta: '40111', descripcion: 'IGV débito fiscal', debe: 0, haber: igvV, obraId: null },
+          ];
+      await gen({
+        fecha: String(v.fechaEmision),
+        glosa: `${nc ? 'NC de venta' : 'Venta'} ${v.serie}-${v.numero} · ${v.clienteRazon ?? v.clienteRuc ?? 's/cliente'}`.slice(0, 250),
+        origen: 'venta', origenId: v.id, proyectoId: v.proyectoId,
+        docOrigen: `${v.serie}-${v.numero}`, tipoDoc: v.tipoCpe,
+        contraparteRuc: v.clienteRuc, contraparteRazon: v.clienteRazon,
+        lineas,
+      });
+      resultado.ventas++;
+    } catch (e) {
+      resultado.errores.push(`venta ${v.serie}-${v.numero}: ${(e as Error).message}`);
     }
   }
 
@@ -1093,7 +1132,7 @@ router.post('/generar', async (req, res) => {
     }
   }
 
-  const totalGenerados = resultado.gastos + resultado.pagosOc + resultado.valorizaciones + resultado.cobros + resultado.adelantos + resultado.planillas + resultado.movimientos;
+  const totalGenerados = resultado.gastos + resultado.pagosOc + resultado.valorizaciones + resultado.cobros + resultado.adelantos + resultado.ventas + resultado.planillas + resultado.movimientos;
   if (!dryRunMov && totalGenerados > 0) await audit(req, { action: 'generar', entityType: 'periodo', entityId: periodo, after: { generados: totalGenerados, detalle: resultado } });
   res.json({ ok: true, periodo, generados: totalGenerados, detalle: resultado, cutover: cfg.cutover, parallel: cfg.parallel, dryRunMov });
 });
@@ -2004,7 +2043,7 @@ async function filasVentasPeriodo(periodo: string): Promise<ple.FilaVenta[]> {
   const clis = cliIds.length ? await db.select().from(schema.clientes).where(inArray(schema.clientes.id, cliIds)) : [];
   const proyMap = new Map(proys.map((p) => [p.id, p]));
   const cliMap = new Map(clis.map((c) => [c.id, c]));
-  return vs.map((v) => {
+  const deValos = vs.map((v) => {
     const proy = proyMap.get(v.proyectoId);
     const cli = proy?.clienteId ? cliMap.get(proy.clienteId) : null;
     return {
@@ -2020,6 +2059,33 @@ async function filasVentasPeriodo(periodo: string): Promise<ple.FilaVenta[]> {
       detraccion: v.comprobanteDetraccion ? Number(v.comprobanteDetraccion) : null,      // RVIE 39
     };
   });
+  // F3.1 · ventas standalone: serie/número reales siempre (aquí muere el placeholder)
+  const standalone = await db.select().from(schema.ventas)
+    .where(and(gte(schema.ventas.fechaEmision, fechaInicio), lte(schema.ventas.fechaEmision, fechaFin)))
+    .orderBy(asc(schema.ventas.fechaEmision));
+  const detrV = standalone.length
+    ? await db.select({ origen: schema.detraccionDocumento.docOrigenId, monto: schema.detraccionDocumento.monto })
+      .from(schema.detraccionDocumento)
+      .where(and(eq(schema.detraccionDocumento.docOrigenTipo, 'venta'), inArray(schema.detraccionDocumento.docOrigenId, standalone.map((v) => v.id))))
+    : [];
+  const dMap = new Map(detrV.map((d) => [d.origen, Number(d.monto)]));
+  const pmv = standalone.some((v) => v.proyectoId)
+    ? new Map((await db.select({ id: schema.proyectos.id, codigo: schema.proyectos.codigo }).from(schema.proyectos)).map((p) => [p.id, p.codigo]))
+    : new Map<string, string>();
+  const tipoLabel = (t: string) => (t === '03' ? 'Boleta' : t === '07' ? 'Nota de Crédito' : t === '08' ? 'Nota de Débito' : 'Factura');
+  const signo = (t: string) => (t === '07' ? -1 : 1);
+  const deStandalone = standalone.map((v) => ({
+    fecha: v.fechaEmision,
+    tipoComprobante: tipoLabel(v.tipoCpe),
+    serie: v.serie, numero: v.numero,
+    clienteRuc: v.clienteRuc, clienteRazon: v.clienteRazon,
+    baseGravada: signo(v.tipoCpe) * Number(v.base), igv: signo(v.tipoCpe) * Number(v.igv), exonerado: 0, total: signo(v.tipoCpe) * Number(v.total),
+    tipoCambio: v.tipoCambio != null ? Number(v.tipoCambio) : null,
+    fechaVencimiento: v.fechaVencimiento ?? v.fechaEmision,
+    proyectoCodigo: v.proyectoId ? pmv.get(v.proyectoId) ?? null : null,
+    detraccion: dMap.get(v.id) ?? null,
+  }));
+  return [...deValos, ...deStandalone].sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)));
 }
 
 async function filasDiarioPeriodo(periodo: string): Promise<ple.FilaDiario[]> {

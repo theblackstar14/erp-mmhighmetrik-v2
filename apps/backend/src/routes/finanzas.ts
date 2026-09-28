@@ -9,6 +9,7 @@ import { audit } from '../lib/audit.js';
 import { resolverClase } from '../lib/clasificacion.js';
 import { extrasCompraSchema, registrarCompra } from '../lib/compras.js';
 import { DocumentoError, anularAplicacionesDe, aplicar, aplicarPagoAOrigen } from '../lib/documentosPendientes.js';
+import { registrarVenta, ventaSchema } from '../lib/ventas.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -626,7 +627,24 @@ router.get('/documentos-pendientes', async (req, res) => {
   res.json({ documentos: docs });
 });
 
-// F2.1 · GET /ventas?proyectoId= · registro de ventas (valorizaciones con comprobante) + detracción
+// F3.1 · POST /ventas · venta standalone (contrato/adicional/directa) → CxC + detracción + 14.1 real
+router.post('/ventas', async (req, res, next) => {
+  const parse = ventaSchema.safeParse(req.body);
+  if (!parse.success) return res.status(400).json({ error: parse.error.flatten() });
+  { const cErr = await validarCuentaContable(parse.data.cuentaContable); if (cErr) return res.status(400).json({ error: cErr }); }
+  if (await bloqueoPeriodo(parse.data.fechaEmision, res)) return;
+  try {
+    const r = await db.transaction((tx) => registrarVenta(tx, { ...parse.data, userId: req.user!.id, empresaId: req.empresaId ?? 1 }));
+    await audit(req, { action: 'create', entityType: 'venta', entityId: r.venta.id, after: { comprobante: `${r.venta.serie}-${r.venta.numero}`, cliente: r.venta.clienteRazon, total: r.venta.total, tipoCpe: r.venta.tipoCpe } });
+    res.json(r);
+  } catch (e) {
+    if (e instanceof DocumentoError) return res.status(e.status).json({ error: e.message });
+    if (e instanceof Error && /ventas_doc_uq|duplicate key/.test(e.message)) return res.status(409).json({ error: `El comprobante ${parse.data.serie}-${parse.data.numero} ya está registrado` });
+    return next(e);
+  }
+});
+
+// F2.1 · GET /ventas?proyectoId= · registro de ventas (valorizaciones con comprobante + standalone F3.1)
 router.get('/ventas', async (req, res) => {
   const { proyectoId } = req.query as { proyectoId?: string };
   const rows = await db
@@ -661,7 +679,7 @@ router.get('/ventas', async (req, res) => {
       .where(and(eq(schema.detraccionDocumento.docOrigenTipo, 'valorizacion'), inArray(schema.detraccionDocumento.docOrigenId, rows.map((r) => r.id))))
     : [];
   const dPorValo = new Map(detr.map((d) => [d.origen, d]));
-  const ventas = rows.map((r) => {
+  const deValos = rows.map((r) => {
     const total = Number(r.total ?? r.totalFallback);
     const d = dPorValo.get(r.id);
     return {
@@ -670,12 +688,65 @@ router.get('/ventas', async (req, res) => {
       detraccion: d ? Number(d.monto) : null,
       detraccionEstado: d?.estado ?? null,
       cobrada: r.status === 'cobrada',
+      fuente: 'valo' as const,
     };
   });
+
+  // F3.1 · ventas standalone: mismo shape que las de valorización · estado de cobro desde el sub-mayor
+  const pm2 = await proyectoMap();
+  const standalone = await db.select().from(schema.ventas)
+    .where(proyectoId && proyectoId !== 'todos' ? eq(schema.ventas.proyectoId, proyectoId) : undefined)
+    .orderBy(desc(schema.ventas.fechaEmision));
+  const [detrV, docsV] = await Promise.all([
+    standalone.length
+      ? db.select({ origen: schema.detraccionDocumento.docOrigenId, monto: schema.detraccionDocumento.monto, estado: schema.detraccionDocumento.estado })
+        .from(schema.detraccionDocumento)
+        .where(and(eq(schema.detraccionDocumento.docOrigenTipo, 'venta'), inArray(schema.detraccionDocumento.docOrigenId, standalone.map((v) => v.id))))
+      : [],
+    standalone.length
+      ? db.select({ origen: schema.documentoPendiente.docOrigenId, estado: schema.documentoPendiente.estado, saldo: schema.documentoPendiente.saldoPendiente })
+        .from(schema.documentoPendiente)
+        .where(and(eq(schema.documentoPendiente.docOrigenTipo, 'venta'), inArray(schema.documentoPendiente.docOrigenId, standalone.map((v) => v.id))))
+      : [],
+  ]);
+  const dPorVenta = new Map(detrV.map((d) => [d.origen, d]));
+  const docPorVenta = new Map(docsV.map((d) => [d.origen, d]));
+  const deStandalone = standalone.map((v) => {
+    const d = dPorVenta.get(v.id);
+    const doc = docPorVenta.get(v.id);
+    const esNc = v.tipoCpe === '07';
+    return {
+      id: v.id,
+      numero: 0,
+      proyectoId: v.proyectoId,
+      proyectoCodigo: v.proyectoId ? pm2.get(v.proyectoId)?.codigo ?? null : null,
+      proyectoNombre: v.clienteRazon, // en standalone el "quién" es el cliente, no la obra
+      fechaEmision: v.fechaEmision,
+      mesPeriodo: String(v.fechaEmision).slice(0, 7),
+      status: esNc ? 'nota_credito' : doc?.estado === 'cancelado' ? 'cobrada' : doc?.estado === 'parcial' ? 'parcial' : 'facturada',
+      comprobanteTipo: v.tipoCpe,
+      comprobanteSerie: v.serie,
+      comprobanteNumero: v.numero,
+      cuentaContable: v.cuentaContable,
+      base: v.base,
+      igv: v.igv,
+      total: Number(v.total) * (esNc ? -1 : 1),
+      totalFallback: v.total,
+      retencion: v.retencionIgv,
+      amortizacion: null as string | null,
+      totalContratista: null as string | null,
+      detraccion: d ? Number(d.monto) : null,
+      detraccionEstado: d?.estado ?? null,
+      cobrada: doc?.estado === 'cancelado',
+      fuente: 'venta' as const,
+    };
+  });
+
+  const ventas = [...deValos, ...deStandalone].sort((a, b) => String(b.fechaEmision).localeCompare(String(a.fechaEmision)));
   const stats = {
     count: ventas.length,
     total: ventas.reduce((s, v) => s + v.total, 0),
-    porCobrar: ventas.filter((v) => !v.cobrada).reduce((s, v) => s + v.total - Number(v.retencion ?? 0), 0),
+    porCobrar: ventas.filter((v) => !v.cobrada && v.total > 0).reduce((s, v) => s + v.total - Number(v.retencion ?? 0), 0),
     retencion: ventas.reduce((s, v) => s + Number(v.retencion ?? 0), 0),
     detraccion: ventas.reduce((s, v) => s + Number(v.detraccion ?? 0), 0),
   };
