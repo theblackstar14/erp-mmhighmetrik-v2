@@ -6,6 +6,7 @@ import multer from 'multer';
 import { calcularDetalleOficina } from '../lib/planillaOficinaCalc.js';
 import { calcularRta5ta } from '../lib/rta5taCalc.js';
 import { requireAuth } from '../middleware/auth.js';
+import { resolverEmpresa } from '../lib/permisos.js';
 import { cargarDerivarCtx } from '../lib/clasificacion.js';
 import { crearAsiento, type LineaIn } from './contabilidad.js';
 import { periodoCerrado } from '../lib/periodos.js';
@@ -34,6 +35,13 @@ async function requireOficinaEdit(req: Request, res: Response, next: NextFunctio
     return res.status(403).json({ error: 'Permisos insuficientes: se requiere rol admin o contabilidad' });
   }
   next();
+}
+
+// Empresa activa del request (header x-empresa-id validado contra membresías).
+// Fallback a 1 solo si el usuario no tiene empresa resuelta (compat legacy).
+async function empresaIdDe(req: Request): Promise<number> {
+  const emp = await resolverEmpresa(req);
+  return emp?.empresaId ?? 1;
 }
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
@@ -115,24 +123,25 @@ router.put('/config-planilla', requireOficinaEdit, async (req, res) => {
 });
 
 // ─── POST /api/oficina/planilla ──────────────────────────────
-// body: { mes: 'YYYY-MM' } → upsert planilla_oficina_mes for empresa_id=1
+// body: { mes: 'YYYY-MM' } → upsert planilla_oficina_mes de la empresa activa
 router.post('/planilla', requireOficinaEdit, async (req, res) => {
   const { mes } = req.body as { mes?: string };
   if (!mes || !/^\d{4}-\d{2}$/.test(mes)) {
     return res.status(400).json({ error: 'mes debe tener formato YYYY-MM' });
   }
+  const empresaId = await empresaIdDe(req);
 
   // try find existing
   const [existing] = await db
     .select()
     .from(schema.planillaOficinaMes)
-    .where(and(eq(schema.planillaOficinaMes.empresaId, 1), eq(schema.planillaOficinaMes.mes, mes)))
+    .where(and(eq(schema.planillaOficinaMes.empresaId, empresaId), eq(schema.planillaOficinaMes.mes, mes)))
     .limit(1);
   if (existing) return res.json({ mes: existing });
 
   const [row] = await db
     .insert(schema.planillaOficinaMes)
-    .values({ empresaId: 1, mes, estado: 'borrador', createdBy: req.user!.id })
+    .values({ empresaId, mes, estado: 'borrador', createdBy: req.user!.id })
     .returning();
 
   res.json({ mes: row });
@@ -142,11 +151,12 @@ router.post('/planilla', requireOficinaEdit, async (req, res) => {
 router.get('/planilla', async (req, res) => {
   const mes = req.query.mes as string | undefined;
   if (!mes) return res.status(400).json({ error: 'Parámetro mes requerido' });
+  const empresaId = await empresaIdDe(req);
 
   const [mesRow] = await db
     .select()
     .from(schema.planillaOficinaMes)
-    .where(and(eq(schema.planillaOficinaMes.empresaId, 1), eq(schema.planillaOficinaMes.mes, mes)))
+    .where(and(eq(schema.planillaOficinaMes.empresaId, empresaId), eq(schema.planillaOficinaMes.mes, mes)))
     .limit(1);
 
   if (!mesRow) return res.json({ mes: null, detalle: [] });

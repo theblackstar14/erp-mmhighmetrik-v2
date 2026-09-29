@@ -13,9 +13,15 @@ const dec = (n?: number | null) => (n == null ? '0' : n.toString());
 router.get('/empleados', async (req, res) => {
   const tipo = req.query.tipo as string | undefined;
   const proyecto = req.query.proyecto as string | undefined;
+  const incluirInactivos = req.query.incluirInactivos === '1';
   const list = await db.select().from(schema.empleados).orderBy(asc(schema.empleados.nombre));
   res.json({
-    empleados: list.filter((e) => (tipo ? e.tipoPlanilla === tipo : true) && (proyecto ? e.proyectoId === proyecto : true)),
+    empleados: list.filter(
+      (e) =>
+        (incluirInactivos || e.activo) &&
+        (tipo ? e.tipoPlanilla === tipo : true) &&
+        (proyecto ? e.proyectoId === proyecto : true),
+    ),
   });
 });
 const empSchema = z.object({
@@ -68,8 +74,15 @@ router.put('/empleados/:id', async (req, res) => {
   if (!emp) return res.status(404).json({ error: 'Empleado no encontrado' });
   res.json({ empleado: emp });
 });
+// Soft-delete: desactiva (activo=false) para no romper el historial de planilla/asistencia
+// que referencia al empleado. No es hard-delete: preserva boletas, marcaciones y asientos.
 router.delete('/empleados/:id', async (req, res) => {
-  await db.delete(schema.empleados).where(eq(schema.empleados.id, req.params.id!));
+  const [emp] = await db
+    .update(schema.empleados)
+    .set({ activo: false })
+    .where(eq(schema.empleados.id, req.params.id!))
+    .returning();
+  if (!emp) return res.status(404).json({ error: 'Empleado no encontrado' });
   res.json({ ok: true });
 });
 

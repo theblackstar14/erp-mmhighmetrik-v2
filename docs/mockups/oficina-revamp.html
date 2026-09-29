@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Revamp · Oficina · ERP MM High Metrik</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+/* tokens · apps/frontend/src/index.css (light) */
+:root{
+  --background:hsl(60 10% 96%); --bg-elev:hsl(0 0% 100%); --bg-sunken:hsl(60 8% 93%);
+  --foreground:hsl(0 0% 11%); --ink-2:hsl(60 4% 23%); --ink-3:hsl(60 3% 42%); --ink-4:hsl(60 3% 60%);
+  --line:hsl(60 7% 88%); --line-2:hsl(60 6% 83%); --line-strong:hsl(60 5% 76%);
+  --primary:hsl(230 68% 55%); --primary-fg:#fff; --primary-soft:hsl(224 73% 94%); --primary-ink:hsl(230 64% 30%);
+  --warn:hsl(38 100% 48%); --warn-soft:hsl(41 89% 91%); --warn-ink:hsl(36 100% 24%);
+  --destructive:hsl(5 62% 53%); --destructive-soft:hsl(7 73% 93%);
+  --ok:hsl(154 45% 34%); --ok-soft:hsl(144 36% 90%); --ok-ink:hsl(154 49% 19%);
+  --emerald-600:#059669; --rose-600:#e11d48; --amber-600:#d97706; --amber-700:#b45309;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--background);color:var(--foreground);
+  font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;line-height:1.5;-webkit-font-smoothing:antialiased}
+.mono{font-family:'JetBrains Mono',Menlo,Consolas,monospace;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.wrap{max-width:1200px;margin:0 auto;padding:26px 22px 72px;display:flex;flex-direction:column;gap:18px}
+
+/* masthead */
+.mast{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap}
+h1{margin:0;font-size:22px;font-weight:700;letter-spacing:-.02em}
+.sub{margin:3px 0 0;font-size:13px;color:var(--ink-3)}
+.mast .meta{display:flex;gap:18px;align-items:center}
+.mast .meta .m{text-align:right}
+.mast .meta .m .k{font-family:'JetBrains Mono',monospace;font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-4)}
+.mast .meta .m .v{font-size:13px;font-weight:600;margin-top:1px}
+
+/* KPI band */
+.heroes{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px}
+.hero{border:1px solid var(--line);border-radius:9px;background:var(--bg-elev);padding:12px 13px;position:relative;overflow:hidden}
+.hero::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--primary);opacity:.0;transition:opacity .2s}
+.hero:hover::before{opacity:.9}
+.hero .l{font-family:'JetBrains Mono',monospace;font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-4);white-space:nowrap}
+.hero .v{margin-top:4px;font-family:'JetBrains Mono',monospace;font-size:19px;font-weight:700;letter-spacing:-.02em;line-height:1.1}
+.hero .d{margin-top:4px;font-size:10.5px;color:var(--ink-4)}
+.v.em{color:var(--emerald-600)} .v.ro{color:var(--rose-600)} .v.bl{color:var(--primary)} .v.am{color:var(--amber-700)}
+
+/* tabs */
+.tabs{display:flex;gap:2px;border-bottom:1px solid var(--line)}
+.tab{position:relative;display:inline-flex;align-items:center;gap:7px;padding:9px 14px;font-size:12.5px;font-weight:500;color:var(--ink-3);
+  background:none;border:0;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;transition:color .15s}
+.tab svg{width:15px;height:15px}
+.tab:hover{color:var(--ink-2)}
+.tab.on{color:var(--primary);border-bottom-color:var(--primary)}
+.panel{display:none;animation:fadeUp .28s ease both}
+.panel.on{display:flex;flex-direction:column;gap:14px}
+@keyframes fadeUp{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+/* cards & bits */
+.card{border:1px solid var(--line);border-radius:10px;background:var(--bg-elev);overflow:hidden}
+.hd{display:flex;align-items:center;gap:9px;padding:11px 15px;border-bottom:1px solid var(--line)}
+.hd b{font-size:12.5px}
+.hd .cnt{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-4);margin-left:auto}
+.sechead{display:flex;align-items:center;gap:10px}
+.sechead .sq{width:8px;height:8px;border-radius:2px;background:var(--primary)}
+.sechead .tx{font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.09em;color:var(--primary)}
+.sechead .rule{flex:1;height:1px;background:var(--line)}
+.chip{display:inline-flex;align-items:center;gap:4px;border-radius:5px;padding:2px 8px;font-family:'JetBrains Mono',monospace;
+  font-size:10px;font-weight:500;text-transform:uppercase;letter-spacing:.04em;background:var(--bg-sunken);color:var(--ink-3)}
+.chip.blue{background:var(--primary-soft);color:var(--primary-ink)}
+.chip.amber{background:var(--warn-soft);color:var(--warn-ink)}
+.chip.green{background:var(--ok-soft);color:var(--ok-ink)}
+.chip.red{background:var(--destructive-soft);color:var(--destructive)}
+.btn{display:inline-flex;align-items:center;gap:6px;height:34px;border:1px solid var(--line);border-radius:8px;
+  background:var(--bg-elev);padding:0 13px;font:500 12.5px/1 'Inter',sans-serif;color:var(--ink-2);cursor:pointer;transition:background .15s}
+.btn:hover{background:var(--bg-sunken)}
+.btn.pri{background:var(--primary);border-color:var(--primary);color:#fff}
+.btn.pri:hover{filter:brightness(1.05);background:var(--primary)}
+.btn svg{width:15px;height:15px}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{text-align:left;padding:7px 14px;border-bottom:1px solid var(--line);white-space:nowrap;background:var(--bg-sunken);
+  font-family:'JetBrains Mono',monospace;font-size:9.5px;font-weight:500;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-4)}
+td{padding:8px 14px;border-bottom:1px solid var(--line)}
+tbody tr{transition:background .12s}
+tbody tr:hover{background:var(--bg-sunken)}
+tbody tr:last-child td{border-bottom:0}
+td.r,th.r{text-align:right;font-variant-numeric:tabular-nums}
+.st{display:inline-block;border-radius:5px;padding:2px 8px;font-size:10px;font-weight:600}
+.st.bor{background:var(--bg-sunken);color:var(--ink-3)} .st.pen{background:var(--warn-soft);color:var(--warn-ink)}
+.st.apr{background:var(--primary-soft);color:var(--primary-ink)} .st.ren{background:#eef2ff;color:#4338ca}
+.st.cer{background:var(--ok-soft);color:var(--ok-ink)}
+
+/* summary / hero blocks in tabs */
+.bigbar{display:flex;align-items:center;gap:18px;border:1px solid var(--line);border-radius:12px;background:var(--bg-elev);padding:18px 20px}
+.bigbar .big{flex:1}
+.bigbar .big .k{font-size:12px;color:var(--ink-3)}
+.bigbar .big .n{font-family:'JetBrains Mono',monospace;font-size:30px;font-weight:700;line-height:1;margin-top:5px;letter-spacing:-.02em}
+.bigbar .big .n.warn{color:var(--warn-ink)} .bigbar .big .n.ok{color:var(--ok)}
+.bigbar .big .s{font-size:11px;color:var(--ink-4);margin-top:5px}
+.emp-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.emp{display:flex;align-items:center;justify-content:space-between;border-radius:8px;background:var(--bg-sunken);padding:9px 12px;cursor:pointer;border:1px solid transparent;transition:border-color .15s,background .15s}
+.emp:hover{border-color:var(--line-2);background:var(--bg-elev)}
+.emp .nm{font-size:12px;font-weight:500}
+.emp .ct{font-size:10px;color:var(--ink-4)}
+.emp .am{font-family:'JetBrains Mono',monospace;font-size:12.5px;color:var(--warn-ink)}
+.filters{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{border:0;background:var(--bg-elev);padding:7px 13px;font:500 11.5px 'Inter';color:var(--ink-2);cursor:pointer}
+.seg button.on{background:var(--primary);color:#fff}
+.pill{display:inline-flex;align-items:center;gap:5px;height:30px;padding:0 10px;border-radius:8px;border:1px solid var(--primary);background:var(--primary-soft);color:var(--primary-ink);font-size:11px}
+
+/* device card (asistencia) */
+.device{display:flex;align-items:center;gap:16px;border:1px solid var(--line);border-radius:12px;background:var(--bg-elev);padding:16px 18px}
+.device .ico{width:46px;height:46px;border-radius:11px;background:var(--primary-soft);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.device .ico svg{width:24px;height:24px;color:var(--primary)}
+.device .info{flex:1;min-width:0}
+.device .info .t{display:flex;align-items:center;gap:8px}
+.device .info .t b{font-size:14px}
+.device .info .s{font-size:11.5px;color:var(--ink-3);margin-top:2px}
+.dot{width:7px;height:7px;border-radius:999px;display:inline-block}
+.dot.g{background:var(--emerald-600)} .dot.a{background:var(--amber-600)}
+.flowline{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:11.5px;color:var(--ink-3)}
+.flowline .node{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:8px;padding:6px 10px;background:var(--bg-elev)}
+.flowline .node b{color:var(--foreground);font-weight:600}
+.flowline .arw{color:var(--ink-4)}
+.note{border:1px solid var(--line);border-left:3px solid var(--primary);border-radius:8px;background:var(--bg-elev);padding:11px 13px;font-size:12px;color:var(--ink-2)}
+.note b{font-weight:600}
+.footer{margin-top:6px;font-size:11px;color:var(--ink-4);text-align:center}
+@media(max-width:900px){.heroes{grid-template-columns:repeat(3,1fr)}.emp-grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- Masthead -->
+  <div class="mast">
+    <div>
+      <h1>Oficina</h1>
+      <p class="sub">Personal administrativo · planilla · asistencia biométrica · rendiciones</p>
+    </div>
+    <div class="meta">
+      <div class="m"><div class="k">Empresa</div><div class="v">MM High Metrik</div></div>
+      <div class="m"><div class="k">Periodo</div><div class="v mono">2026-09</div></div>
+      <div class="m"><div class="k">Sesión</div><div class="v">Kelly · Contabilidad</div></div>
+    </div>
+  </div>
+
+  <!-- KPI band -->
+  <div class="heroes">
+    <div class="hero"><div class="l">Administrativos</div><div class="v">17</div><div class="d">activos en planilla</div></div>
+    <div class="hero"><div class="l">Por rendir</div><div class="v am">S/ 4,820</div><div class="d">3 empleados abiertos</div></div>
+    <div class="hero"><div class="l">Marcaciones hoy</div><div class="v bl">28</div><div class="d">últ. sync 10:00</div></div>
+    <div class="hero"><div class="l">Planilla del mes</div><div class="v">S/ 128,400</div><div class="d">estado · borrador</div></div>
+    <div class="hero"><div class="l">Neto por pagar</div><div class="v">S/ 96,180</div><div class="d">17 boletas</div></div>
+    <div class="hero"><div class="l">Lector</div><div class="v em">Vinculado</div><div class="d">SenseFP M1</div></div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tabs" id="tabs">
+    <button class="tab on" data-t="resumen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>Resumen</button>
+    <button class="tab" data-t="rendiciones"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1V2l-2 1-2-1-2 1-2-1-2 1-2-1Z"/><path d="M8 7h8M8 11h8M8 15h5"/></svg>Rendiciones</button>
+    <button class="tab" data-t="asistencia"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 11c0-1.5 1-3 3-3M6 8a9 9 0 0 1 12 0M9 21c-1-2-1.5-4-1.5-6a4.5 4.5 0 0 1 9 0"/><path d="M12 14v3"/></svg>Asistencia</button>
+    <button class="tab" data-t="planilla"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg>Planilla</button>
+    <button class="tab" data-t="personal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="7" r="4"/><path d="M2 21v-2a4 4 0 0 1 4-4h6a4 4 0 0 1 4 4v2M16 3.1a4 4 0 0 1 0 7.75"/></svg>Personal</button>
+    <button class="tab" data-t="profesionales"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 12 0v1"/><path d="m18 9 2 2 3-3"/></svg>Profesionales</button>
+  </div>
+
+  <!-- ── RESUMEN ── -->
+  <section class="panel on" data-p="resumen">
+    <div class="sechead"><span class="sq"></span><span class="tx">Vista ejecutiva</span><span class="rule"></span></div>
+    <div style="display:grid;grid-template-columns:1.6fr 1fr;gap:14px">
+      <div class="card">
+        <div class="hd"><b>Pendientes de acción</b><span class="cnt">4 items</span></div>
+        <table>
+          <tbody>
+            <tr><td style="width:12px"><span class="dot a"></span></td><td><b>2 rendiciones</b> esperando aprobación</td><td class="mono" style="color:var(--warn-ink)">S/ 1,240</td><td class="r"><span class="chip amber">Revisar</span></td></tr>
+            <tr><td><span class="dot a"></span></td><td><b>3 anticipos</b> sin justificar &gt; 15 días</td><td class="mono" style="color:var(--warn-ink)">S/ 4,820</td><td class="r"><span class="chip amber">Por rendir</span></td></tr>
+            <tr><td><span class="dot" style="background:var(--primary)"></span></td><td>Planilla <b>Setiembre</b> en borrador · sin cerrar</td><td class="mono">S/ 128,400</td><td class="r"><span class="chip blue">Calcular</span></td></tr>
+            <tr><td><span class="dot g"></span></td><td>Asistencia sincronizada · <b>28 marcaciones</b> hoy</td><td class="mono">10:00</td><td class="r"><span class="chip green">Al día</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="card">
+        <div class="hd"><b>Por rendir por empleado</b><span class="cnt mono" style="color:var(--warn-ink)">S/ 4,820</span></div>
+        <div style="padding:12px 14px;display:flex;flex-direction:column;gap:8px">
+          <div class="emp"><div><div class="nm">Renzo Acosta Payano</div><div class="ct">2 anticipos</div></div><div class="am">S/ 2,300</div></div>
+          <div class="emp"><div><div class="nm">María Quispe Ramos</div><div class="ct">1 anticipo</div></div><div class="am">S/ 1,520</div></div>
+          <div class="emp"><div><div class="nm">Jorge Huamán Ríos</div><div class="ct">1 anticipo</div></div><div class="am">S/ 1,000</div></div>
+        </div>
+      </div>
+    </div>
+    <div class="note"><b>Revamp:</b> la captura de rendiciones ahora es centralizada. La contadora registra a nombre del empleado, sin depender de que cada persona tenga acceso al sistema. La asistencia llega sola del lector biométrico y todo el módulo queda scopeado por empresa.</div>
+  </section>
+
+  <!-- ── RENDICIONES ── -->
+  <section class="panel" data-p="rendiciones">
+    <div class="bigbar">
+      <div class="big">
+        <div class="k">Total por rendir</div>
+        <div class="n warn mono">S/ 4,820</div>
+        <div class="s">3 empleados con anticipos abiertos</div>
+      </div>
+      <button class="btn pri"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg>Registrar anticipo</button>
+      <button class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1V2"/><path d="M8 8h8M8 12h8"/></svg>Registrar reembolso</button>
+    </div>
+
+    <div class="card">
+      <div class="hd"><span class="sechead"><span class="tx" style="color:var(--ink-4)">Por rendir por empleado</span></span><span class="cnt">clic para filtrar</span></div>
+      <div style="padding:12px 14px"><div class="emp-grid">
+        <div class="emp"><div><div class="nm">Renzo Acosta Payano</div><div class="ct">2 anticipos</div></div><div class="am">S/ 2,300</div></div>
+        <div class="emp"><div><div class="nm">María Quispe Ramos</div><div class="ct">1 anticipo</div></div><div class="am">S/ 1,520</div></div>
+        <div class="emp"><div><div class="nm">Jorge Huamán Ríos</div><div class="ct">1 anticipo</div></div><div class="am">S/ 1,000</div></div>
+      </div></div>
+    </div>
+
+    <div class="filters">
+      <div class="seg"><button class="on">Todas</button><button>Por aprobar</button></div>
+      <span class="pill">Renzo Acosta Payano <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></span>
+    </div>
+
+    <div class="card">
+      <table>
+        <thead><tr><th>Código</th><th>Empleado</th><th>Tipo</th><th>Modo</th><th>Fecha</th><th>Obra</th><th class="r">Monto</th><th>Estado</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">REN-2026-0042</td><td>Renzo Acosta Payano</td><td>Viático</td><td>Anticipo</td><td class="mono">11/09/2026</td><td>PG0001</td><td class="r mono">S/ 1,300</td><td><span class="st apr">Aprobado</span></td></tr>
+          <tr><td class="mono">REN-2026-0041</td><td>Renzo Acosta Payano</td><td>Movilidad</td><td>Anticipo</td><td class="mono">08/09/2026</td><td>— oficina</td><td class="r mono">S/ 1,000</td><td><span class="st ren">Rendido</span></td></tr>
+          <tr><td class="mono">REN-2026-0040</td><td>María Quispe Ramos</td><td>Compra menor</td><td>Reembolso</td><td class="mono">06/09/2026</td><td>— oficina</td><td class="r mono">S/ 420</td><td><span class="st pen">Pendiente</span></td></tr>
+          <tr><td class="mono">REN-2026-0039</td><td>Jorge Huamán Ríos</td><td>Útiles</td><td>Reembolso</td><td class="mono">04/09/2026</td><td>PG0001</td><td class="r mono">S/ 315</td><td><span class="st cer">Cerrado</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note"><b>Antes:</b> cada persona pedía su propia rendición (requería login para todos). <b>Ahora:</b> la contadora captura a nombre del empleado del padrón. Se registra <i>quién</i> lo teclea para auditoría, pero el gasto pertenece al empleado.</div>
+  </section>
+
+  <!-- ── ASISTENCIA ── -->
+  <section class="panel" data-p="asistencia">
+    <div class="device">
+      <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 11c0-1.5 1-3 3-3M6 8a9 9 0 0 1 12 0M9 21c-1-2-1.5-4-1.5-6a4.5 4.5 0 0 1 9 0M12 14v3"/></svg></div>
+      <div class="info">
+        <div class="t"><b>Lector de huellas · SenseFP M1</b> <span class="chip green"><span class="dot g"></span> Vinculado</span></div>
+        <div class="s">Última sincronización 29/09/2026 10:00 · 28 nuevas de 31 traídas · 0 sin empleado</div>
+      </div>
+      <button class="btn">Vincular</button>
+      <button class="btn pri"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>Sincronizar ahora</button>
+    </div>
+
+    <div class="flowline">
+      <span class="node">👆 <b>SenseFP M1</b></span><span class="arw">→ Wi-Fi</span>
+      <span class="node">☁️ <b>ZKBio Zlink</b></span><span class="arw">→ poll 09:30 / 10:00</span>
+      <span class="node">🗄️ <b>ERP</b> · dedupe + match DNI</span><span class="arw">→</span>
+      <span class="node">📋 <b>Planilla</b> · días trabajados</span>
+    </div>
+
+    <div class="filters">
+      <span class="chip">2026-09-29</span><span class="arw" style="color:var(--ink-4)">→</span><span class="chip">2026-09-29</span>
+      <span style="font-size:11px;color:var(--ink-4);margin-left:4px">28 marcaciones</span>
+    </div>
+    <div class="card">
+      <table>
+        <thead><tr><th>Fecha / hora</th><th>Código</th><th>Nombre (lector)</th><th>Empleado</th><th>Terminal</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">2026-09-29 07:58</td><td class="mono">707445</td><td>Renzo Acosta Payano</td><td style="color:var(--emerald-600);font-weight:600">✓ vinculado</td><td>ASISTENCIA</td></tr>
+          <tr><td class="mono">2026-09-29 08:01</td><td class="mono">701233</td><td>María Quispe Ramos</td><td style="color:var(--emerald-600);font-weight:600">✓ vinculado</td><td>ASISTENCIA</td></tr>
+          <tr><td class="mono">2026-09-29 08:04</td><td class="mono">709981</td><td>Jorge Huamán Ríos</td><td style="color:var(--emerald-600);font-weight:600">✓ vinculado</td><td>ASISTENCIA</td></tr>
+          <tr><td class="mono">2026-09-29 08:12</td><td class="mono">712004</td><td>Nuevo Ingreso</td><td style="color:var(--amber-600)">sin match</td><td>ASISTENCIA</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note"><b>Integración real:</b> el lector solo sube a la nube ZKBio Zlink (sin ADMS ni puerto LAN). El ERP la sondea vía <span class="mono" style="font-size:11px">POST /api/oficina/asistencia/sync</span>, manual y automático (cron 09:30 y 10:00). Dedupe por id de Zlink, match por DNI. Verificado: 275 marcaciones reales en la cuenta.</div>
+  </section>
+
+  <!-- ── PLANILLA ── -->
+  <section class="panel" data-p="planilla">
+    <div class="bigbar">
+      <div class="big"><div class="k">Planilla de oficina · Setiembre 2026</div><div class="n mono">S/ 128,400</div><div class="s">17 administrativos · neto S/ 96,180</div></div>
+      <span class="chip amber" style="height:26px">Borrador</span>
+      <button class="btn">Calcular</button>
+      <button class="btn pri">Cerrar mes</button>
+    </div>
+    <div class="card">
+      <table>
+        <thead><tr><th>Boleta</th><th>Trabajador</th><th class="r">Bruto</th><th class="r">Renta 5ta</th><th class="r">Adelanto</th><th class="r">Dscto.</th><th class="r">Neto</th><th>Docs</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">BOL-100112</td><td>Renzo Acosta Payano</td><td class="r mono">8,500</td><td class="r mono">612</td><td class="r mono">650</td><td class="r mono">1,742</td><td class="r mono">6,758</td><td><span class="chip green">✓</span></td></tr>
+          <tr><td class="mono">BOL-100113</td><td>María Quispe Ramos</td><td class="r mono">6,200</td><td class="r mono">288</td><td class="r mono">0</td><td class="r mono">1,094</td><td class="r mono">5,106</td><td><span class="chip green">✓</span></td></tr>
+          <tr><td class="mono">BOL-100114</td><td>Jorge Huamán Ríos</td><td class="r mono">4,800</td><td class="r mono">0</td><td class="r mono">300</td><td class="r mono">924</td><td class="r mono">3,876</td><td><span class="chip">—</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note">Motor de cálculo hibrido (auto EsSalud/AFP/ONP/HE + manual gratif/renta 5ta/adelantos), snapshot de tasas al calcular, asiento contable y boletas PDF al cerrar. Días trabajados alimentados por la asistencia biométrica.</div>
+  </section>
+
+  <!-- ── PERSONAL ── -->
+  <section class="panel" data-p="personal">
+    <div class="filters" style="justify-content:space-between">
+      <span style="font-size:12px;color:var(--ink-3)">Administrativos (régimen general · sueldo mensual). Alimentan la planilla mensual.</span>
+      <button class="btn pri"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>Administrativo</button>
+    </div>
+    <div class="emp-grid" style="grid-template-columns:repeat(3,1fr)">
+      <div class="card" style="border-left:3px solid var(--primary)"><div style="padding:12px 14px"><div style="display:flex;justify-content:space-between"><b style="font-size:13px">Renzo Acosta Payano</b><span class="chip">Ingeniero</span></div><div class="mono" style="font-size:10.5px;color:var(--ink-4);margin-top:2px">DNI 70744512</div><div style="margin-top:8px;display:flex;gap:5px"><span class="chip blue">Administrador</span><span class="chip">AFP Integra</span></div></div></div>
+      <div class="card" style="border-left:3px solid var(--primary)"><div style="padding:12px 14px"><div style="display:flex;justify-content:space-between"><b style="font-size:13px">María Quispe Ramos</b><span class="chip">Contadora</span></div><div class="mono" style="font-size:10.5px;color:var(--ink-4);margin-top:2px">DNI 70123345</div><div style="margin-top:8px;display:flex;gap:5px"><span class="chip blue">Empleado</span><span class="chip">S.N.P.</span></div></div></div>
+      <div class="card" style="border-left:3px solid var(--primary)"><div style="padding:12px 14px"><div style="display:flex;justify-content:space-between"><b style="font-size:13px">Jorge Huamán Ríos</b><span class="chip">Asistente</span></div><div class="mono" style="font-size:10.5px;color:var(--ink-4);margin-top:2px">DNI 70998123</div><div style="margin-top:8px;display:flex;gap:5px"><span class="chip blue">Empleado</span><span class="chip">AFP Prima</span></div></div></div>
+    </div>
+    <div class="note"><b>Fix:</b> dar de baja pide confirmación y ahora es <b>desactivación</b> (soft-delete): conserva boletas, marcaciones y asientos, reactivable. Ya no borra a un click.</div>
+  </section>
+
+  <!-- ── PROFESIONALES ── -->
+  <section class="panel" data-p="profesionales">
+    <div class="filters" style="justify-content:space-between">
+      <span style="font-size:12px;color:var(--ink-3)">Padrón de profesionales (sin login). Se asignan al equipo técnico de cada obra.</span>
+      <button class="btn pri"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>Nuevo</button>
+    </div>
+    <div class="card">
+      <table>
+        <thead><tr><th>Nombre</th><th>Profesión</th><th>Colegiatura</th><th>DNI</th><th>Teléfono</th><th>Cargo sugerido</th></tr></thead>
+        <tbody>
+          <tr><td>Ing. Carlos Vega Torres</td><td>Ingeniero Civil</td><td class="mono">CIP 128934</td><td class="mono">41203344</td><td class="mono">987 654 321</td><td>Residente</td></tr>
+          <tr><td>Ing. Ana Flores Díaz</td><td>Ingeniera Sanitaria</td><td class="mono">CIP 145021</td><td class="mono">43900122</td><td class="mono">998 112 233</td><td>Supervisor</td></tr>
+          <tr><td>Arq. Luis Ramírez Soto</td><td>Arquitecto</td><td class="mono">CAP 9921</td><td class="mono">40551209</td><td class="mono">955 443 210</td><td>Proyectista</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <div class="footer">Mockup de revamp · Módulo Oficina · MM High Metrik ERP · lenguaje visual del sistema (Inter · JetBrains Mono · tokens light)</div>
+</div>
+
+<script>
+const tabs = document.getElementById('tabs');
+tabs.addEventListener('click', (e) => {
+  const b = e.target.closest('.tab'); if (!b) return;
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', t === b));
+  const t = b.dataset.t;
+  document.querySelectorAll('.panel').forEach(p => p.classList.toggle('on', p.dataset.p === t));
+});
+</script>
+</body>
+</html>

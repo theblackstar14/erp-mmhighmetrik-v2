@@ -91,3 +91,28 @@ export function requirePermiso(modulo: string, min: Nivel = 'lectura') {
 
 // Admin = edición en el módulo 'usuarios'.
 export const requireAdmin = () => requirePermiso('usuarios', 'edicion');
+
+// Gate por NOMBRE de rol: admin o contabilidad en cualquier empresa del usuario.
+// Usado por oficina (planilla + rendiciones), donde la captura la hace la contadora.
+// Cablea la empresa activa en req para que la ruta scopee.
+export function requireAdminOContab() {
+  return async (req: Request, res: Response, next: NextFunction) => {
+    if (!req.user) return res.status(401).json({ error: 'No autenticado' });
+    const emp = await resolverEmpresa(req);
+    if (emp) {
+      req.empresaId = emp.empresaId;
+      req.roleId = emp.roleId;
+      req.roleNombre = emp.roleNombre;
+    }
+    const rows = await db
+      .select({ rol: schema.roles.nombre })
+      .from(schema.usuarioEmpresa)
+      .innerJoin(schema.roles, eq(schema.roles.id, schema.usuarioEmpresa.roleId))
+      .where(eq(schema.usuarioEmpresa.userId, req.user.id));
+    const allowed = new Set(['admin', 'contabilidad']);
+    if (!rows.some((r) => allowed.has(r.rol))) {
+      return res.status(403).json({ error: 'Permisos insuficientes: se requiere rol admin o contabilidad' });
+    }
+    next();
+  };
+}

@@ -1204,6 +1204,43 @@ export const asistencia = pgTable(
 );
 export type Asistencia = typeof asistencia.$inferSelect;
 
+// ─── Asistencia biométrica · lector SenseFP M1 vía ZKBio Zlink ───
+// Marcaciones crudas traídas de la nube Zlink (fuente de verdad del huellero).
+export const asistenciaMarcacion = pgTable(
+  'asistencia_marcacion',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    zlinkId: varchar('zlink_id', { length: 40 }).notNull(), // id del registro en Zlink (dedupe idempotente)
+    employeeCode: varchar('employee_code', { length: 40 }).notNull(), // PIN/DNI configurado en el lector
+    empleadoId: uuid('empleado_id').references(() => empleados.id, { onDelete: 'set null' }), // match por numDoc
+    nombre: varchar('nombre', { length: 200 }), // snapshot del nombre en el lector
+    punchTime: timestamp('punch_time').notNull(),
+    deviceSn: varchar('device_sn', { length: 60 }),
+    terminalAlias: varchar('terminal_alias', { length: 80 }),
+    raw: jsonb('raw'),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+  },
+  (t) => ({
+    zlinkUq: uniqueIndex('asist_marc_zlink_uq').on(t.zlinkId),
+    empIdx: index('asist_marc_emp_idx').on(t.empleadoId),
+    punchIdx: index('asist_marc_punch_idx').on(t.punchTime),
+  }),
+);
+export type AsistenciaMarcacion = typeof asistenciaMarcacion.$inferSelect;
+
+// Config de conexión al lector (ZKBio Zlink) · singleton. Token/refresh sembrados por el usuario.
+export const zlinkConfig = pgTable('zlink_config', {
+  id: varchar('id', { length: 12 }).primaryKey().default('singleton'),
+  baseUrl: varchar('base_url', { length: 200 }).notNull().default('https://zlink.minervaiot.com'),
+  companyId: varchar('company_id', { length: 60 }),
+  accessToken: text('access_token'),
+  refreshToken: text('refresh_token'),
+  tokenExpiry: timestamp('token_expiry'),
+  lastSyncAt: timestamp('last_sync_at'),
+  lastSyncMsg: varchar('last_sync_msg', { length: 300 }),
+});
+export type ZlinkConfig = typeof zlinkConfig.$inferSelect;
+
 // Parámetros por categoría (jornal + %s) · EDITABLE
 export const paramPlanilla = pgTable('param_planilla', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -1452,8 +1489,11 @@ export const rendiciones = pgTable(
   {
     id: uuid('id').primaryKey().defaultRandom(),
     codigo: varchar('codigo', { length: 30 }), // REN-2026-0001
-    solicitanteUserId: uuid('solicitante_user_id').references(() => users.id, { onDelete: 'set null' }),
-    solicitanteNombre: varchar('solicitante_nombre', { length: 200 }), // snapshot
+    // empleado al que pertenece el gasto (beneficiario). Captura centralizada: la rendición
+    // ya no depende de un login. solicitanteUserId = quién la teclea (auditoría).
+    empleadoId: uuid('empleado_id').references(() => empleados.id, { onDelete: 'set null' }),
+    solicitanteUserId: uuid('solicitante_user_id').references(() => users.id, { onDelete: 'set null' }), // capturado por (audit)
+    solicitanteNombre: varchar('solicitante_nombre', { length: 200 }), // snapshot del nombre del empleado
     proyectoId: uuid('proyecto_id').references(() => proyectos.id, { onDelete: 'set null' }), // obra opcional · null = oficina
     modo: varchar('modo', { length: 12 }).notNull().default('reembolso'), // reembolso · anticipo
     tipo: varchar('tipo', { length: 20 }).notNull().default('viatico'), // viatico·movilidad·utiles·servicio·compra_menor·otro
@@ -1473,6 +1513,7 @@ export const rendiciones = pgTable(
   (t) => ({
     estadoIdx: index('rend_estado_idx').on(t.estado),
     solicitanteIdx: index('rend_solicitante_idx').on(t.solicitanteUserId),
+    empleadoIdx: index('rend_empleado_idx').on(t.empleadoId),
   }),
 );
 export type Rendicion = typeof rendiciones.$inferSelect;

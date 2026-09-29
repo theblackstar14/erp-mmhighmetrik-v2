@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Fingerprint, Pencil, Plus, Receipt, Trash2, UserCog, Users, Wallet, X } from 'lucide-react';
+import { Check, Fingerprint, Link2, Pencil, Plus, Receipt, RefreshCw, Trash2, UserCog, Users, Wallet, X } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { useState } from 'react';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog.js';
@@ -66,50 +66,53 @@ export function OficinaPage() {
   );
 }
 
-// ─── Rendiciones ─────────────────────────────────────────────
+// ─── Rendiciones · captura centralizada (la contadora registra a nombre del empleado) ──
 function RendicionesTab() {
-  const user = useAuthStore((s) => s.user);
   const puedeAprobar = useAuthStore((s) => s.can)('oficina', 'edicion');
-  const [scope, setScope] = useState<'mias' | 'aprobar' | 'todas'>('todas');
+  const [scope, setScope] = useState<'todas' | 'aprobar'>('todas');
+  const [empFilter, setEmpFilter] = useState<{ id: string; nombre: string } | null>(null);
   const [nueva, setNueva] = useState<null | 'reembolso' | 'anticipo'>(null);
   const [detId, setDetId] = useState<string | null>(null);
-  const q = useQuery({ queryKey: ['rendiciones', scope], queryFn: () => api.oficina.listRendiciones(scope) });
+  const q = useQuery({ queryKey: ['rendiciones', scope, empFilter?.id ?? ''], queryFn: () => api.oficina.listRendiciones(scope, empFilter?.id) });
   const saldosQ = useQuery({ queryKey: ['saldos-rendir'], queryFn: () => api.oficina.getSaldosRendir() });
   const rends = q.data?.rendiciones ?? [];
-  const miSaldo = saldosQ.data?.miSaldo ?? 0;
+  const totalPorRendir = saldosQ.data?.total ?? 0;
+  const nEmpleados = saldosQ.data?.saldos.length ?? 0;
   const refetchAll = () => { q.refetch(); saldosQ.refetch(); };
 
   const monto = (r: Rendicion) => (r.modo === 'anticipo' && r.estado !== 'cerrado' ? Number(r.montoAnticipo) : Number(r.montoRendido));
-  const scopes = [{ v: 'mias', l: 'Mías' }, { v: 'todas', l: 'Todas' }, ...(puedeAprobar ? [{ v: 'aprobar', l: 'Por aprobar' }] : [])] as const;
+  const scopes = [{ v: 'todas', l: 'Todas' }, { v: 'aprobar', l: 'Por aprobar' }] as const;
 
   return (
     <div className="space-y-4">
-      {/* Mi rendición · saldo por rendir + acciones */}
+      {/* Resumen · total por rendir + captura (solo contadora/admin) */}
       <div className="rounded-xl border border-line bg-bg-elev p-5 flex flex-col sm:flex-row sm:items-center gap-4">
         <div className="flex-1">
-          <div className="text-[12px] text-ink-3">Mi saldo por rendir</div>
-          <div className={cn('mt-1 text-[30px] font-bold font-mono tabular-nums leading-none', miSaldo > 0.01 ? 'text-warn-ink' : 'text-ok')}>{fmtPEN(miSaldo)}</div>
-          <div className="text-[11px] text-ink-4 mt-1">{miSaldo > 0.01 ? `${saldosQ.data?.miCount ?? 0} anticipo(s) sin justificar` : 'Al día · nada pendiente de rendir'}</div>
+          <div className="text-[12px] text-ink-3">Total por rendir</div>
+          <div className={cn('mt-1 text-[30px] font-bold font-mono tabular-nums leading-none', totalPorRendir > 0.01 ? 'text-warn-ink' : 'text-ok')}>{fmtPEN(totalPorRendir)}</div>
+          <div className="text-[11px] text-ink-4 mt-1">{totalPorRendir > 0.01 ? `${nEmpleados} empleado(s) con anticipos abiertos` : 'Al día · nada pendiente de rendir'}</div>
         </div>
-        <div className="flex gap-2 shrink-0">
-          <button onClick={() => setNueva('anticipo')} className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-md bg-primary text-primary-foreground text-[12.5px] font-medium"><Wallet className="h-4 w-4" /> Solicitar anticipo</button>
-          <button onClick={() => setNueva('reembolso')} className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-md border border-line text-ink-2 text-[12.5px] font-medium hover:bg-bg-sunken"><Receipt className="h-4 w-4" /> Registrar reembolso</button>
-        </div>
+        {puedeAprobar && (
+          <div className="flex gap-2 shrink-0">
+            <button onClick={() => setNueva('anticipo')} className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-md bg-primary text-primary-foreground text-[12.5px] font-medium"><Wallet className="h-4 w-4" /> Registrar anticipo</button>
+            <button onClick={() => setNueva('reembolso')} className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-md border border-line text-ink-2 text-[12.5px] font-medium hover:bg-bg-sunken"><Receipt className="h-4 w-4" /> Registrar reembolso</button>
+          </div>
+        )}
       </div>
 
-      {/* Rollup para aprobadores · por rendir por persona (reemplaza las cuentas REND-* a mano) */}
-      {puedeAprobar && (saldosQ.data?.saldos.length ?? 0) > 0 && (
+      {/* Rollup · por rendir por empleado (clic filtra la tabla) */}
+      {puedeAprobar && nEmpleados > 0 && (
         <div className="rounded-lg border border-line bg-bg-elev p-4">
           <div className="flex items-center justify-between mb-2.5">
-            <h3 className="text-[13px] font-semibold flex items-center gap-1.5"><Users className="h-4 w-4 text-ink-3" /> Por rendir por persona</h3>
+            <h3 className="text-[13px] font-semibold flex items-center gap-1.5"><Users className="h-4 w-4 text-ink-3" /> Por rendir por empleado</h3>
             <span className="font-mono text-[12.5px] font-semibold text-warn-ink tabular-nums">{fmtPEN(saldosQ.data!.total)}</span>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
             {saldosQ.data!.saldos.map((s) => (
-              <div key={s.userId ?? s.nombre} className="flex items-center justify-between rounded-md bg-bg-sunken/50 px-3 py-2">
+              <button key={s.empleadoId ?? s.nombre} onClick={() => setEmpFilter(s.empleadoId ? { id: s.empleadoId, nombre: s.nombre } : null)} className={cn('flex items-center justify-between rounded-md px-3 py-2 text-left transition-colors', empFilter?.id === s.empleadoId ? 'bg-primary-soft ring-1 ring-primary' : 'bg-bg-sunken/50 hover:bg-bg-sunken')}>
                 <div className="min-w-0"><div className="text-[12px] font-medium truncate">{s.nombre}</div><div className="text-[10px] text-ink-4">{s.count} anticipo(s)</div></div>
                 <span className="font-mono text-[12.5px] tabular-nums text-warn-ink shrink-0 ml-2">{fmtPEN(s.saldo)}</span>
-              </div>
+              </button>
             ))}
           </div>
         </div>
@@ -117,14 +120,15 @@ function RendicionesTab() {
 
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex items-center gap-1">
-          {scopes.map((s) => <button key={s.v} onClick={() => setScope(s.v as typeof scope)} className={cn('h-8 px-3 rounded-md text-[11.5px] border', scope === s.v ? 'bg-primary text-primary-foreground border-primary' : 'border-line text-ink-2')}>{s.l}</button>)}
+          {scopes.map((s) => <button key={s.v} onClick={() => setScope(s.v)} className={cn('h-8 px-3 rounded-md text-[11.5px] border', scope === s.v ? 'bg-primary text-primary-foreground border-primary' : 'border-line text-ink-2')}>{s.l}</button>)}
         </div>
+        {empFilter && <button onClick={() => setEmpFilter(null)} className="inline-flex items-center gap-1 h-8 px-2.5 rounded-md text-[11px] border border-primary/40 bg-primary-soft text-primary-ink">{empFilter.nombre} <X className="h-3 w-3" /></button>}
         {scope === 'aprobar' && <span className="text-[11px] text-ink-4">{rends.length} esperando acción</span>}
       </div>
 
       <div className="rounded-md border border-line bg-bg-elev overflow-x-auto">
         <table className="w-full">
-          <thead><tr className="border-b border-line bg-bg-sunken">{['Código', 'Solicitante', 'Tipo', 'Modo', 'Fecha', 'Obra', 'Monto', 'Estado'].map((h, i) => <th key={i} className={cn('px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-ink-4', i === 6 ? 'text-right' : 'text-left')}>{h}</th>)}</tr></thead>
+          <thead><tr className="border-b border-line bg-bg-sunken">{['Código', 'Empleado', 'Tipo', 'Modo', 'Fecha', 'Obra', 'Monto', 'Estado'].map((h, i) => <th key={i} className={cn('px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-ink-4', i === 6 ? 'text-right' : 'text-left')}>{h}</th>)}</tr></thead>
           <tbody>
             {rends.length === 0 ? (
               <tr><td colSpan={8} className="px-3 py-8 text-center text-[12px] text-ink-3">Sin rendiciones</td></tr>
@@ -145,7 +149,7 @@ function RendicionesTab() {
       </div>
 
       {nueva && <NuevaRendicion initialMode={nueva} onClose={() => setNueva(null)} onCreated={(id) => { refetchAll(); setNueva(null); setDetId(id); }} />}
-      {detId && <RendicionDetalle id={detId} puedeAprobar={puedeAprobar} esMio={(r) => r.solicitanteUserId === user?.id} onClose={() => setDetId(null)} onChanged={refetchAll} />}
+      {detId && <RendicionDetalle id={detId} puedeAprobar={puedeAprobar} onClose={() => setDetId(null)} onChanged={refetchAll} />}
     </div>
   );
 }
@@ -153,22 +157,31 @@ function RendicionesTab() {
 function NuevaRendicion({ initialMode = 'reembolso', onClose, onCreated }: { initialMode?: 'reembolso' | 'anticipo'; onClose: () => void; onCreated: (id: string) => void }) {
   const proyQ = useQuery({ queryKey: ['proyectos-list'], queryFn: () => api.proyectos.list() });
   const cuentasQ = useQuery({ queryKey: ['cuentas'], queryFn: () => api.finanzas.listCuentas() });
+  const empQ = useQuery({ queryKey: ['empleados', 'todos'], queryFn: () => api.planilla.listEmpleados() });
+  const empleados = empQ.data?.empleados ?? [];
   const hoy = new Date().toISOString().slice(0, 10);
-  const [f, setF] = useState({ modo: initialMode, tipo: 'viatico', concepto: '', fecha: hoy, proyectoId: '', cuentaId: '', montoAnticipo: 0 });
+  const [f, setF] = useState({ empleadoId: '', modo: initialMode, tipo: 'viatico', concepto: '', fecha: hoy, proyectoId: '', cuentaId: '', montoAnticipo: 0 });
   const create = useMutation({
     mutationFn: () => api.oficina.crearRendicion({ ...f, proyectoId: f.proyectoId || null, cuentaId: f.cuentaId || null }),
     onSuccess: (r) => onCreated(r.rendicion.id),
   });
   const set = (p: Partial<typeof f>) => setF((s) => ({ ...s, ...p }));
+  const puedeCrear = !!f.empleadoId && !(f.modo === 'anticipo' && f.montoAnticipo <= 0);
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 animate-backdropIn" onClick={onClose}>
       <div className="w-[460px] rounded-xl border border-line bg-bg-elev shadow-2xl animate-modalPop" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-line px-4 py-3"><h3 className="text-[14px] font-semibold">Nueva rendición</h3><button onClick={onClose} className="text-ink-4 hover:text-ink-2"><X className="h-4 w-4" /></button></div>
         <div className="p-4 space-y-3">
+          <Lbl t="Empleado *">
+            <select className={cn(inputCls, 'w-full')} value={f.empleadoId} onChange={(e) => set({ empleadoId: e.target.value })}>
+              <option value="">— elegir empleado —</option>
+              {empleados.map((e) => <option key={e.id} value={e.id}>{e.nombre}{e.numDoc ? ` · ${e.numDoc}` : ''}</option>)}
+            </select>
+          </Lbl>
           <div className="flex gap-1.5">
             {(['reembolso', 'anticipo'] as const).map((m) => <button key={m} onClick={() => set({ modo: m })} className={cn('flex-1 h-9 rounded-md text-[12px] font-medium border', f.modo === m ? 'bg-primary text-primary-foreground border-primary' : 'border-line text-ink-2')}>{m === 'reembolso' ? 'Reembolso' : 'Anticipo'}</button>)}
           </div>
-          <p className="text-[11px] text-ink-4">{f.modo === 'reembolso' ? 'Ya gastaste · subes comprobantes y te reembolsan al aprobar.' : 'Se entrega el dinero por adelantado · luego rindes con comprobantes.'}</p>
+          <p className="text-[11px] text-ink-4">{f.modo === 'reembolso' ? 'El empleado ya gastó · se cargan comprobantes y se reembolsa al aprobar.' : 'Se entrega el dinero por adelantado · luego se rinde con comprobantes.'}</p>
           <div className="grid grid-cols-2 gap-2.5">
             <Lbl t="Tipo"><select className={cn(inputCls, 'w-full')} value={f.tipo} onChange={(e) => set({ tipo: e.target.value })}>{TIPOS.map((t) => <option key={t.v} value={t.v}>{t.l}</option>)}</select></Lbl>
             <Lbl t="Fecha"><input type="date" className={cn(inputCls, 'w-full')} value={f.fecha} onChange={(e) => set({ fecha: e.target.value })} /></Lbl>
@@ -180,7 +193,7 @@ function NuevaRendicion({ initialMode = 'reembolso', onClose, onCreated }: { ini
         </div>
         <div className="flex justify-end gap-2 border-t border-line px-4 py-3">
           <button onClick={onClose} className="h-8 px-3 rounded-md border border-line text-[12px] text-ink-2">Cancelar</button>
-          <button disabled={create.isPending || (f.modo === 'anticipo' && f.montoAnticipo <= 0)} onClick={() => create.mutate()} className="h-8 px-4 rounded-md bg-primary text-primary-foreground text-[12px] font-medium disabled:opacity-50">Crear</button>
+          <button disabled={create.isPending || !puedeCrear} onClick={() => create.mutate()} className="h-8 px-4 rounded-md bg-primary text-primary-foreground text-[12px] font-medium disabled:opacity-50">Crear</button>
         </div>
       </div>
     </div>,
@@ -188,7 +201,7 @@ function NuevaRendicion({ initialMode = 'reembolso', onClose, onCreated }: { ini
   );
 }
 
-function RendicionDetalle({ id, puedeAprobar, esMio, onClose, onChanged }: { id: string; puedeAprobar: boolean; esMio: (r: Rendicion) => boolean; onClose: () => void; onChanged: () => void }) {
+function RendicionDetalle({ id, puedeAprobar, onClose, onChanged }: { id: string; puedeAprobar: boolean; onClose: () => void; onChanged: () => void }) {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ['rendicion', id], queryFn: () => api.oficina.getRendicion(id) });
   const [emit, setEmit] = useState<null | { done: boolean; titulo: string }>(null);
@@ -204,9 +217,8 @@ function RendicionDetalle({ id, puedeAprobar, esMio, onClose, onChanged }: { id:
 
   if (!q.data) return null;
   const { rendicion: r, items } = q.data;
-  const mio = esMio(r);
-  // ítems editables antes de reconocer el gasto
-  const itemsEditables = (r.modo === 'reembolso' && r.estado === 'borrador') || (r.modo === 'anticipo' && r.estado === 'aprobado');
+  // ítems editables antes de reconocer el gasto (solo contadora/admin)
+  const itemsEditables = puedeAprobar && ((r.modo === 'reembolso' && r.estado === 'borrador') || (r.modo === 'anticipo' && r.estado === 'aprobado'));
   const saldo = Number(r.montoAnticipo) - Number(r.montoRendido);
 
   return createPortal(
@@ -254,7 +266,7 @@ function RendicionDetalle({ id, puedeAprobar, esMio, onClose, onChanged }: { id:
 
           {/* Acciones */}
           <div className="flex flex-wrap justify-end gap-2 pt-1">
-            {mio && r.estado === 'borrador' && <>
+            {puedeAprobar && r.estado === 'borrador' && <>
               <button onClick={() => api.oficina.deleteRendicion(id).then(() => { onChanged(); onClose(); })} className="h-8 px-3 rounded-md border border-line text-[12px] text-rose-500">Eliminar</button>
               <button onClick={() => accion.mutate({ accion: 'enviar' })} className="h-8 px-4 rounded-md bg-primary text-primary-foreground text-[12px] font-medium">Enviar a aprobación</button>
             </>}
@@ -262,7 +274,7 @@ function RendicionDetalle({ id, puedeAprobar, esMio, onClose, onChanged }: { id:
               <button onClick={() => { const m = prompt('Motivo del rechazo:'); if (m != null) accion.mutate({ accion: 'rechazar', body: { motivo: m } }); }} className="h-8 px-3 rounded-md border border-line text-[12px] text-rose-500">Rechazar</button>
               <button onClick={() => doEmit('aprobar', r.modo === 'reembolso' ? 'Aprobando reembolso…' : 'Entregando anticipo…')} className="h-8 px-4 rounded-md bg-emerald-600 text-white text-[12px] font-medium inline-flex items-center gap-1.5"><Check className="h-3.5 w-3.5" /> Aprobar</button>
             </>}
-            {mio && r.modo === 'anticipo' && r.estado === 'aprobado' && <button onClick={() => accion.mutate({ accion: 'rendir' })} disabled={items.length === 0} className="h-8 px-4 rounded-md bg-primary text-primary-foreground text-[12px] font-medium disabled:opacity-50">Enviar rendición</button>}
+            {puedeAprobar && r.modo === 'anticipo' && r.estado === 'aprobado' && <button onClick={() => accion.mutate({ accion: 'rendir' })} disabled={items.length === 0} className="h-8 px-4 rounded-md bg-primary text-primary-foreground text-[12px] font-medium disabled:opacity-50">Enviar rendición</button>}
             {puedeAprobar && r.estado === 'rendido' && <button onClick={() => doEmit('cerrar', 'Cerrando rendición…')} className="h-8 px-4 rounded-md bg-emerald-600 text-white text-[12px] font-medium inline-flex items-center gap-1.5"><Check className="h-3.5 w-3.5" /> Cerrar y cuadrar</button>}
           </div>
         </div>
@@ -388,12 +400,13 @@ function PersonalAdminTab() {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ['empleados', 'admin'], queryFn: () => api.planilla.listEmpleados('admin') });
   const [add, setAdd] = useState(false);
+  const [delEmp, setDelEmp] = useState<{ id: string; nombre: string } | null>(null);
   const empleados = q.data?.empleados ?? [];
-  const del = useMutation({ mutationFn: (id: string) => api.planilla.deleteEmpleado(id), onSuccess: () => qc.invalidateQueries({ queryKey: ['empleados', 'admin'] }) });
+  const del = useMutation({ mutationFn: (id: string) => api.planilla.deleteEmpleado(id), onSuccess: () => { qc.invalidateQueries({ queryKey: ['empleados', 'admin'] }); setDelEmp(null); } });
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <p className="text-[12px] text-ink-3">Administrativos (régimen general · sueldo mensual). Planilla mensual: próximamente.</p>
+        <p className="text-[12px] text-ink-3">Administrativos (régimen general · sueldo mensual). Alimentan la planilla mensual de oficina.</p>
         <button onClick={() => setAdd(true)} className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md bg-primary text-primary-foreground text-[12px] font-medium"><Plus className="h-3.5 w-3.5" /> Administrativo</button>
       </div>
       {empleados.length === 0 ? (
@@ -404,7 +417,7 @@ function PersonalAdminTab() {
             <div key={e.id} className="rounded-md border border-line bg-bg-elev p-3 border-l-[3px] border-l-primary">
               <div className="flex items-start justify-between">
                 <div><div className="text-[13px] font-semibold">{e.nombre}</div><div className="font-mono text-[10.5px] text-ink-4">DNI {e.numDoc ?? '—'}</div></div>
-                <button onClick={() => del.mutate(e.id)} className="text-ink-4 hover:text-rose-500"><Trash2 className="h-3.5 w-3.5" /></button>
+                <button onClick={() => setDelEmp({ id: e.id, nombre: e.nombre })} className="text-ink-4 hover:text-rose-500" title="Dar de baja"><Trash2 className="h-3.5 w-3.5" /></button>
               </div>
               <div className="mt-2 flex flex-wrap gap-1 text-[10px]">
                 <span className="rounded bg-primary/10 px-1.5 py-0.5 text-primary font-medium">{e.categoria ?? 'Empleado'}</span>
@@ -416,6 +429,7 @@ function PersonalAdminTab() {
         </div>
       )}
       {add && <AdminForm onClose={() => setAdd(false)} onSaved={() => { qc.invalidateQueries({ queryKey: ['empleados', 'admin'] }); setAdd(false); }} />}
+      <ConfirmDialog open={!!delEmp} title={`¿Dar de baja a ${delEmp?.nombre ?? ''}?`} message="Se desactiva del roster. Conserva su historial de planilla y boletas; podrás reactivarlo luego." tone="danger" confirmLabel="Dar de baja" loading={del.isPending} onCancel={() => setDelEmp(null)} onConfirm={() => delEmp && del.mutate(delEmp.id)} />
     </div>
   );
 }
@@ -453,17 +467,104 @@ function AdminForm({ onClose, onSaved }: { onClose: () => void; onSaved: () => v
   );
 }
 
-// ─── Asistencia por huella (en proceso) ──────────────────────
+// ─── Asistencia por huella · lector SenseFP M1 vía ZKBio Zlink ──
 function AsistenciaHuella() {
+  const qc = useQueryClient();
+  const hoy = new Date().toISOString().slice(0, 10);
+  const [rango, setRango] = useState({ desde: hoy, hasta: hoy });
+  const [vincular, setVincular] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const cfgQ = useQuery({ queryKey: ['zlink-cfg'], queryFn: () => api.oficina.getAsistenciaConfig() });
+  const marcQ = useQuery({ queryKey: ['marcaciones', rango], queryFn: () => api.oficina.listMarcaciones(rango.desde, rango.hasta) });
+  const cfg = cfgQ.data;
+  const marcaciones = marcQ.data?.marcaciones ?? [];
+  const sync = useMutation({
+    mutationFn: () => api.oficina.syncAsistencia(),
+    onSuccess: (r) => { setMsg(`✓ ${r.nuevas} nuevas de ${r.traidas} traídas · ${r.sinMatch} sin empleado`); qc.invalidateQueries({ queryKey: ['marcaciones'] }); qc.invalidateQueries({ queryKey: ['zlink-cfg'] }); },
+    onError: (e: Error) => setMsg(`✕ ${e.message}`),
+  });
+  const fmtPunch = (s: string) => s.replace('T', ' ').slice(0, 16);
+
   return (
-    <div className="rounded-md border border-line bg-bg-elev p-8 text-center">
-      <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-amber-500/10"><Fingerprint className="h-7 w-7 text-amber-600" /></div>
-      <div className="flex items-center justify-center gap-2">
-        <h3 className="text-[15px] font-semibold">Asistencia por lector de huellas</h3>
-        <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-600">⏳ En proceso</span>
+    <div className="space-y-4">
+      {/* Estado del lector + acciones */}
+      <div className="rounded-xl border border-line bg-bg-elev p-5 flex flex-col sm:flex-row sm:items-center gap-4">
+        <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-primary-soft shrink-0"><Fingerprint className="h-6 w-6 text-primary" /></div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <h3 className="text-[14px] font-semibold">Lector de huellas · SenseFP M1</h3>
+            {cfg?.configurado
+              ? <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-600">Vinculado</span>
+              : <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-600">Sin vincular</span>}
+          </div>
+          <p className="text-[11.5px] text-ink-3 mt-0.5">
+            {cfg?.lastSyncAt ? `Última sincronización ${fmtDate(cfg.lastSyncAt)} · ${cfg.lastSyncMsg ?? ''}` : 'Marcaciones desde la nube ZKBio Zlink · sync automática 09:30 y 10:00'}
+          </p>
+        </div>
+        <div className="flex gap-2 shrink-0">
+          <button onClick={() => setVincular(true)} className="h-9 px-3.5 rounded-md border border-line text-ink-2 text-[12.5px] font-medium hover:bg-bg-sunken inline-flex items-center gap-1.5"><Link2 className="h-4 w-4" /> Vincular</button>
+          <button disabled={sync.isPending || !cfg?.configurado} onClick={() => sync.mutate()} className="h-9 px-3.5 rounded-md bg-primary text-primary-foreground text-[12.5px] font-medium disabled:opacity-50 inline-flex items-center gap-1.5"><RefreshCw className={cn('h-4 w-4', sync.isPending && 'animate-spin')} /> Sincronizar ahora</button>
+        </div>
       </div>
-      <p className="mx-auto mt-2 max-w-md text-[12px] text-ink-3">La marcación de oficina se integrará con el lector biométrico vía endpoint <code className="font-mono text-[11px]">POST /api/asistencia/huella</code>. Pendiente definir el modelo del lector (HTTP / serial). Mientras tanto, marcación manual.</p>
+      {msg && <div className={cn('rounded-md px-3 py-2 text-[12px]', msg.startsWith('✓') ? 'bg-emerald-500/10 text-emerald-600' : 'bg-rose-500/10 text-rose-600')}>{msg}</div>}
+
+      {/* Rango + tabla de marcaciones */}
+      <div className="flex flex-wrap items-center gap-2">
+        <input type="date" value={rango.desde} onChange={(e) => setRango((r) => ({ ...r, desde: e.target.value }))} className={inputCls} />
+        <span className="text-[11px] text-ink-4">→</span>
+        <input type="date" value={rango.hasta} onChange={(e) => setRango((r) => ({ ...r, hasta: e.target.value }))} className={inputCls} />
+        <span className="text-[11px] text-ink-4 ml-1">{marcaciones.length} marcación(es)</span>
+      </div>
+      <div className="rounded-md border border-line bg-bg-elev overflow-x-auto">
+        <table className="w-full">
+          <thead><tr className="border-b border-line bg-bg-sunken">{['Fecha / hora', 'Código', 'Nombre (lector)', 'Empleado', 'Terminal'].map((h, i) => <th key={i} className="px-3 py-2 text-left font-mono text-[10px] uppercase tracking-wider text-ink-4">{h}</th>)}</tr></thead>
+          <tbody>
+            {marcaciones.length === 0
+              ? <tr><td colSpan={5} className="px-3 py-8 text-center text-[12px] text-ink-3">Sin marcaciones en el rango</td></tr>
+              : marcaciones.map((m) => (
+                <tr key={m.id} className="border-b border-line/60 hover:bg-bg-sunken/40">
+                  <td className="px-3 py-2 font-mono text-[11.5px]">{fmtPunch(m.punchTime)}</td>
+                  <td className="px-3 py-2 font-mono text-[11px] text-ink-3">{m.employeeCode}</td>
+                  <td className="px-3 py-2 text-[12px]">{m.nombre ?? '—'}</td>
+                  <td className="px-3 py-2 text-[11px]">{m.empleadoId ? <span className="text-emerald-600 font-medium">✓ vinculado</span> : <span className="text-amber-600">sin match</span>}</td>
+                  <td className="px-3 py-2 text-[11px] text-ink-3">{m.terminalAlias ?? m.deviceSn ?? '—'}</td>
+                </tr>
+              ))}
+          </tbody>
+        </table>
+      </div>
+
+      {vincular && <VincularLector estado={cfg} onClose={() => setVincular(false)} onSaved={() => { setVincular(false); setMsg('✓ Lector vinculado'); qc.invalidateQueries({ queryKey: ['zlink-cfg'] }); }} />}
     </div>
+  );
+}
+
+function VincularLector({ estado, onClose, onSaved }: { estado?: import('@/lib/api.js').ZlinkEstado; onClose: () => void; onSaved: () => void }) {
+  const [f, setF] = useState({ baseUrl: estado?.baseUrl ?? 'https://zlink.minervaiot.com', companyId: estado?.companyId ?? '', accessToken: '', refreshToken: '' });
+  const [err, setErr] = useState('');
+  const save = useMutation({ mutationFn: () => api.oficina.setAsistenciaConfig(f), onSuccess: onSaved, onError: (e: Error) => setErr(e.message) });
+  const set = (p: Partial<typeof f>) => setF((s) => ({ ...s, ...p }));
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 animate-backdropIn" onClick={onClose}>
+      <div className="w-[520px] rounded-xl border border-line bg-bg-elev shadow-2xl animate-modalPop" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between border-b border-line px-4 py-3"><h3 className="text-[14px] font-semibold">Vincular lector ZKBio Zlink</h3><button onClick={onClose} className="text-ink-4 hover:text-ink-2"><X className="h-4 w-4" /></button></div>
+        <div className="p-4 space-y-3">
+          <p className="text-[11.5px] text-ink-3 leading-relaxed">Pega el <b>token</b> de tu sesión del portal Zlink. En <span className="font-mono text-[11px]">zlink.minervaiot.com</span> → F12 → Application → Local Storage → <span className="font-mono text-[11px]">orgInfo.access_token</span> (y <span className="font-mono text-[11px]">refresh_token</span> para renovación automática).</p>
+          <div className="grid grid-cols-2 gap-2.5">
+            <Lbl t="URL base"><input className={cn(inputCls, 'w-full')} value={f.baseUrl} onChange={(e) => set({ baseUrl: e.target.value })} /></Lbl>
+            <Lbl t="Company ID"><input className={cn(inputCls, 'w-full')} value={f.companyId} onChange={(e) => set({ companyId: e.target.value })} placeholder="0a08…" /></Lbl>
+          </div>
+          <Lbl t="Access token"><textarea className={cn(inputCls, 'w-full h-20 py-1.5 font-mono text-[10.5px]')} value={f.accessToken} onChange={(e) => set({ accessToken: e.target.value })} placeholder="eyJ…" /></Lbl>
+          <Lbl t="Refresh token (opcional)"><textarea className={cn(inputCls, 'w-full h-14 py-1.5 font-mono text-[10.5px]')} value={f.refreshToken} onChange={(e) => set({ refreshToken: e.target.value })} placeholder="eyJ…" /></Lbl>
+          {err && <div className="text-[11px] text-rose-500">{err}</div>}
+        </div>
+        <div className="flex justify-end gap-2 border-t border-line px-4 py-3">
+          <button onClick={onClose} className="h-8 px-3 rounded-md border border-line text-[12px] text-ink-2">Cancelar</button>
+          <button disabled={!f.accessToken || save.isPending} onClick={() => save.mutate()} className="h-8 px-4 rounded-md bg-primary text-primary-foreground text-[12px] font-medium disabled:opacity-50">Guardar</button>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 

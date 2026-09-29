@@ -3,11 +3,15 @@ import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { Router } from 'express';
 import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
+import { requireAdminOContab } from '../lib/permisos.js';
 import { periodoCerradoDeFecha } from '../lib/periodos.js';
 import { resolverClase } from '../lib/clasificacion.js';
+import { syncAsistencia, listarMarcaciones, getEstadoZlink, setConfigZlink, ZlinkError } from '../lib/zlinkAsistencia.js';
 
 const router = Router();
 router.use(requireAuth);
+// La captura y aprobación de rendiciones la hace la contadora/admin (no self-service).
+const gate = requireAdminOContab();
 const dec = (n?: number | null) => (n == null ? '0' : n.toString());
 const n = (v: unknown) => Number(v ?? 0);
 
@@ -68,7 +72,8 @@ async function nextCodigo() {
 
 // ─── Listado ─────────────────────────────────────────────────
 router.get('/oficina/rendiciones', async (req, res) => {
-  const scope = (req.query.scope as string) || 'todas'; // mias · aprobar · todas
+  const scope = (req.query.scope as string) || 'todas'; // aprobar · todas
+  const empleadoId = (req.query.empleadoId as string) || null; // filtro opcional por empleado
   const rows = await db
     .select({
       r: schema.rendiciones,
@@ -81,7 +86,7 @@ router.get('/oficina/rendiciones', async (req, res) => {
     .orderBy(desc(schema.rendiciones.createdAt));
   const list = rows
     .filter((x) => {
-      if (scope === 'mias') return x.r.solicitanteUserId === req.user!.id;
+      if (empleadoId && x.r.empleadoId !== empleadoId) return false;
       if (scope === 'aprobar') return x.r.estado === 'pendiente' || x.r.estado === 'rendido';
       return true;
     })
@@ -89,26 +94,21 @@ router.get('/oficina/rendiciones', async (req, res) => {
   res.json({ rendiciones: list });
 });
 
-// Saldo POR RENDIR por persona · derivado de anticipos abiertos (aprobado/rendido, aún no cerrados).
-// = Σ (montoAnticipo − montoRendido). Reemplaza las cuentas REND-* hechas a mano: el saldo se calcula, no se guarda.
-router.get('/oficina/saldos-rendir', async (req, res) => {
+// Saldo POR RENDIR por empleado · derivado de anticipos abiertos (aprobado/rendido, aún no cerrados).
+// = Σ (montoAnticipo − montoRendido). El saldo se calcula, no se guarda.
+router.get('/oficina/saldos-rendir', async (_req, res) => {
   const rows = await db.select().from(schema.rendiciones)
     .where(and(eq(schema.rendiciones.modo, 'anticipo'), inArray(schema.rendiciones.estado, ['aprobado', 'rendido'])));
-  const byUser = new Map<string, { userId: string | null; nombre: string; saldo: number; count: number }>();
+  const byEmpleado = new Map<string, { empleadoId: string | null; nombre: string; saldo: number; count: number }>();
   for (const r of rows) {
-    const key = r.solicitanteUserId ?? r.solicitanteNombre ?? 'sin';
-    const e = byUser.get(key) ?? { userId: r.solicitanteUserId ?? null, nombre: r.solicitanteNombre ?? 'Sin nombre', saldo: 0, count: 0 };
+    const key = r.empleadoId ?? r.solicitanteNombre ?? 'sin';
+    const e = byEmpleado.get(key) ?? { empleadoId: r.empleadoId ?? null, nombre: r.solicitanteNombre ?? 'Sin nombre', saldo: 0, count: 0 };
     e.saldo += n(r.montoAnticipo) - n(r.montoRendido);
     e.count += 1;
-    byUser.set(key, e);
+    byEmpleado.set(key, e);
   }
-  const saldos = [...byUser.values()].filter((s) => s.saldo > 0.01).sort((a, b) => b.saldo - a.saldo);
-  res.json({
-    saldos,
-    total: saldos.reduce((s, x) => s + x.saldo, 0),
-    miSaldo: saldos.find((s) => s.userId === req.user?.id)?.saldo ?? 0,
-    miCount: saldos.find((s) => s.userId === req.user?.id)?.count ?? 0,
-  });
+  const saldos = [...byEmpleado.values()].filter((s) => s.saldo > 0.01).sort((a, b) => b.saldo - a.saldo);
+  res.json({ saldos, total: saldos.reduce((s, x) => s + x.saldo, 0) });
 });
 
 router.get('/oficina/rendiciones/:id', async (req, res) => {
@@ -119,6 +119,7 @@ router.get('/oficina/rendiciones/:id', async (req, res) => {
 
 // ─── Crear / editar cabecera ─────────────────────────────────
 const cabSchema = z.object({
+  empleadoId: z.string().uuid(), // beneficiario · solo se rinde a empleados del padrón
   modo: z.enum(['reembolso', 'anticipo']),
   tipo: z.string().max(20),
   concepto: z.string().optional().nullable(),
@@ -127,17 +128,20 @@ const cabSchema = z.object({
   cuentaId: z.string().uuid().optional().nullable(),
   montoAnticipo: z.number().nonnegative().default(0),
 });
-router.post('/oficina/rendiciones', async (req, res) => {
+router.post('/oficina/rendiciones', gate, async (req, res) => {
   const parse = cabSchema.safeParse(req.body);
   if (!parse.success) return res.status(400).json({ error: parse.error.flatten() });
+  // El nombre es snapshot del empleado (beneficiario). solicitanteUserId = quién captura (auditoría).
+  const [emp] = await db.select().from(schema.empleados).where(eq(schema.empleados.id, parse.data.empleadoId)).limit(1);
+  if (!emp) return res.status(400).json({ error: 'Empleado no encontrado' });
   const codigo = await nextCodigo();
   const [r] = await db.insert(schema.rendiciones).values({
-    ...parse.data, codigo, solicitanteUserId: req.user!.id, solicitanteNombre: req.user!.nombres,
+    ...parse.data, codigo, solicitanteUserId: req.user!.id, solicitanteNombre: emp.nombre,
     montoAnticipo: dec(parse.data.montoAnticipo), estado: 'borrador',
   }).returning();
   res.json({ rendicion: r });
 });
-router.put('/oficina/rendiciones/:id', async (req, res) => {
+router.put('/oficina/rendiciones/:id', gate, async (req, res) => {
   const parse = cabSchema.partial().safeParse(req.body);
   if (!parse.success) return res.status(400).json({ error: parse.error.flatten() });
   const data: Record<string, unknown> = { ...parse.data };
@@ -146,7 +150,7 @@ router.put('/oficina/rendiciones/:id', async (req, res) => {
   if (!r) return res.status(404).json({ error: 'No encontrada' });
   res.json({ rendicion: r });
 });
-router.delete('/oficina/rendiciones/:id', async (req, res) => {
+router.delete('/oficina/rendiciones/:id', gate, async (req, res) => {
   const [r] = await db.select().from(schema.rendiciones).where(eq(schema.rendiciones.id, req.params.id!)).limit(1);
   if (r && !['borrador', 'rechazado'].includes(r.estado)) return res.status(409).json({ error: 'Solo borrador/rechazado se puede eliminar' });
   await db.delete(schema.rendiciones).where(eq(schema.rendiciones.id, req.params.id!));
@@ -168,7 +172,7 @@ const itemSchema = z.object({
   deducible: z.boolean().default(true),
   archivo: z.string().optional().nullable(),
 });
-router.post('/oficina/rendiciones/:id/items', async (req, res) => {
+router.post('/oficina/rendiciones/:id/items', gate, async (req, res) => {
   const parse = itemSchema.safeParse(req.body);
   if (!parse.success) return res.status(400).json({ error: parse.error.flatten() });
   const d = parse.data;
@@ -179,7 +183,7 @@ router.post('/oficina/rendiciones/:id/items', async (req, res) => {
   await recompute(req.params.id!);
   res.json({ ok: true });
 });
-router.delete('/oficina/rendicion-items/:id', async (req, res) => {
+router.delete('/oficina/rendicion-items/:id', gate, async (req, res) => {
   const [it] = await db.delete(schema.rendicionItems).where(eq(schema.rendicionItems.id, req.params.id!)).returning();
   if (it) await recompute(it.rendicionId);
   res.json({ ok: true });
@@ -191,7 +195,7 @@ async function load(id: string) {
   return r ?? null;
 }
 // enviar: borrador → pendiente
-router.post('/oficina/rendiciones/:id/enviar', async (req, res) => {
+router.post('/oficina/rendiciones/:id/enviar', gate, async (req, res) => {
   const r = await load(req.params.id!);
   if (!r) return res.status(404).json({ error: 'No encontrada' });
   if (r.estado !== 'borrador') return res.status(409).json({ error: 'No está en borrador' });
@@ -203,7 +207,7 @@ router.post('/oficina/rendiciones/:id/enviar', async (req, res) => {
 });
 // aprobar · reembolso→cerrado (gasto+egreso) · anticipo→aprobado (egreso anticipo)
 // ponytail: gatear por rol contador/admin en fase 3 (hoy cualquier autenticado)
-router.post('/oficina/rendiciones/:id/aprobar', async (req, res) => {
+router.post('/oficina/rendiciones/:id/aprobar', gate, async (req, res) => {
   const r = await load(req.params.id!);
   if (!r) return res.status(404).json({ error: 'No encontrada' });
   if (r.estado !== 'pendiente') return res.status(409).json({ error: 'No está pendiente' });
@@ -222,14 +226,14 @@ router.post('/oficina/rendiciones/:id/aprobar', async (req, res) => {
   const [u] = await db.update(schema.rendiciones).set({ ...meta, estado: 'aprobado' }).where(eq(schema.rendiciones.id, r.id)).returning();
   res.json({ rendicion: u });
 });
-router.post('/oficina/rendiciones/:id/rechazar', async (req, res) => {
+router.post('/oficina/rendiciones/:id/rechazar', gate, async (req, res) => {
   const r = await load(req.params.id!);
   if (!r) return res.status(404).json({ error: 'No encontrada' });
   const [u] = await db.update(schema.rendiciones).set({ estado: 'rechazado', motivoRechazo: (req.body?.motivo as string) ?? null, aprobadoPorUserId: req.user!.id, aprobadoEn: new Date() }).where(eq(schema.rendiciones.id, r.id)).returning();
   res.json({ rendicion: u });
 });
 // rendir · anticipo: aprobado → rendido (ya cargó comprobantes)
-router.post('/oficina/rendiciones/:id/rendir', async (req, res) => {
+router.post('/oficina/rendiciones/:id/rendir', gate, async (req, res) => {
   const r = await load(req.params.id!);
   if (!r) return res.status(404).json({ error: 'No encontrada' });
   if (r.estado !== 'aprobado' || r.modo !== 'anticipo') return res.status(409).json({ error: 'No corresponde rendir' });
@@ -239,7 +243,7 @@ router.post('/oficina/rendiciones/:id/rendir', async (req, res) => {
   res.json({ rendicion: u });
 });
 // cerrar · anticipo: rendido → cerrado (gasto + cuadre del saldo)
-router.post('/oficina/rendiciones/:id/cerrar', async (req, res) => {
+router.post('/oficina/rendiciones/:id/cerrar', gate, async (req, res) => {
   const r = await load(req.params.id!);
   if (!r) return res.status(404).json({ error: 'No encontrada' });
   if (r.estado !== 'rendido') return res.status(409).json({ error: 'No está rendido' });
@@ -252,6 +256,39 @@ router.post('/oficina/rendiciones/:id/cerrar', async (req, res) => {
   else if (saldo < 0) await generarMovimiento(r, 'Egreso', -saldo, 'Reembolso extra rendición', g?.id, req.user!.id);
   const [u] = await db.update(schema.rendiciones).set({ estado: 'cerrado', gastoId: g?.id ?? null, aprobadoPorUserId: req.user!.id, aprobadoEn: new Date() }).where(eq(schema.rendiciones.id, r.id)).returning();
   res.json({ rendicion: u });
+});
+
+// ─── Asistencia biométrica (ZKBio Zlink) ─────────────────────
+// Lista marcaciones de un rango (default: hoy).
+router.get('/oficina/asistencia', async (req, res) => {
+  const hoy = new Date().toISOString().slice(0, 10);
+  const desde = (req.query.desde as string) || hoy;
+  const hasta = (req.query.hasta as string) || hoy;
+  const marcaciones = await listarMarcaciones(desde, hasta);
+  res.json({ marcaciones });
+});
+
+// Estado de la conexión (configurado, última sync).
+router.get('/oficina/asistencia/config', async (_req, res) => {
+  res.json(await getEstadoZlink());
+});
+
+// Vincular/actualizar credenciales del lector (token del portal Zlink).
+router.put('/oficina/asistencia/config', gate, async (req, res) => {
+  const b = req.body as { baseUrl?: string; companyId?: string; accessToken?: string; refreshToken?: string; expiresIn?: number };
+  res.json(await setConfigZlink(b));
+});
+
+// Sincronizar ahora (manual). El cron 09:30/10:00 llama al mismo servicio.
+router.post('/oficina/asistencia/sync', gate, async (_req, res) => {
+  try {
+    const r = await syncAsistencia();
+    res.json(r);
+  } catch (e) {
+    if (e instanceof ZlinkError) return res.status(409).json({ error: e.message });
+    console.error('[asistencia] sync error', e);
+    res.status(500).json({ error: 'Error al sincronizar asistencia' });
+  }
 });
 
 export default router;

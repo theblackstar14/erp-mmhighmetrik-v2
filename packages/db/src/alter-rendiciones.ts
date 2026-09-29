@@ -47,6 +47,9 @@ const stmts = [
      archivo varchar(300)
    );`,
   `CREATE INDEX IF NOT EXISTS rend_item_idx ON rendicion_items (rendicion_id);`,
+  // Captura centralizada · el gasto pertenece a un empleado (no a un login)
+  `ALTER TABLE rendiciones ADD COLUMN IF NOT EXISTS empleado_id uuid REFERENCES empleados(id) ON DELETE SET NULL;`,
+  `CREATE INDEX IF NOT EXISTS rend_empleado_idx ON rendiciones (empleado_id);`,
 ];
 for (const s of stmts) {
   await sql.unsafe(s);

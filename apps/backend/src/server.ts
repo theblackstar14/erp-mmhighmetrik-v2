@@ -5,6 +5,7 @@ import express from 'express';
 import pinoHttp from 'pino-http';
 import { env } from './env.js';
 import { authMiddleware } from './middleware/auth.js';
+import { iniciarSchedulerAsistencia } from './lib/asistenciaScheduler.js';
 import adminRoutes from './routes/admin.js';
 import authRoutes from './routes/auth.js';
 import activosRoutes from './routes/activos.js';
@@ -117,5 +118,7 @@ app.listen(env.PORT, () => {
   console.log(`   → CORS: ${env.CORS_ORIGIN}`);
   console.log(`   → DB:   ${env.DATABASE_URL.replace(/:[^:@]+@/, ':***@')}`);
   console.log(`   → NAS:  ${env.NAS_URL}`);
+  console.log('   → Asistencia Zlink: cron 09:30 y 10:00 (hora Perú)');
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  iniciarSchedulerAsistencia();
 });
