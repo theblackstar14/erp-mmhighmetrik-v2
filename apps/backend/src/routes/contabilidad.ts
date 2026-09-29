@@ -2325,6 +2325,10 @@ async function filasComprasPeriodo(periodo: string): Promise<ple.FilaCompra[]> {
       constanciaNumero: dd?.constanciaNumero ?? null,
       constanciaFecha: dd?.fechaDeposito ?? null,
       modSerie: g.docModificaSerie, modNumero: g.docModificaNumero,
+      // F8 · campos oficiales 5, 33 y 41
+      fechaVencimiento: g.fechaVencimiento,
+      sujetoRetencion: g.retencionTipo === 'igv3',
+      estado: (periodoDe(String(g.fecha)) === periodo ? '1' : '6') as '1' | '6', // 6 = emitida antes, anotada en plazo
     };
   });
 }
@@ -2359,6 +2363,7 @@ async function filasVentasPeriodo(periodo: string): Promise<ple.FilaVenta[]> {
       fechaVencimiento: v.comprobanteFechaVenc ?? v.comprobanteFecha ?? v.fechaEmision, // RVIE 5
       proyectoCodigo: proy?.codigo ?? null,                                              // RVIE 32
       detraccion: v.comprobanteDetraccion ? Number(v.comprobanteDetraccion) : null,      // RVIE 39
+      moneda: 'PEN', // F8 · campo 25 oficial (valos siempre PEN)
     };
   });
   // F3.1 · ventas standalone: serie/número reales siempre (aquí muere el placeholder)
@@ -2386,6 +2391,9 @@ async function filasVentasPeriodo(periodo: string): Promise<ple.FilaVenta[]> {
     fechaVencimiento: v.fechaVencimiento ?? v.fechaEmision,
     proyectoCodigo: v.proyectoId ? pmv.get(v.proyectoId) ?? null : null,
     detraccion: dMap.get(v.id) ?? null,
+    // F8 · campos oficiales 25 (moneda) y 28-30 (comprobante que la NC/ND modifica)
+    moneda: v.moneda,
+    modSerie: v.docModificaSerie, modNumero: v.docModificaNumero,
   }));
   return [...deValos, ...deStandalone].sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)));
 }
@@ -2411,9 +2419,17 @@ async function filasDiarioPeriodo(periodo: string): Promise<ple.FilaDiario[]> {
   }
   const filas: ple.FilaDiario[] = [];
   as.forEach((a, i) => {
-    const cuo = String(i + 1);
+    // F8 · CUO = correlativo interno (llave del software) · campo 3 = M#### (el PLE exige inicial A/M/C
+    // y nuestro AS-… arrancaba con "A" = asiento de apertura). Serie/número salen del docOrigen.
+    const guion = (a.docOrigen ?? '').lastIndexOf('-');
+    const serie = guion > 0 ? a.docOrigen!.slice(0, guion) : null;
+    const numero = guion > 0 ? a.docOrigen!.slice(guion + 1) : (a.docOrigen || null);
     for (const l of porAsiento.get(a.id) ?? []) {
-      filas.push({ cuo, correlativoAsiento: a.correlativo, fecha: a.fecha, glosa: a.glosa, cuenta: l.cuenta, debe: Number(l.debe), haber: Number(l.haber) });
+      filas.push({
+        cuo: a.correlativo, correlativoAsiento: `M${String(i + 1).padStart(4, '0')}`,
+        fecha: a.fecha, glosa: a.glosa, cuenta: l.cuenta, debe: Number(l.debe), haber: Number(l.haber),
+        moneda: a.moneda ?? 'PEN', contraparteDoc: a.contraparteRuc, tipoDoc: a.tipoDoc, serie, numero,
+      });
     }
   });
   return filas;

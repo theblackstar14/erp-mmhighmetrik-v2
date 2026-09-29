@@ -1681,7 +1681,7 @@ function PleExport({ periodo }: { periodo: string }) {
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">{SIRE.map((l) => <Card key={l.key} k={l.key} etiqueta={l.etiqueta} />)}</div>
       </div>
       <p className="text-[10px] text-ink-4 leading-relaxed border-t border-line pt-3">
-        PLE: estructura RS 286-2009. <b className="text-warn-ink">SIRE (RCE/RVIE): borrador estructural</b> — validar el orden/cantidad exactos de campos contra el formato de importación SIRE vigente de SUNAT (o un archivo real de la contadora) antes de subir. Ventas usa serie/número placeholder hasta capturar la factura electrónica real.
+        PLE: estructura oficial SUNAT Anexo 2 Ver 5 (5.1/6.1 = 21 campos, 8.1 = 41, 14.1 = 34), verificada por test automático. <b className="text-warn-ink">SIRE (RCE/RVIE): borrador estructural</b> — validar contra el formato de importación SIRE vigente (o un archivo real de la contadora) antes de subir.
       </p>
     </div>
   );

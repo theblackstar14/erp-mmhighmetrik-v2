@@ -13,7 +13,9 @@ const EMPRESA_RUC = '20610639764';
 const IGV_PCT = 18;
 
 // ── helpers de formato ──────────────────────────────────────
-const pipe = (campos: (string | number)[]) => campos.map((c) => (typeof c === 'number' ? c.toFixed(2) : c)).join('|') + '|';
+// el pipe es el separador del formato: un '|' o salto de línea DENTRO de un campo (glosas largas) rompe la fila
+const sinPipes = (c: string | number) => (typeof c === 'string' ? c.replace(/[|\r\n]+/g, ' ').trim() : c);
+const pipe = (campos: (string | number)[]) => campos.map((c) => (typeof c === 'number' ? c.toFixed(2) : sinPipes(c))).join('|') + '|';
 const n2 = (x: unknown) => Number(x ?? 0); // los montos van como number → pipe() los formatea
 const dmy = (iso: string | null | undefined) => {
   if (!iso) return '';
@@ -49,138 +51,165 @@ export type FilaCompra = {
   fecha: string; tipoComprobante: string | null; serie: string | null; numero: string | null;
   proveedorRuc: string | null; proveedorRazon: string | null;
   baseGravada: number; igv: number; noGravado: number; total: number; moneda: string | null; tipoCambio: number | null;
-  // F3.5 · destino del crédito fiscal (columnas 13-18) + constancia detracción (24/25) + doc modificado (NC · 27-30)
+  // F3.5 · destino del crédito fiscal (columnas 14-19 oficiales) + constancia detracción + doc modificado (NC)
   destinoCredito?: 'DG' | 'DGNG' | 'DNG';
   constanciaNumero?: string | null; constanciaFecha?: string | null;
   modSerie?: string | null; modNumero?: string | null;
+  // F8 · estructura oficial 41 campos
+  fechaVencimiento?: string | null;
+  sujetoRetencion?: boolean;      // campo 33 · marca del CP sujeto a retención (agente)
+  estado?: '1' | '6' | '9';       // campo 41 · 1 oportuno · 6 emitido antes, anotado en plazo (periodoContable) · 9 ajuste
 };
 export type FilaVenta = {
   fecha: string; tipoComprobante: string; serie: string; numero: string;
   clienteRuc: string | null; clienteRazon: string | null;
   baseGravada: number; igv: number; exonerado: number; total: number; tipoCambio: number | null;
   fechaVencimiento?: string | null; proyectoCodigo?: string | null; detraccion?: number | null;
+  // F8 · estructura oficial 34 campos
+  moneda?: string | null;
+  modSerie?: string | null; modNumero?: string | null; // NC/ND: comprobante que modifica
+  contrato?: string | null;                            // campo 31 · identificación del contrato/proyecto
 };
 export type FilaDiario = {
   cuo: string; correlativoAsiento: string; fecha: string; glosa: string;
   cuenta: string; debe: number; haber: number;
+  // F8 · estructura oficial (21 campos): tercero y comprobante del asiento — "de corresponder"
+  moneda?: string | null; contraparteDoc?: string | null; tipoDoc?: string | null;
+  serie?: string | null; numero?: string | null; fechaVenc?: string | null;
 };
 
 // ── 8.1 REGISTRO DE COMPRAS (080100) · 31 campos ────────────
+// F8 · estructura OFICIAL del Anexo 2 (PLE Ver 5) · 41 campos. Destino del crédito en 14-19,
+// constancia de detracción en 31 (FECHA) y 32 (NÚMERO) — el orden oficial, no el que asumimos antes.
 export function compras80100(periodo: string, filas: FilaCompra[]): string {
   const P = periodoTxt(periodo);
   return filas.map((f, i) => {
     const cuo = String(i + 1);
-    // F3.5 · la base y su IGV caen en la columna del DESTINO del crédito (DG 13/14 · DGNG 15/16 · DNG 17/18)
     const dc = f.destinoCredito ?? 'DG';
     return pipe([
       P,                                  // 1 Periodo
       cuo,                                // 2 CUO
-      `M${cuo}`,                          // 3 Correlativo del asiento / código de operación
+      `M${cuo}`,                          // 3 Correlativo del asiento (inicia en M)
       dmy(f.fecha),                       // 4 Fecha de emisión
-      '',                                 // 5 Fecha de vencimiento/pago
+      f.fechaVencimiento ? dmy(f.fechaVencimiento) : '', // 5 Fecha de vencimiento o pago
       tablaComprobante(f.tipoComprobante),// 6 Tipo CP (Tabla 10)
-      f.serie ?? '',                      // 7 Serie
-      '',                                 // 8 Año DUA/DSI
+      f.serie ?? '',                      // 7 Serie (o código dependencia DUA)
+      '',                                 // 8 Año de emisión DUA/DSI
       f.numero ?? '',                     // 9 Número CP
-      tablaDocIdentidad(f.proveedorRuc),  // 10 Tipo doc identidad proveedor (Tabla 2)
-      f.proveedorRuc ?? '',               // 11 Número doc proveedor
-      f.proveedorRazon ?? '',             // 12 Razón social proveedor
-      dc === 'DG' ? n2(f.baseGravada) : 0,   // 13 BI gravada destinada a operac. gravadas
-      dc === 'DG' ? n2(f.igv) : 0,           // 14 IGV de 13
-      dc === 'DGNG' ? n2(f.baseGravada) : 0, // 15 BI gravada destinada a gravadas y no gravadas
-      dc === 'DGNG' ? n2(f.igv) : 0,         // 16 IGV de 15
-      dc === 'DNG' ? n2(f.baseGravada) : 0,  // 17 BI gravada destinada a no gravadas
-      dc === 'DNG' ? n2(f.igv) : 0,          // 18 IGV de 17
-      n2(f.noGravado),                    // 19 Valor adquisiciones no gravadas
-      0,                                  // 20 ISC
-      0,                                  // 21 Otros tributos y cargos
-      n2(f.total),                        // 22 Importe total
-      '',                                 // 23 N° CP sujeto no domiciliado
-      f.constanciaNumero ?? '',           // 24 N° constancia depósito detracción
-      f.constanciaFecha ? dmy(f.constanciaFecha) : '', // 25 Fecha constancia detracción
-      f.tipoCambio ? n2(f.tipoCambio) : 0,// 26 Tipo de cambio
-      '',                                 // 27 Fecha CP modificado
-      f.modSerie ? '01' : '',             // 28 Tipo CP modificado (NC sobre factura)
-      f.modSerie ?? '',                   // 29 Serie CP modificado
-      f.modNumero ?? '',                  // 30 Número CP modificado
-      '1',                                // 31 Estado (1 = anotado oportunamente)
+      '',                                 // 10 Importe total operaciones diarias sin derecho a crédito (opcional)
+      tablaDocIdentidad(f.proveedorRuc),  // 11 Tipo doc identidad proveedor (Tabla 2)
+      f.proveedorRuc ?? '',               // 12 Número RUC / doc proveedor
+      f.proveedorRazon ?? '',             // 13 Razón social proveedor
+      dc === 'DG' ? n2(f.baseGravada) : 0,   // 14 BI destinada a operaciones gravadas
+      dc === 'DG' ? n2(f.igv) : 0,           // 15 IGV de 14
+      dc === 'DGNG' ? n2(f.baseGravada) : 0, // 16 BI destinada a gravadas y no gravadas
+      dc === 'DGNG' ? n2(f.igv) : 0,         // 17 IGV de 16
+      dc === 'DNG' ? n2(f.baseGravada) : 0,  // 18 BI destinada a no gravadas
+      dc === 'DNG' ? n2(f.igv) : 0,          // 19 IGV de 18
+      n2(f.noGravado),                    // 20 Valor adquisiciones no gravadas
+      0,                                  // 21 ISC
+      0,                                  // 22 Otros conceptos, tributos y cargos
+      n2(f.total),                        // 23 Importe total
+      f.moneda ?? 'PEN',                  // 24 Código de moneda (Tabla 4)
+      f.tipoCambio ? n2(f.tipoCambio) : '', // 25 Tipo de cambio
+      '',                                 // 26 Fecha CP que se modifica
+      f.modSerie ? '01' : '',             // 27 Tipo CP que se modifica
+      f.modSerie ?? '',                   // 28 Serie CP que se modifica
+      '',                                 // 29 Código dependencia aduanera DUA
+      f.modNumero ?? '',                  // 30 Número CP que se modifica
+      f.constanciaFecha ? dmy(f.constanciaFecha) : '', // 31 FECHA constancia depósito detracción
+      f.constanciaNumero ?? '',           // 32 NÚMERO constancia depósito detracción
+      f.sujetoRetencion ? '1' : '',       // 33 Marca CP sujeto a retención
+      '',                                 // 34 Clasificación bienes/servicios (Tabla 30, de corresponder)
+      '',                                 // 35 Identificación contrato (sociedades irregulares)
+      '',                                 // 36 Error tipo 1 (inconsistencia TC)
+      '',                                 // 37 Error tipo 2 (no habido)
+      '',                                 // 38 Error tipo 3 (renuncia exoneración)
+      '',                                 // 39 Error tipo 4 (DNI en liquidaciones)
+      '',                                 // 40 Indicador CP cancelado con medios de pago
+      f.estado ?? '1',                    // 41 Estado (1 oportuno · 6 anotado en plazo posterior)
     ]);
   }).join('\r\n');
 }
 
-// ── 14.1 REGISTRO DE VENTAS E INGRESOS (140100) · 29 campos ─
+// ── 14.1 REGISTRO DE VENTAS E INGRESOS (140100) · 34 campos (estructura oficial Anexo 2) ─
 export function ventas140100(periodo: string, filas: FilaVenta[]): string {
   const P = periodoTxt(periodo);
   return filas.map((f, i) => {
     const cuo = String(i + 1);
     return pipe([
       P,                                  // 1 Periodo
-      cuo,                                // 2 CUO
-      `M${cuo}`,                          // 3 Correlativo del asiento
+      cuo,                                // 2 CUO / correlativo del mes
+      `M${cuo}`,                          // 3 Correlativo del asiento (inicia en M)
       dmy(f.fecha),                       // 4 Fecha de emisión
-      '',                                 // 5 Fecha de vencimiento/pago
+      f.fechaVencimiento ? dmy(f.fechaVencimiento) : '', // 5 Fecha de vencimiento o pago
       tablaComprobante(f.tipoComprobante),// 6 Tipo CP (Tabla 10)
       f.serie,                            // 7 Serie
       f.numero,                           // 8 Número CP
-      tablaDocIdentidad(f.clienteRuc),    // 9 Tipo doc identidad cliente
-      f.clienteRuc ?? '',                 // 10 Número doc cliente
-      f.clienteRazon ?? '',               // 11 Razón social cliente
-      0,                                  // 12 Valor facturado exportación
-      n2(f.baseGravada),                  // 13 BI operación gravada
-      0,                                  // 14 Descuento BI
-      n2(f.igv),                          // 15 IGV/IPM
-      0,                                  // 16 Descuento IGV
-      n2(f.exonerado),                    // 17 Importe exonerado
-      0,                                  // 18 Importe inafecto
-      0,                                  // 19 ISC
-      0,                                  // 20 BI IVAP (arroz)
-      0,                                  // 21 IGV IVAP
-      0,                                  // 22 Otros tributos
-      n2(f.total),                        // 23 Importe total
-      f.tipoCambio ? n2(f.tipoCambio) : 0,// 24 Tipo de cambio
-      '',                                 // 25 Fecha CP modificado
-      '',                                 // 26 Tipo CP modificado
-      '',                                 // 27 Serie CP modificado
-      '',                                 // 28 Número CP modificado
-      '1',                                // 29 Estado
+      '',                                 // 9 Número final (tickets consolidados)
+      tablaDocIdentidad(f.clienteRuc),    // 10 Tipo doc identidad cliente
+      f.clienteRuc ?? '',                 // 11 Número doc cliente
+      f.clienteRazon ?? '',               // 12 Razón social cliente
+      0,                                  // 13 Valor facturado de exportación
+      n2(f.baseGravada),                  // 14 BI operación gravada
+      0,                                  // 15 Descuento de la BI
+      n2(f.igv),                          // 16 IGV/IPM
+      0,                                  // 17 Descuento del IGV
+      n2(f.exonerado),                    // 18 Importe exonerado
+      0,                                  // 19 Importe inafecto
+      0,                                  // 20 ISC
+      0,                                  // 21 BI IVAP
+      0,                                  // 22 IVAP
+      0,                                  // 23 Otros conceptos y tributos
+      n2(f.total),                        // 24 Importe total
+      f.moneda ?? 'PEN',                  // 25 Código de moneda (Tabla 4)
+      f.tipoCambio ? n2(f.tipoCambio) : '', // 26 Tipo de cambio
+      '',                                 // 27 Fecha CP que se modifica
+      f.modSerie ? '01' : '',             // 28 Tipo CP que se modifica
+      f.modSerie ?? '',                   // 29 Serie CP que se modifica
+      f.modNumero ?? '',                  // 30 Número CP que se modifica
+      f.contrato ?? '',                   // 31 Identificación del contrato/proyecto
+      '',                                 // 32 Error tipo 1 (inconsistencia TC)
+      '',                                 // 33 Indicador CP cancelado con medios de pago
+      '1',                                // 34 Estado
     ]);
   }).join('\r\n');
 }
 
-// ── 5.1 LIBRO DIARIO (050100) · 14 campos ───────────────────
-export function diario50100(periodo: string, filas: FilaDiario[]): string {
+// ── 5.1 LIBRO DIARIO y 6.1 LIBRO MAYOR (050100/060100) · 21 campos ──────────
+// F8 · estructura OFICIAL del Anexo 2 (PLE Ver 5): ambos libros comparten exactamente el mismo
+// layout de 21 campos. El correlativo (campo 3) DEBE iniciar en A/M/C — nuestro correlativo
+// interno AS-… empezaba con "A" (= asiento de apertura para el PLE): la ruta manda M#### y el
+// AS-… viaja como CUO (campo 2, llave del software).
+function libroDiarioMayor(periodo: string, filas: FilaDiario[]): string {
   const P = periodoTxt(periodo);
   return filas.map((f) => pipe([
-    P,                  // 1 Periodo
-    f.cuo,              // 2 CUO
-    f.correlativoAsiento, // 3 Correlativo del asiento (M####)
-    dmy(f.fecha),       // 4 Fecha de la operación
-    f.glosa,            // 5 Glosa
-    '',                 // 6 Glosa referencial
-    f.cuenta,           // 7 Código de la cuenta contable
-    '',                 // 8 Código libro de referencia (Tabla 8)
-    '',                 // 9 Correlativo de la operación de referencia
-    '',                 // 10 Número del documento sustentatorio
-    n2(f.debe),         // 11 Debe
-    n2(f.haber),        // 12 Haber
-    '1',                // 13 Estado de la operación
+    P,                                                    // 1 Periodo (AAAAMM00)
+    f.cuo,                                                // 2 CUO · llave del software
+    /^[AMC]/.test(f.correlativoAsiento) && !f.correlativoAsiento.startsWith('AS')
+      ? f.correlativoAsiento : `M${f.correlativoAsiento.replace(/\D/g, '') || '1'}`, // 3 A/M/C + correlativo
+    f.cuenta,                                             // 4 Cuenta desagregada
+    '',                                                   // 5 Unidad de operación (de corresponder)
+    '',                                                   // 6 Centro de costos (de corresponder)
+    f.moneda ?? 'PEN',                                    // 7 Moneda de origen (Tabla 4)
+    f.contraparteDoc ? tablaDocIdentidad(f.contraparteDoc) : '', // 8 Tipo doc identidad del emisor
+    f.contraparteDoc ?? '',                               // 9 Número doc identidad
+    f.tipoDoc ? tablaComprobante(f.tipoDoc) : '',         // 10 Tipo CP (Tabla 10, de corresponder)
+    f.serie ?? '',                                        // 11 Serie CP
+    f.numero ?? '',                                       // 12 Número CP
+    dmy(f.fecha),                                         // 13 Fecha contable
+    f.fechaVenc ? dmy(f.fechaVenc) : '',                  // 14 Fecha de vencimiento
+    dmy(f.fecha),                                         // 15 Fecha de operación o emisión
+    f.glosa,                                              // 16 Glosa
+    '',                                                   // 17 Glosa referencial
+    n2(f.debe),                                           // 18 Debe
+    n2(f.haber),                                          // 19 Haber
+    '',                                                   // 20 Dato estructurado (de ser el caso)
+    '1',                                                  // 21 Estado
   ])).join('\r\n');
 }
-
-// ── 6.1 LIBRO MAYOR (060100) · 8 campos ─────────────────────
-export function mayor60100(periodo: string, filas: FilaDiario[]): string {
-  const P = periodoTxt(periodo);
-  return filas.map((f) => pipe([
-    P,            // 1 Periodo
-    f.cuo,        // 2 CUO
-    '5',          // 3 Código del libro de origen (Tabla 8 · 5 = Libro Diario)
-    f.correlativoAsiento, // 4 Correlativo de la operación de origen
-    f.cuenta,     // 5 Código de la cuenta contable
-    n2(f.debe),   // 6 Debe
-    n2(f.haber),  // 7 Haber
-    '1',          // 8 Estado
-  ])).join('\r\n');
-}
+export const diario50100 = libroDiarioMayor;
+export const mayor60100 = libroDiarioMayor;
 
 // ══════════ SIRE (Sistema Integrado de Registros Electrónicos) ══════════
 // SIRE cubre SOLO Ventas (RVIE) y Compras (RCE). Diario/Mayor NO van al SIRE (siguen por PLE/SLE-PLE).
@@ -240,7 +269,7 @@ export function rvieVentas(periodo: string, filas: FilaVenta[]): string {
       '',                                  // 38 Observaciones
       Number(f.detraccion ?? 0) > 0 ? '1' : '', // 39 Indicador de detracción
       '',                                  // 40 Indicador de percepción (s/dato)
-    ].join('|');
+    ].map(sinPipes).join('|');
   }).join('\r\n');
 }
 export function rceCompras(periodo: string, filas: FilaCompra[]): string {
@@ -280,7 +309,7 @@ export function rceCompras(periodo: string, filas: FilaCompra[]): string {
       '',                                  // 30 Código de anotación CAR (lo asigna SUNAT)
       iso(f.fecha),                        // 31 Fecha de registro
       '1',                                 // 32 Estado
-    ].join('|');
+    ].map(sinPipes).join('|');
   }).join('\r\n');
 }
 export const sireNombreArchivo = (periodo: string, tipo: 'RCE' | 'RVIE') => `SIRE_${tipo}_${periodo.replace('-', '')}.txt`;
@@ -291,7 +320,7 @@ export function nombreArchivo(periodo: string, libroCodigo: string, conOperacion
   const aaaammdd = periodo.replace('-', '') + '00';
   const indOper = conOperaciones ? '1' : '0';
   // sufijo: indOperaciones · indContenido(1) · indMoneda(1=PEN) · indLibroElectrónico(1)
-  return `LE${EMPRESA_RUC}${aaaammdd}${libroCodigo}00${indOper}111.txt`;
+  return `LE${EMPRESA_RUC}${aaaammdd}${libroCodigo}00${indOper}111.TXT`; // patrón oficial: LERRRRRRRRRRRAAAAMM00cccccc00OIM1.TXT
 }
 
 export const LIBROS = {
@@ -312,19 +341,22 @@ if (process.argv[1]?.replace(/\\/g, '/').endsWith('lib/ple.ts')) {
   // pipe final presente + montos a 2 decimales
   const l = pipe(['202601 00', 1, 'x', 123.5]);
   assert(l === '202601 00|1.00|x|123.50|', 'pipe/format: ' + l);
-  // compras: 31 campos (30 pipes internos + el final) → 31 segmentos al hacer split sin el vacío final
-  const c = compras80100('2026-01', [{ fecha: '2026-01-15', tipoComprobante: 'Factura', serie: 'F001', numero: '123', proveedorRuc: '20123456789', proveedorRazon: 'ACME SAC', baseGravada: 100, igv: 18, noGravado: 0, total: 118, moneda: 'PEN', tipoCambio: null }]);
-  assert(c.split('|').length - 1 === 31, 'compras campos=' + (c.split('|').length - 1));
-  assert(c.startsWith('20260100|1|M1|15/01/2026|'), 'compras prefijo: ' + c.slice(0, 30));
-  assert(c.includes('|01|F001||123|6|20123456789|ACME SAC|100.00|18.00|'), 'compras cuerpo');
-  // ventas: 29 campos
+  // F8 · compras: 41 campos oficiales (Anexo 2 Ver 5)
+  const c = compras80100('2026-01', [{ fecha: '2026-01-15', tipoComprobante: 'Factura', serie: 'F001', numero: '123', proveedorRuc: '20123456789', proveedorRazon: 'ACME SAC', baseGravada: 100, igv: 18, noGravado: 0, total: 118, moneda: 'PEN', tipoCambio: null, constanciaNumero: '2026-000418', constanciaFecha: '2026-01-20' }]);
+  assert(c.split('|').length - 1 === 41, 'compras campos=' + (c.split('|').length - 1));
+  assert(c.startsWith('20260100|1|M1|15/01/2026||01|F001||123||6|20123456789|ACME SAC|100.00|18.00|'), 'compras prefijo: ' + c.slice(0, 90));
+  assert(c.includes('|118.00|PEN||'), 'compras total/moneda');
+  assert(c.includes('|20/01/2026|2026-000418|'), 'compras constancia (31 fecha · 32 número)');
+  // F8 · ventas: 34 campos oficiales
   const v = ventas140100('2026-01', [{ fecha: '2026-01-20', tipoComprobante: 'Factura', serie: 'F001', numero: '9', clienteRuc: '20100000001', clienteRazon: 'MUNI X', baseGravada: 1000, igv: 180, exonerado: 0, total: 1180, tipoCambio: null }]);
-  assert(v.split('|').length - 1 === 29, 'ventas campos=' + (v.split('|').length - 1));
-  // diario 13, mayor 8
-  const d = diario50100('2026-01', [{ cuo: '1', correlativoAsiento: 'M1', fecha: '2026-01-15', glosa: 'compra', cuenta: '601201', debe: 100, haber: 0 }]);
-  assert(d.split('|').length - 1 === 13, 'diario campos=' + (d.split('|').length - 1));
+  assert(v.split('|').length - 1 === 34, 'ventas campos=' + (v.split('|').length - 1));
+  assert(v.includes('|1180.00|PEN||'), 'ventas total/moneda');
+  // F8 · diario y mayor: 21 campos oficiales cada uno (mismo layout) · correlativo inicia en M (no AS-)
+  const d = diario50100('2026-01', [{ cuo: 'AS-202601-0001', correlativoAsiento: 'AS-202601-0001', fecha: '2026-01-15', glosa: 'compra', cuenta: '601201', debe: 100, haber: 0, contraparteDoc: '20123456789', tipoDoc: 'Factura', serie: 'F001', numero: '123' }]);
+  assert(d.split('|').length - 1 === 21, 'diario campos=' + (d.split('|').length - 1));
+  assert(d.startsWith('20260100|AS-202601-0001|M2026010001|601201|||PEN|6|20123456789|01|F001|123|15/01/2026||15/01/2026|compra||100.00|0.00||1|'), 'diario fila: ' + d);
   const m = mayor60100('2026-01', [{ cuo: '1', correlativoAsiento: 'M1', fecha: '2026-01-15', glosa: '', cuenta: '601201', debe: 100, haber: 0 }]);
-  assert(m.split('|').length - 1 === 8, 'mayor campos=' + (m.split('|').length - 1));
+  assert(m.split('|').length - 1 === 21, 'mayor campos=' + (m.split('|').length - 1));
   // SIRE · RVIE 40 campos (fecha ISO · TC 3 dec · sin pipe final · CUO+correlativo)
   const rv = rvieVentas('2026-07', [{ fecha: '2026-07-01', tipoComprobante: 'Factura', serie: 'F001', numero: '00001234', clienteRuc: '20123456789', clienteRazon: 'CLIENTE UNO S.A.C.', baseGravada: 1000, igv: 180, exonerado: 0, total: 1180, tipoCambio: null }]);
   assert(rv.split('|').length === 40, 'rvie campos=' + rv.split('|').length);
@@ -337,6 +369,6 @@ if (process.argv[1]?.replace(/\\/g, '/').endsWith('lib/ple.ts')) {
   assert(rc.includes('|944.00|PEN|1.000|'), 'rce total/moneda/tc');
   // nombre archivo
   const nom = nombreArchivo('2026-01', '080100', true);
-  assert(nom === 'LE2061063976420260100080100001111.txt', 'nombre: ' + nom);
+  assert(nom === 'LE2061063976420260100080100001111.TXT', 'nombre: ' + nom);
   console.log('ple.ts self-check OK ·', nom);
 }
