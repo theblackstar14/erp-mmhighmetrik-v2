@@ -14,6 +14,7 @@ import { audit } from '../lib/audit.js';
 import { createHash } from 'node:crypto';
 import { construirTaxonomia } from '../lib/conciliacionTaxonomia.js';
 import { parseEeccBcp } from '../lib/eeccBcp.js';
+import { clasificarLinea } from '../lib/conciliacionCasos.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -127,6 +128,22 @@ router.post('/importar', upload.single('file'), async (req, res) => {
   const [dup] = await db.select().from(schema.extractosBancarios).where(eq(schema.extractosBancarios.contenidoHash, contenidoHash));
   if (dup) return res.status(409).json({ error: 'Extracto ya importado (mismo contenido)', duplicado: true, extractoExistente: dup.id, importadoEn: dup.importadoEn });
 
+  // F6 · dedup ENTRE extractos de la misma cuenta (re-import del mes: PDF parcial → PDF final).
+  // Una línea con la MISMA fecha+monto+N° de operación ya importada antes entra como 'ignorado'
+  // (no re-concilia ni re-suma). Sin N° de operación no hay dedup: montos repetidos el mismo día
+  // son reales en el BCP (4× 951.25 el 03-01) y marcarlos sería perder plata del extracto.
+  let yaImportadas = new Set<string>();
+  if (cuentaId) {
+    const previas = await db.select({ fecha: schema.extractoLineas.fecha, monto: schema.extractoLineas.monto, ref: schema.extractoLineas.referencia })
+      .from(schema.extractoLineas)
+      .innerJoin(schema.extractosBancarios, eq(schema.extractoLineas.extractoId, schema.extractosBancarios.id))
+      .where(eq(schema.extractosBancarios.cuentaId, cuentaId));
+    yaImportadas = new Set(previas.filter((p) => p.ref).map((p) => `${p.fecha}|${Number(p.monto).toFixed(2)}|${normOp(p.ref)}`));
+  }
+  const esDuplicada = (l: { fecha: string; monto: number; referencia: string | null }) =>
+    !!l.referencia && yaImportadas.has(`${l.fecha}|${l.monto.toFixed(2)}|${normOp(l.referencia)}`);
+  const duplicadas = limpias.filter(esDuplicada).length;
+
   try {
     const [ext] = await db.insert(schema.extractosBancarios).values({
       cuentaId: cuentaId || null, banco: banco || null, moneda: moneda || 'PEN',
@@ -135,10 +152,11 @@ router.post('/importar', upload.single('file'), async (req, res) => {
     await db.insert(schema.extractoLineas).values(limpias.map((l) => ({
       extractoId: ext!.id, fecha: l.fecha, descripcion: l.descripcion, referencia: l.referencia,
       monto: l.monto.toFixed(2), moneda: l.moneda, saldo: l.saldo != null ? l.saldo.toFixed(2) : null,
+      estado: esDuplicada(l) ? ('ignorado' as const) : ('pendiente' as const),
     })));
-    await audit(req, { action: 'importar_extracto', entityType: 'extracto_bancario', entityId: ext!.id, after: { archivo: req.file.originalname, filas: limpias.length, cuentaId } });
+    await audit(req, { action: 'importar_extracto', entityType: 'extracto_bancario', entityId: ext!.id, after: { archivo: req.file.originalname, filas: limpias.length, cuentaId, duplicadas } });
     const matched = await autoMatch(ext!.id); // matcher determinístico inmediato (sugerencias)
-    res.json({ extracto: ext, lineas: limpias.length, descartadas: lineas.length - limpias.length, sugeridos: matched });
+    res.json({ extracto: ext, lineas: limpias.length, descartadas: lineas.length - limpias.length, duplicadasOtroExtracto: duplicadas, sugeridos: matched });
   } catch (e) {
     const msg = (e as Error).message;
     // F4B.3 · carrera concurrente: el UNIQUE(contenido_hash) frena el 2º insert simultáneo → 409 (no doble extracto)
@@ -161,6 +179,11 @@ async function autoMatch(extractoId: string): Promise<number> {
   const cands: { lineaId: string; movId: string; score: number; dias: number }[] = [];
   for (const l of lineas) {
     const lMonto = Number(l.monto); const lFecha = new Date(`${l.fecha}T00:00:00`);
+    // F6 · los cargos del banco (ITF/COM/MANT) no tienen movimiento propio en el ERP: sugerirles
+    // pareja es falso-match seguro (un ITF de 0.25 "cuadra" con cualquier mov chico por la
+    // tolerancia de S/1). Su destino es el lote de cargos del banco, no el matcher.
+    const caso = clasificarLinea(l.descripcion, lMonto).caso;
+    if (caso === 'itf' || caso === 'cargo_banco') continue;
     const lRefN = normOp(l.referencia); const lDescN = norm(l.descripcion);
     for (const m of movs) {
       const mBase = Number(m.montoBase ?? m.monto);
@@ -202,13 +225,68 @@ router.get('/', async (_req, res) => {
   res.json({ extractos: ext.map((e) => ({ ...e, conteos: byExt.get(e.id) ?? {} })) });
 });
 
-// GET /:id/lineas · líneas + datos del movimiento sugerido
+// GET /:id/lineas · líneas + movimiento sugerido + caso de uso clasificado (F6)
 router.get('/:id/lineas', async (req, res) => {
   const lineas = await db.select().from(schema.extractoLineas).where(eq(schema.extractoLineas.extractoId, req.params.id!)).orderBy(schema.extractoLineas.fecha);
   const movIds = [...new Set(lineas.map((l) => l.movimientoId).filter(Boolean) as string[])];
   const movs = movIds.length ? await db.select().from(schema.movimientos).where(inArray(schema.movimientos.id, movIds)) : [];
   const movMap = new Map(movs.map((m) => [m.id, m]));
-  res.json({ lineas: lineas.map((l) => ({ ...l, movimiento: l.movimientoId ? movMap.get(l.movimientoId) ?? null : null })) });
+  res.json({
+    lineas: lineas.map((l) => ({
+      ...l,
+      movimiento: l.movimientoId ? movMap.get(l.movimientoId) ?? null : null,
+      ...clasificarLinea(l.descripcion, Number(l.monto)), // caso · cuentaSugerida · entradaSugerida
+    })),
+  });
+});
+
+// F6 · POST /cargos-banco · lote: N líneas de cargos del banco (ITF/COM/MANT) → N movimientos
+// egreso con cuenta contra manual (editable por fila) + línea conciliada de frente (link directo,
+// sin depender del matcher: el ITF no trae N° de operación). El asiento nace en /generar.
+router.post('/cargos-banco', async (req, res) => {
+  const items = (req.body as { items?: { lineaId: string; cuenta?: string }[] }).items ?? [];
+  if (!items.length) return res.status(400).json({ error: 'items requeridos: [{lineaId, cuenta?}]' });
+  const lineas = await db.select().from(schema.extractoLineas).where(inArray(schema.extractoLineas.id, items.map((i) => i.lineaId)));
+  const extIds = [...new Set(lineas.map((l) => l.extractoId))];
+  const exts = await db.select().from(schema.extractosBancarios).where(inArray(schema.extractosBancarios.id, extIds));
+  const extMap = new Map(exts.map((e) => [e.id, e]));
+  // valida cuentas contables del lote de un golpe
+  const cuentas = [...new Set(items.map((i) => i.cuenta ?? clasificarLinea(lineas.find((l) => l.id === i.lineaId)?.descripcion ?? null, -1).cuentaSugerida ?? '679'))];
+  const enPlan = new Set((await db.select({ c: schema.planContable.codigo }).from(schema.planContable).where(inArray(schema.planContable.codigo, cuentas))).map((r) => r.c));
+  const faltan = cuentas.filter((c) => !enPlan.has(c));
+  if (faltan.length) return res.status(400).json({ error: `Cuentas no existen en el plan: ${faltan.join(', ')}` });
+
+  const creados: { lineaId: string; movimientoId: string; cuenta: string }[] = [];
+  const errores: string[] = [];
+  for (const it of items) {
+    const l = lineas.find((x) => x.id === it.lineaId);
+    if (!l) { errores.push(`${it.lineaId}: línea no existe`); continue; }
+    if (l.estado !== 'pendiente' || l.movimientoId) { errores.push(`${l.fecha} ${l.descripcion?.slice(0, 20)}: ya procesada`); continue; }
+    const monto = Number(l.monto);
+    if (monto >= 0) { errores.push(`${l.fecha} ${l.descripcion?.slice(0, 20)}: no es un cargo`); continue; }
+    const ext = extMap.get(l.extractoId);
+    if (!ext?.cuentaId) { errores.push(`${l.fecha}: el extracto no tiene cuenta bancaria asignada`); continue; }
+    const cuenta = it.cuenta ?? clasificarLinea(l.descripcion, monto).cuentaSugerida ?? '679';
+    try {
+      const [mov] = await db.insert(schema.movimientos).values({
+        fecha: l.fecha, tipoMovimiento: 'Egreso', cuentaId: ext.cuentaId,
+        moneda: l.moneda ?? 'PEN', monto: Math.abs(monto).toFixed(2), subtotal: Math.abs(monto).toFixed(2),
+        igv: '0', montoBase: Math.abs(monto).toFixed(2), tipoCambio: null,
+        subtipo: 'Cargo bancario', naturalezaContable: 'GASTO_OPERATIVO',
+        descripcion: (l.descripcion ?? 'Cargo del banco').slice(0, 250),
+        numOperacion: l.referencia, cuentaContable: cuenta, cuentaContableOrigen: 'USUARIO',
+        userId: req.user!.id,
+      }).returning();
+      await db.update(schema.extractoLineas)
+        .set({ estado: 'conciliado', movimientoId: mov!.id, matchedPor: req.user!.id, matchedEn: new Date() })
+        .where(eq(schema.extractoLineas.id, l.id));
+      creados.push({ lineaId: l.id, movimientoId: mov!.id, cuenta });
+    } catch (e) {
+      errores.push(`${l.fecha} ${l.descripcion?.slice(0, 20)}: ${(e as Error).message}`);
+    }
+  }
+  if (creados.length) await audit(req, { action: 'cargos_banco_lote', entityType: 'extracto_bancario', entityId: extIds[0] ?? 'lote', after: { creados: creados.length, total: items.length, errores } });
+  res.json({ creados, errores });
 });
 
 // POST /lineas/:id/conciliar · aprueba el match (confirma movimientoId)

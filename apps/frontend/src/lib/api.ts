@@ -814,6 +814,9 @@ export const api = {
     getLineas: (extractoId: string) => req<{ lineas: ExtractoLineaUI[] }>(`/api/conciliacion/${extractoId}/lineas`),
     conciliar: (lineaId: string, movimientoId: string) => req<{ linea: ExtractoLineaUI }>(`/api/conciliacion/lineas/${lineaId}/conciliar`, { method: 'POST', body: JSON.stringify({ movimientoId }) }),
     setEstado: (lineaId: string, estado: string, motivo?: string) => req<{ linea: ExtractoLineaUI }>(`/api/conciliacion/lineas/${lineaId}/estado`, { method: 'POST', body: JSON.stringify({ estado, motivo }) }),
+    // F6 · lote de cargos del banco (ITF/COM/MANT) → movimientos 6412/679 conciliados de frente
+    cargosBanco: (items: { lineaId: string; cuenta?: string }[]) =>
+      req<{ creados: { lineaId: string; movimientoId: string; cuenta: string }[]; errores: string[] }>('/api/conciliacion/cargos-banco', { method: 'POST', body: JSON.stringify({ items }) }),
     metricas: (periodo?: string) => req<ConciliacionMetricas>(`/api/conciliacion/metricas${periodo ? `?periodo=${periodo}` : ''}`),
     resumen: (cuenta: string, periodo: string) => req<ConciliacionResumen>(`/api/conciliacion/resumen?cuenta=${cuenta}&periodo=${periodo}`),
   },
@@ -2220,7 +2223,15 @@ export type CutoverPlaybook = {
 };
 export type AuditEvento = { id: string; action: string; entityType: string | null; entityId: string | null; changes: { before?: unknown; after?: unknown; motivo?: string | null } | null; ip?: string | null; createdAt: string; userId: string | null; userEmail: string | null; userNombres: string | null };
 export type ExtractoBancario = { id: string; cuentaId: string | null; banco: string | null; moneda: string; nombreArchivo: string | null; totalFilas: number; importadoEn: string };
-export type ExtractoLineaUI = { id: string; extractoId: string; fecha: string; descripcion: string | null; referencia: string | null; monto: string; moneda: string; estado: string; movimientoId: string | null; score: string | null; confianza: string | null; movimiento: Movimiento | null };
+export type ExtractoLineaUI = {
+  id: string; extractoId: string; fecha: string; descripcion: string | null; referencia: string | null;
+  monto: string; moneda: string; estado: string; movimientoId: string | null; score: string | null; confianza: string | null;
+  movimiento: Movimiento | null;
+  // F6 · caso de uso clasificado (el sistema propone, Kelly confirma)
+  caso: 'itf' | 'cargo_banco' | 'transfer_propia' | 'abono' | 'cargo';
+  cuentaSugerida: string | null;
+  entradaSugerida: 'ingreso' | 'pago' | 'bancario' | null;
+};
 export type ConciliacionMetricas = { periodo: string | null; total: number; conciliado: number; pendiente: number; diferencia: number; ignorado: number; pctConciliado: number; diferenciaNeta: number; agingMaxDias: number };
 export type PartidaConcil = { id: string; fecha: string; desc: string | null; monto: number; clase: string; aging: number };
 export type ConciliacionResumen = {

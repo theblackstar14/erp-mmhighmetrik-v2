@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { Suspense, lazy, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { type FinanzasResumen, type MovimientoInput, type GastoInput, type ConciliacionResumen, type PartidaConcil, type PlanCuentaBusqueda, type CpeBorrador, type CajaRow, type CuentaBancaria, type ProvisionRow, type CostosObra, api } from '@/lib/api.js';
+import { type FinanzasResumen, type MovimientoInput, type GastoInput, type ConciliacionResumen, type PartidaConcil, type PlanCuentaBusqueda, type CpeBorrador, type CajaRow, type CuentaBancaria, type ProvisionRow, type CostosObra, type ExtractoLineaUI, api } from '@/lib/api.js';
 import { cn, fmtPEN } from '@/lib/utils.js';
 import { CuentaContableSelect, claseDerivadaUI } from '@/components/contabilidad/CuentaContableSelect.js';
 import { invalidateResumen } from '@/lib/invalidate.js';
@@ -134,7 +134,7 @@ export function FinanzasPage() {
         {sub === 'compras' && <ComprasHub key={hubVista ?? ''} proyectoId={filtro} proyectos={proyectos} initialVista={hubVista === 'bandeja' ? 'bandeja' : 'registro'} />}
         {sub === 'ventas' && <VentasView proyectoId={filtro} />}
         {sub === 'caja' && <CajaBancosHub proyectoId={filtro} proyectos={proyectos} />}
-        {sub === 'conciliacion' && <ConciliacionView />}
+        {sub === 'conciliacion' && <ConciliacionView proyectos={proyectos} defaultProyecto={filtro} />}
         {sub === 'reportes' && <ReportesView r={r} />}
       </TabFade>
 
@@ -1598,11 +1598,21 @@ const TIPOS_CPE_COMPRA = [
 ] as const;
 const TIPO_CPE_NOMBRE: Record<string, string> = { '01': 'Factura', '03': 'Boleta', '07': 'Nota de Crédito', '08': 'Nota de Débito', '02': 'Recibo por Honorarios', '00': 'Sin comprobante' };
 
-function MovModalV2({ proyectos, defaultProyecto, onClose }: { proyectos: { id: string; codigo: string; nombre: string }[]; defaultProyecto: string; onClose: () => void }) {
+type MovV2Prefill = {
+  // F6 · «Registrar desde extracto»: la línea del banco precarga el formulario y elige la entrada
+  entrada?: 'compra' | 'gasto' | 'pago' | 'bancario' | 'ingreso';
+  fecha?: string; monto?: number; numOperacion?: string | null; cuentaId?: string | null; descripcion?: string | null;
+};
+
+function MovModalV2({ proyectos, defaultProyecto, onClose, prefill, onRegistrado }: {
+  proyectos: { id: string; codigo: string; nombre: string }[]; defaultProyecto: string; onClose: () => void;
+  prefill?: MovV2Prefill;
+  onRegistrado?: (movimientoId: string | null) => void; // F6 · para auto-conciliar la línea del extracto
+}) {
   const qc = useQueryClient();
   const hoy = new Date().toISOString().slice(0, 10);
   type Entrada = 'compra' | 'gasto' | 'pago' | 'bancario' | 'ingreso';
-  const [entrada, setEntrada] = useState<Entrada>('compra');
+  const [entrada, setEntrada] = useState<Entrada>(prefill?.entrada ?? 'compra');
   const esCompraGasto = entrada === 'compra' || entrada === 'gasto';
   const esPagoIngreso = entrada === 'pago' || entrada === 'ingreso';
 
@@ -1644,7 +1654,13 @@ function MovModalV2({ proyectos, defaultProyecto, onClose }: { proyectos: { id: 
     return m;
   }, [repartoObras, repartoCostosQ]);
   // ── Pago / Bancario / Ingreso ──
-  const [bi, setBi] = useState({ fecha: hoy, monto: '', cuentaId: '', cuentaDestinoId: '', numOperacion: '', ruc: '', contraparte: '', descripcion: '' });
+  const [bi, setBi] = useState({
+    fecha: prefill?.fecha ?? hoy,
+    monto: prefill?.monto != null ? String(Math.abs(prefill.monto)) : '',
+    cuentaId: prefill?.cuentaId ?? '', cuentaDestinoId: '',
+    numOperacion: prefill?.numOperacion ?? '', ruc: '', contraparte: '',
+    descripcion: prefill?.descripcion ?? '',
+  });
   const biset = (p: Partial<typeof bi>) => setBi((s) => ({ ...s, ...p }));
   // F5.4 · swap: aplicaciones a facturas (F2.2), provisión 48 y cuenta contra manual viven ahora en V2
   const [aplicSel, setAplicSel] = useState<Record<string, string>>({});
@@ -1784,7 +1800,7 @@ function MovModalV2({ proyectos, defaultProyecto, onClose }: { proyectos: { id: 
         const monto = parseFloat(bi.monto) || 0;
         // F5.4 · pago/cobro con aplicaciones (F2.2) + provisión 48 + cuenta contra manual (del clásico)
         const contraManual = entrada === 'pago' && pago48 ? '4811' : cuentaContra;
-        await api.finanzas.createMovimientoGlobal({
+        const r = await api.finanzas.createMovimientoGlobal({
           fecha: bi.fecha, tipoMovimiento: entrada === 'ingreso' ? 'Ingreso' : 'Egreso', proyectoId: proyectoId || null,
           cuentaId: bi.cuentaId || null, cuentaDestinoId: entrada === 'bancario' ? bi.cuentaDestinoId || null : null,
           subtipo: entrada === 'bancario' ? 'Transferencia entre cuentas' : null,
@@ -1794,7 +1810,7 @@ function MovModalV2({ proyectos, defaultProyecto, onClose }: { proyectos: { id: 
           ...(contraManual ? { cuentaContable: contraManual, cuentaContableOrigen: 'USUARIO' as const } : {}),
           aplicaciones: apList.length && !pago48 ? apList : undefined,
         });
-        return;
+        return r.movimiento.id as string; // F6 · para conciliar la línea del extracto
       }
       // F5.4 · prorrateo (solo Gasto sin comprobante): N gastos ligados por la referencia de operación
       if (entrada === 'gasto' && prorratear) {
@@ -1858,16 +1874,19 @@ function MovModalV2({ proyectos, defaultProyecto, onClose }: { proyectos: { id: 
       } as GastoInput & { proyectoId?: string | null; docModifica?: { serie: string; numero: string }; retencion?: { tipo: string; monto: number }; percepcion?: number };
       const { gasto } = await api.finanzas.createGastoGlobal(payload);
       if (pagadoNum > 0 && gasto && !esNC) {
-        await api.finanzas.createMovimientoGlobal({
+        const rm = await api.finanzas.createMovimientoGlobal({
           fecha: pago.fecha, tipoMovimiento: 'Egreso', proyectoId: proyectoId || null,
           cuentaId: pago.cuentaId, monto: pagadoNum, subtotal: pagadoNum, igv: 0,
           moneda: doc.moneda, tipoCambio: doc.moneda !== 'PEN' ? parseFloat(doc.tipoCambio) || null : null,
           clienteNombre: prov.razon || null, numOperacion: pago.numOperacion || null,
           gastoId: gasto.id, descripcion: `Pago ${sinCpe ? 'gasto' : `${doc.serie}-${doc.numero}`} · ${prov.razon}`.slice(0, 250),
         });
+        return rm.movimiento.id as string;
       }
+      return null;
     },
-    onSuccess: () => {
+    onSuccess: (movId) => {
+      onRegistrado?.((movId as string | null | undefined) ?? null); // F6 · auto-concilia la línea del extracto
       setEmitDone(true);
       setTimeout(() => {
         invalidateResumen(qc);
@@ -3174,12 +3193,15 @@ function ResumenConciliacionPanel() {
   );
 }
 
-function ConciliacionView() {
+function ConciliacionView({ proyectos, defaultProyecto }: { proyectos: { id: string; codigo: string; nombre: string }[]; defaultProyecto: string }) {
   const qc = useQueryClient();
   const [sel, setSel] = useState<string | null>(null);
   const [cuentaId, setCuentaId] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [err, setErr] = useState('');
+  // F6 · flujos: registrar desde extracto (abre el formulario nuevo prellenado) + lote de cargos del banco
+  const [registrarLinea, setRegistrarLinea] = useState<ExtractoLineaUI | null>(null);
+  const [loteOpen, setLoteOpen] = useState(false);
   const cuentasQ = useQuery({ queryKey: ['cuentas'], queryFn: () => api.finanzas.listCuentas() });
   const extQ = useQuery({ queryKey: ['concil-ext'], queryFn: () => api.conciliacion.listExtractos() });
   const linQ = useQuery({ queryKey: ['concil-lin', sel], queryFn: () => api.conciliacion.getLineas(sel!), enabled: !!sel });
@@ -3193,6 +3215,7 @@ function ConciliacionView() {
   const setEstado = useMutation({ mutationFn: (v: { id: string; estado: string }) => api.conciliacion.setEstado(v.id, v.estado), onSuccess: inval });
   const cuentas = cuentasQ.data?.cuentas ?? [];
   const lineas = linQ.data?.lineas ?? [];
+  const extSel = (extQ.data?.extractos ?? []).find((e) => e.id === sel); // cuenta bancaria del extracto (prefill)
   const chip = (e: string) => e === 'conciliado' ? 'text-emerald-600' : e === 'diferencia' ? 'text-destructive' : e === 'ignorado' ? 'text-ink-4' : 'text-amber-600';
 
   return (
@@ -3238,9 +3261,19 @@ function ConciliacionView() {
       </div>
 
       {/* Líneas del extracto seleccionado */}
-      {sel && (
+      {sel && (() => {
+        const cargosPend = lineas.filter((l) => l.estado === 'pendiente' && !l.movimientoId && (l.caso === 'itf' || l.caso === 'cargo_banco'));
+        return (
         <div className="rounded-lg border border-line bg-bg-elev overflow-hidden">
-          <div className="border-b border-line px-4 py-2.5"><h3 className="text-[13px] font-semibold">Líneas · match ERP ↔ banco</h3></div>
+          <div className="flex items-center gap-2 border-b border-line px-4 py-2.5">
+            <h3 className="text-[13px] font-semibold">Líneas · match ERP ↔ banco</h3>
+            <div className="flex-1" />
+            {cargosPend.length > 0 && (
+              <button onClick={() => setLoteOpen(true)} className="h-7 px-2.5 rounded-md border border-amber-400/60 text-amber-700 text-[11px] font-semibold hover:bg-amber-50 dark:hover:bg-amber-950/30">
+                Registrar {cargosPend.length} cargo(s) del banco en lote
+              </button>
+            )}
+          </div>
           {linQ.isLoading ? <SkelRows rows={6} /> : (
             <table className="w-full text-[12px]">
               <thead className="bg-bg-sunken border-b border-line"><tr className="text-left text-[10px] font-mono uppercase tracking-wider text-ink-4">
@@ -3253,13 +3286,20 @@ function ConciliacionView() {
                     <td className="px-3 py-2 font-mono text-[10.5px]">{l.fecha}</td>
                     <td className="px-3 py-2 text-[11px] max-w-[220px] truncate" title={l.descripcion ?? ''}>{l.descripcion || '—'}{l.referencia && <span className="text-ink-4"> · {l.referencia}</span>}</td>
                     <td className={cn('px-3 py-2 text-right font-mono tabular-nums', Number(l.monto) < 0 && 'text-destructive')}>{fmtPEN(Number(l.monto))}</td>
-                    <td className="px-3 py-2"><span className={cn('chip', chip(l.estado))}>{l.estado}</span></td>
+                    <td className="px-3 py-2">
+                      <span className={cn('chip', chip(l.estado))}>{l.estado}</span>
+                      {(l.caso === 'itf' || l.caso === 'cargo_banco') && <span className="block text-[9px] text-amber-600">cargo banco</span>}
+                      {l.caso === 'transfer_propia' && <span className="block text-[9px] text-ink-4">cta. propia</span>}
+                    </td>
                     <td className="px-3 py-2 text-[11px]">{l.movimiento ? <span>{l.movimiento.descripcion ?? l.movimiento.tipoMovimiento} · {fmtPEN(Number(l.movimiento.montoBase ?? l.movimiento.monto))} {l.confianza && <span className="text-ink-4">({l.confianza} {l.score})</span>}</span> : <span className="text-ink-4">sin sugerencia</span>}</td>
                     <td className="px-3 py-2">
                       {l.estado === 'conciliado'
                         ? <button onClick={() => setEstado.mutate({ id: l.id, estado: 'pendiente' })} className="text-[10.5px] text-ink-4 hover:text-foreground">deshacer</button>
                         : <div className="flex gap-1.5">
                             {l.movimientoId && <button onClick={() => conciliar.mutate({ id: l.id, mid: l.movimientoId! })} className="h-6 px-2 rounded bg-emerald-600 text-white text-[10.5px]">Conciliar</button>}
+                            {!l.movimientoId && l.caso !== 'itf' && l.caso !== 'cargo_banco' && (
+                              <button onClick={() => setRegistrarLinea(l)} title="Abre el formulario prellenado con esta línea del banco; al guardar queda conciliada" className="h-6 px-2 rounded border border-primary/60 text-primary text-[10.5px] font-semibold">Registrar</button>
+                            )}
                             <button onClick={() => setEstado.mutate({ id: l.id, estado: 'diferencia' })} className="h-6 px-2 rounded border border-line text-[10.5px] hover:text-destructive">Diferencia</button>
                             <button onClick={() => setEstado.mutate({ id: l.id, estado: 'ignorado' })} className="h-6 px-2 rounded border border-line text-[10.5px] text-ink-4">Ignorar</button>
                           </div>}
@@ -3271,8 +3311,83 @@ function ConciliacionView() {
             </table>
           )}
         </div>
+        );
+      })()}
+
+      {/* F6 · Registrar desde extracto: formulario nuevo prellenado; al guardar la línea queda conciliada */}
+      {registrarLinea && (
+        <MovModalV2
+          proyectos={proyectos}
+          defaultProyecto={defaultProyecto}
+          prefill={{
+            entrada: registrarLinea.entradaSugerida ?? (Number(registrarLinea.monto) > 0 ? 'ingreso' : 'pago'),
+            fecha: registrarLinea.fecha,
+            monto: Number(registrarLinea.monto),
+            numOperacion: registrarLinea.referencia,
+            cuentaId: extSel?.cuentaId ?? null,
+            descripcion: registrarLinea.descripcion,
+          }}
+          onRegistrado={(movId) => { if (movId) conciliar.mutate({ id: registrarLinea.id, mid: movId }); }}
+          onClose={() => { setRegistrarLinea(null); inval(); }}
+        />
+      )}
+      {loteOpen && sel && (
+        <CargosBancoModal
+          lineas={lineas.filter((l) => l.estado === 'pendiente' && !l.movimientoId && (l.caso === 'itf' || l.caso === 'cargo_banco'))}
+          onClose={() => { setLoteOpen(false); inval(); qc.invalidateQueries({ queryKey: ['mov-global'] }); }}
+        />
       )}
     </div>
+  );
+}
+
+// ─── F6 · Lote de cargos del banco: ITF → 6412, comisiones/portes/mant → 679 (cuenta editable) ──
+function CargosBancoModal({ lineas, onClose }: { lineas: ExtractoLineaUI[]; onClose: () => void }) {
+  const [cuentas, setCuentas] = useState<Record<string, string>>(() => Object.fromEntries(lineas.map((l) => [l.id, l.cuentaSugerida ?? '679'])));
+  const [error, setError] = useState<string | null>(null);
+  const [resultado, setResultado] = useState<string | null>(null);
+  const total = lineas.reduce((s, l) => s + Math.abs(Number(l.monto)), 0);
+  const mut = useMutation({
+    mutationFn: () => api.conciliacion.cargosBanco(lineas.map((l) => ({ lineaId: l.id, cuenta: cuentas[l.id] }))),
+    onSuccess: (r) => {
+      if (r.errores.length) setResultado(`${r.creados.length} registrado(s) · ${r.errores.length} con error: ${r.errores.join(' · ')}`);
+      else { setResultado(null); onClose(); }
+    },
+    onError: (e: Error) => setError(e.message),
+  });
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 animate-backdropIn" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="w-full max-w-lg rounded-xl border border-line bg-bg-elev shadow-2xl animate-modalPop">
+        <div className="flex items-center justify-between border-b border-line px-5 py-3.5">
+          <div>
+            <h2 className="text-[15px] font-bold">Cargos del banco · {lineas.length} línea(s)</h2>
+            <div className="text-[11px] text-ink-3">Cada línea se registra como egreso con su cuenta (editable) y queda conciliada. El asiento nace en la pasada del período.</div>
+          </div>
+          <button onClick={onClose} className="h-8 w-8 rounded-md inline-flex items-center justify-center text-ink-3 hover:bg-bg-sunken"><X className="h-4 w-4" /></button>
+        </div>
+        <div className="p-5 space-y-2 max-h-[55vh] overflow-y-auto">
+          {lineas.map((l) => (
+            <div key={l.id} className="flex items-center gap-2.5 text-[11.5px]">
+              <span className="font-mono text-[10.5px] text-ink-3 w-16">{l.fecha.slice(5)}</span>
+              <span className="flex-1 min-w-0 truncate" title={l.descripcion ?? ''}>{l.descripcion}</span>
+              <span className="font-mono text-rose-600 whitespace-nowrap">{fmtPEN(Number(l.monto))}</span>
+              <input className={cn(inputCls, 'h-7 w-20 font-mono')} value={cuentas[l.id] ?? ''} onChange={(e) => setCuentas((s) => ({ ...s, [l.id]: e.target.value }))} title="Cuenta contable del cargo (6412 ITF · 679 comisiones)" />
+            </div>
+          ))}
+          {resultado && <div className="rounded-md border border-amber-300/60 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-[11px] text-amber-700">{resultado}</div>}
+          {error && <div className="rounded-md border border-rose-300/60 bg-rose-50 dark:bg-rose-950/30 px-3 py-2 text-[11px] text-rose-700">{error}</div>}
+        </div>
+        <div className="flex items-center gap-3 border-t border-line px-5 py-3">
+          <span className="text-[11px] text-ink-3 mr-auto font-mono">Σ {fmtPEN(total)}</span>
+          <button onClick={onClose} className="h-8 px-3 rounded-md border border-line text-[12px] hover:bg-bg-sunken">Cancelar</button>
+          <button disabled={mut.isPending || !lineas.length} onClick={() => { setError(null); mut.mutate(); }}
+            className={cn('h-8 px-3 rounded-md bg-amber-600 text-white text-[12px] font-semibold hover:opacity-90', (mut.isPending || !lineas.length) && 'opacity-50 pointer-events-none')}>
+            {mut.isPending ? 'Registrando…' : `Registrar ${lineas.length} cargo(s)`}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 
