@@ -1,6 +1,7 @@
 /**
  * Task 6 · Test integral planilla oficina v2 (motor, params legales, YTD, snapshot).
- * Prueba original (Task 4 / C-2) + nuevos casos v2 (julio 2026 anchors + override manual).
+ * Prueba original (Task 4 / C-2) + nuevos casos v2 (julio 2026 anchors cuadran el Excel,
+ * sin circularidad — se usan literales del Excel, no el engine mismo como oráculo).
  * In-process, routers reales, lucia session.
  *   cd apps/backend && DATABASE_URL="postgresql://postgres:MiClave123@localhost:5432/erp_mmh_test" npx tsx scripts/oficina/test-planilla-flow.ts
  * Requiere DATABASE_URL=erp_mmh_test. Imprime 'planilla-flow VERDE' en éxito.
@@ -26,19 +27,26 @@ const AFP_SISTEMA_PENSION = 'AFP Profuturo(F)';
 const AFP_KEY = 'AFP Profuturo';
 
 // ── Anchor employee DNIs for July 2026 assertions ──
-const DNI_GARCIA   = '48448443'; // AFP Profuturo saldo
-const DNI_HUERTA   = '43760364'; // AFP Profuturo flujo → afpComision 19.10
-const DNI_BAUTISTA = '47349935'; // ONP → onp 650
-const DNI_YANGARI  = '73653370'; // prorrateo test
+const DNI_GARCIA   = '48448443'; // AFP Profuturo saldo, sueldo 12850 → Excel literals
+const DNI_HUERTA   = '43760364'; // AFP Profuturo flujo, sueldo 1130 → afpComision 19.10
+const DNI_BAUTISTA = '47349935'; // ONP, sueldo 5000 → onp 650, essalud 450
+const DNI_YANGARI  = '73653370'; // ONP, sueldo 3100, 29 días/31-day month → totalBruto≈2900, onp≈377
 
 let testEmpleadoId: string | null = null;
 let testMesId: string | null = null;
 
-// Track which anchor employees we modified so we can restore them
-let huertaOriginalSP: string | null = null;
-let huertaOriginalAfpTipo: string | null = null;
-let bautistaOriginalSP: string | null = null;
-let yangariOriginalActivo: boolean = false;
+// ── Save originals so we can restore all anchor employees completely ──
+type EmpleadoOrig = {
+  sistemaPension: string | null;
+  afpComisionTipo: string | null;
+  sueldoBaseMensual: string | null;
+  tipoPlanilla: string | null;
+  activo: boolean | null;
+};
+let garciaOrig: EmpleadoOrig | null = null;
+let huertaOrig: EmpleadoOrig | null = null;
+let bautistaOrig: EmpleadoOrig | null = null;
+let yangariOrig: EmpleadoOrig | null = null;
 
 (async () => {
   let failed = false;
@@ -240,35 +248,86 @@ let yangariOriginalActivo: boolean = false;
 
     // ══════════════════════════════════════════════════════════
     // ── PARTE B: Task 6 — anchor employees cuadran el Excel ──
+    //    AUTO-component literals from the real July 2026 Excel
+    //    (NOT computed circularly by calling the engine).
     // ══════════════════════════════════════════════════════════
     console.log('\n════ planilla-flow · Task 6 (v2 anchors julio 2026) ════');
 
-    // ── B-SETUP: ensure anchor employees have correct attributes ──
-    // Huerta → AFP Profuturo(F), afpComisionTipo=flujo
+    // ── B-SETUP: read & save originals, then set deterministic attributes ──
+
+    // García (48448443) — AFP Profuturo saldo, sueldo 12850
+    const [garciaRow] = await db.select().from(schema.empleados).where(eq(schema.empleados.numDoc, DNI_GARCIA)).limit(1);
+    assert.ok(garciaRow, `García (DNI ${DNI_GARCIA}) must exist`);
+    garciaOrig = {
+      sistemaPension: garciaRow.sistemaPension ?? null,
+      afpComisionTipo: garciaRow.afpComisionTipo ?? null,
+      sueldoBaseMensual: garciaRow.sueldoBaseMensual ?? null,
+      tipoPlanilla: garciaRow.tipoPlanilla ?? null,
+      activo: garciaRow.activo ?? null,
+    };
+    await db.update(schema.empleados).set({
+      sistemaPension: 'AFP Profuturo(F)',
+      afpComisionTipo: 'saldo',
+      sueldoBaseMensual: '12850',
+      tipoPlanilla: 'admin',
+      activo: true,
+    }).where(eq(schema.empleados.numDoc, DNI_GARCIA));
+    console.log(`  setup: García → AFP Profuturo(F), saldo, sueldo=12850 (was sp=${garciaOrig.sistemaPension}, sueldo=${garciaOrig.sueldoBaseMensual})`);
+
+    // Huerta (43760364) — AFP Profuturo flujo, sueldo 1130
     const [huertaRow] = await db.select().from(schema.empleados).where(eq(schema.empleados.numDoc, DNI_HUERTA)).limit(1);
     assert.ok(huertaRow, `Huerta (DNI ${DNI_HUERTA}) must exist`);
-    huertaOriginalSP = huertaRow.sistemaPension;
-    huertaOriginalAfpTipo = huertaRow.afpComisionTipo;
-    await db.update(schema.empleados).set({ sistemaPension: 'AFP Profuturo(F)', afpComisionTipo: 'flujo', tipoPlanilla: 'admin', activo: true }).where(eq(schema.empleados.numDoc, DNI_HUERTA));
-    console.log(`  setup: Huerta → AFP Profuturo(F), flujo (was sp=${huertaOriginalSP}, tipo=${huertaOriginalAfpTipo})`);
+    huertaOrig = {
+      sistemaPension: huertaRow.sistemaPension ?? null,
+      afpComisionTipo: huertaRow.afpComisionTipo ?? null,
+      sueldoBaseMensual: huertaRow.sueldoBaseMensual ?? null,
+      tipoPlanilla: huertaRow.tipoPlanilla ?? null,
+      activo: huertaRow.activo ?? null,
+    };
+    await db.update(schema.empleados).set({
+      sistemaPension: 'AFP Profuturo(F)',
+      afpComisionTipo: 'flujo',
+      sueldoBaseMensual: '1130',
+      tipoPlanilla: 'admin',
+      activo: true,
+    }).where(eq(schema.empleados.numDoc, DNI_HUERTA));
+    console.log(`  setup: Huerta → AFP Profuturo(F), flujo, sueldo=1130 (was sp=${huertaOrig.sistemaPension}, tipo=${huertaOrig.afpComisionTipo})`);
 
-    // Bautista → ONP, sueldo 5000, tipoPlanilla=admin, activo=true
+    // Bautista (47349935) — ONP, sueldo 5000
     const [bautistaRow] = await db.select().from(schema.empleados).where(eq(schema.empleados.numDoc, DNI_BAUTISTA)).limit(1);
     assert.ok(bautistaRow, `Bautista (DNI ${DNI_BAUTISTA}) must exist`);
-    bautistaOriginalSP = bautistaRow.sistemaPension;
-    await db.update(schema.empleados).set({ sistemaPension: 'ONP', sueldoBaseMensual: '5000', tipoPlanilla: 'admin', activo: true }).where(eq(schema.empleados.numDoc, DNI_BAUTISTA));
-    console.log(`  setup: Bautista → ONP, sueldo=5000 (was sp=${bautistaOriginalSP})`);
+    bautistaOrig = {
+      sistemaPension: bautistaRow.sistemaPension ?? null,
+      afpComisionTipo: bautistaRow.afpComisionTipo ?? null,
+      sueldoBaseMensual: bautistaRow.sueldoBaseMensual ?? null,
+      tipoPlanilla: bautistaRow.tipoPlanilla ?? null,
+      activo: bautistaRow.activo ?? null,
+    };
+    await db.update(schema.empleados).set({
+      sistemaPension: 'ONP',
+      sueldoBaseMensual: '5000',
+      tipoPlanilla: 'admin',
+      activo: true,
+    }).where(eq(schema.empleados.numDoc, DNI_BAUTISTA));
+    console.log(`  setup: Bautista → ONP, sueldo=5000 (was sp=${bautistaOrig.sistemaPension})`);
 
-    // García → ensure saldo, admin, activo
-    await db.update(schema.empleados).set({ afpComisionTipo: 'saldo', tipoPlanilla: 'admin', activo: true }).where(eq(schema.empleados.numDoc, DNI_GARCIA));
-    console.log(`  setup: García → afpComisionTipo=saldo, admin, activo`);
-
-    // Yangari → ensure admin, activo (for prorrateo sub-test)
+    // Yangari (73653370) — ONP, sueldo 3100, cese/prorrateo 29 días of a 31-day month
     const [yangariRow] = await db.select().from(schema.empleados).where(eq(schema.empleados.numDoc, DNI_YANGARI)).limit(1);
     assert.ok(yangariRow, `Yangari (DNI ${DNI_YANGARI}) must exist`);
-    yangariOriginalActivo = yangariRow.activo ?? false;
-    await db.update(schema.empleados).set({ tipoPlanilla: 'admin', activo: true }).where(eq(schema.empleados.numDoc, DNI_YANGARI));
-    console.log(`  setup: Yangari → admin, activo (was activo=${yangariOriginalActivo})`);
+    yangariOrig = {
+      sistemaPension: yangariRow.sistemaPension ?? null,
+      afpComisionTipo: yangariRow.afpComisionTipo ?? null,
+      sueldoBaseMensual: yangariRow.sueldoBaseMensual ?? null,
+      tipoPlanilla: yangariRow.tipoPlanilla ?? null,
+      activo: yangariRow.activo ?? null,
+    };
+    await db.update(schema.empleados).set({
+      sistemaPension: 'ONP',
+      sueldoBaseMensual: '3100',
+      tipoPlanilla: 'admin',
+      activo: true,
+    }).where(eq(schema.empleados.numDoc, DNI_YANGARI));
+    console.log(`  setup: Yangari → ONP, sueldo=3100, admin, activo (was activo=${yangariOrig.activo}, sueldo=${yangariOrig.sueldoBaseMensual})`);
 
     // ── B-1: Recalcular con los anchor employees actualizados ──
     const r4 = await post(`/api/oficina/planilla/${testMesId}/calcular`, {});
@@ -285,7 +344,7 @@ let yangariOriginalActivo: boolean = false;
     assert.ok(snap.porTrabajador, 'calculoSnapshot.porTrabajador must exist');
     console.log(`  ✓ B-1. calcular v2 completado, detalle count=${j4.detalle.length}, snapshot OK`);
 
-    // ── B-2: Assert anchor values ──
+    // ── B-2: Assert AUTO anchor values (from Excel, NOT computed via the engine) ──
     const dets = await db
       .select()
       .from(schema.planillaOficinaDetalle)
@@ -293,81 +352,91 @@ let yangariOriginalActivo: boolean = false;
     const byDni: Record<string, typeof dets[0]> = {};
     for (const d of dets) if (d.dni) byDni[d.dni] = d;
 
-    // Compute expected García neto using the exact engine (v2, no YTD)
-    const garciaRow = await db.select().from(schema.empleados).where(eq(schema.empleados.numDoc, DNI_GARCIA)).limit(1);
-    const garciaSueldo = Number(garciaRow[0]!.sueldoBaseMensual ?? 0);
-    const garciaRenta5ta = calcularRta5ta({
-      sueldoMensual: garciaSueldo, mesNumero: 7, mesIngreso: 1,
-      acumuladoPercibidoAntes: 0, retencionesPrevias: 0, uit: param.uit,
-    }).retencionMes;
-    const garciaTasas = {
-      rmv: param.rmv, uit: param.uit, topeRma: param.topeRma,
-      pctEssalud: param.pctEssalud, pctOnp: param.pctOnp,
-      pctAfpAporte: param.pctAfpAporte, pctAsigFamiliar: param.pctAsigFamiliar,
-      afp: afps['AFP PROFUTURO'],
-    };
-    const garciaExpected = calcularDetalleOficina({
-      sueldoMensual: garciaSueldo, sistemaPension: 'AFP',
-      afpComisionTipo: 'saldo', modalidadFormativa: false, asignacionFamiliar: false,
-      imptoRenta5ta: garciaRenta5ta, diasTrab: 31, diasMes: 31,
-    }, garciaTasas);
-
+    // ── García AUTO anchors (renta-5ta-independent, tol 0.01) ──
+    // Excel July 2026: sueldo=12850, AFP Profuturo saldo, full month
+    //   totalBruto=12850, afpAporte=12850×0.10=1285, afpSeguro=topeRma(12599.27)×0.0137≈172.61,
+    //   afpComision=0 (saldo mode), essalud=12850×0.09=1156.50
     assert.ok(byDni[DNI_GARCIA], `detalle for García (${DNI_GARCIA}) must exist`);
-    const garciaActualNeto = Number(byDni[DNI_GARCIA]!.netoPago);
-    assert.ok(
-      Math.abs(garciaActualNeto - garciaExpected.netoPago) <= 0.01,
-      `García neto=${garciaActualNeto} must match engine=${garciaExpected.netoPago} (tol 0.01)`,
-    );
-    console.log(`  ✓ B-2a. García neto=${garciaActualNeto} (expected=${garciaExpected.netoPago})`);
+    const garciaTotalBruto = Number(byDni[DNI_GARCIA]!.totalBruto);
+    const garciaAfpAporte  = Number(byDni[DNI_GARCIA]!.afpAporte);
+    const garciaAfpSeguro  = Number(byDni[DNI_GARCIA]!.afpSeguro);
+    const garciaAfpComision = Number(byDni[DNI_GARCIA]!.afpComision);
+    const garciaEssalud    = Number(byDni[DNI_GARCIA]!.essalud);
+    assert.ok(Math.abs(garciaTotalBruto - 12850) <= 0.01,   `García totalBruto=${garciaTotalBruto} must be 12850 (tol 0.01)`);
+    assert.ok(Math.abs(garciaAfpAporte  -  1285) <= 0.01,   `García afpAporte=${garciaAfpAporte} must be 1285 (tol 0.01)`);
+    assert.ok(Math.abs(garciaAfpSeguro  -  172.61) <= 0.01, `García afpSeguro=${garciaAfpSeguro} must be 172.61 (tol 0.01)`);
+    assert.ok(Math.abs(garciaAfpComision -   0) <= 0.01,    `García afpComision=${garciaAfpComision} must be 0 (saldo, tol 0.01)`);
+    assert.ok(Math.abs(garciaEssalud    - 1156.50) <= 0.01, `García essalud=${garciaEssalud} must be 1156.50 (tol 0.01)`);
+    console.log(`  ✓ B-2a. García AUTO: totalBruto=${garciaTotalBruto}, afpAporte=${garciaAfpAporte}, afpSeguro=${garciaAfpSeguro}, afpComision=${garciaAfpComision}, essalud=${garciaEssalud}`);
 
-    // Huerta: afpComision=19.10, neto=982.42
+    // ── Huerta AUTO anchors (tol 0.01) ──
+    // Excel July 2026: sueldo=1130, AFP Profuturo flujo, full month
+    //   afpAporte=1130×0.10=113, afpSeguro=1130×0.0137=15.48 (below topeRma), afpComision=1130×0.0169=19.10, neto=982.42
     assert.ok(byDni[DNI_HUERTA], `detalle for Huerta (${DNI_HUERTA}) must exist`);
+    const huertaAfpAporte  = Number(byDni[DNI_HUERTA]!.afpAporte);
+    const huertaAfpSeguro  = Number(byDni[DNI_HUERTA]!.afpSeguro);
     const huertaAfpComision = Number(byDni[DNI_HUERTA]!.afpComision);
-    const huertaNeto = Number(byDni[DNI_HUERTA]!.netoPago);
-    assert.ok(Math.abs(huertaAfpComision - 19.10) <= 0.01, `Huerta afpComision=${huertaAfpComision} must be 19.10 (tol 0.01)`);
-    assert.ok(Math.abs(huertaNeto - 982.42) <= 0.01, `Huerta neto=${huertaNeto} must be 982.42 (tol 0.01)`);
-    console.log(`  ✓ B-2b. Huerta afpComision=${huertaAfpComision}, neto=${huertaNeto}`);
+    const huertaNeto       = Number(byDni[DNI_HUERTA]!.netoPago);
+    assert.ok(Math.abs(huertaAfpAporte  -  113)    <= 0.01, `Huerta afpAporte=${huertaAfpAporte} must be 113 (tol 0.01)`);
+    assert.ok(Math.abs(huertaAfpSeguro  -   15.48) <= 0.01, `Huerta afpSeguro=${huertaAfpSeguro} must be 15.48 (tol 0.01)`);
+    assert.ok(Math.abs(huertaAfpComision -  19.10) <= 0.01, `Huerta afpComision=${huertaAfpComision} must be 19.10 (tol 0.01)`);
+    assert.ok(Math.abs(huertaNeto       -  982.42) <= 0.01, `Huerta neto=${huertaNeto} must be 982.42 (tol 0.01)`);
+    console.log(`  ✓ B-2b. Huerta AUTO: afpAporte=${huertaAfpAporte}, afpSeguro=${huertaAfpSeguro}, afpComision=${huertaAfpComision}, neto=${huertaNeto}`);
 
-    // Bautista: onp=650
+    // ── Bautista AUTO anchors (tol 0.01) ──
+    // Excel July 2026: sueldo=5000, ONP, full month → onp=5000×0.13=650, essalud=5000×0.09=450
     assert.ok(byDni[DNI_BAUTISTA], `detalle for Bautista (${DNI_BAUTISTA}) must exist`);
-    const bautistaOnp = Number(byDni[DNI_BAUTISTA]!.onp);
-    assert.ok(Math.abs(bautistaOnp - 650) <= 0.01, `Bautista onp=${bautistaOnp} must be 650 (tol 0.01)`);
-    console.log(`  ✓ B-2c. Bautista onp=${bautistaOnp}`);
-
-    // Yangari exists in detalle
-    assert.ok(byDni[DNI_YANGARI], `detalle for Yangari (${DNI_YANGARI}) must exist`);
+    const bautistaOnp     = Number(byDni[DNI_BAUTISTA]!.onp);
+    const bautistaEssalud = Number(byDni[DNI_BAUTISTA]!.essalud);
+    assert.ok(Math.abs(bautistaOnp     - 650) <= 0.01, `Bautista onp=${bautistaOnp} must be 650 (tol 0.01)`);
+    assert.ok(Math.abs(bautistaEssalud - 450) <= 0.01, `Bautista essalud=${bautistaEssalud} must be 450 (tol 0.01)`);
+    console.log(`  ✓ B-2c. Bautista AUTO: onp=${bautistaOnp}, essalud=${bautistaEssalud}`);
 
     // Summary: sum of neto must be > 0
     const totalNeto = dets.reduce((s, d) => s + Number(d.netoPago ?? 0), 0);
     assert.ok(totalNeto > 0, `suma neto (${totalNeto}) must be > 0`);
     console.log(`  ✓ B-2d. totalNeto across all rows = ${totalNeto.toFixed(2)}`);
 
-    // ── B-3: Prorrateo sub-test — PATCH Yangari diasTrab=15, recalcular, verify prorrateo ──
+    // ── B-3: Yangari prorrateo — PATCH diasTrab=29 (of 31-day July), assert literals ──
+    // Excel: sueldo=3100, ONP, 29/31 días → totalBruto≈2900 (3100×29/31), onp≈377 (2900×0.13)
+    assert.ok(byDni[DNI_YANGARI], `detalle for Yangari (${DNI_YANGARI}) must exist`);
     const yangariDet = byDni[DNI_YANGARI]!;
-    const rPatchYangari = await patch(`/api/oficina/planilla-detalle/${yangariDet.id}`, { diasTrab: 15 });
-    assert.equal(rPatchYangari.status, 200, `PATCH Yangari diasTrab=15 status ${rPatchYangari.status}`);
+    const rPatchYangari = await patch(`/api/oficina/planilla-detalle/${yangariDet.id}`, { diasTrab: 29 });
+    assert.equal(rPatchYangari.status, 200, `PATCH Yangari diasTrab=29 status ${rPatchYangari.status}`);
     const jPatchYangari = await rPatchYangari.json() as { detalle: any };
-    const yangariSueldoProrrateado = Number(jPatchYangari.detalle.sueldoMensual ?? jPatchYangari.detalle.sueldo_mensual);
-    const yangariSueldoBase = Number(yangariRow.sueldoBaseMensual ?? 0);
-    // After prorrateo: sueldoMensual (column = prorrateado) < full sueldo
+    const yangariTotalBruto = Number(jPatchYangari.detalle.total_bruto ?? jPatchYangari.detalle.totalBruto);
+    const yangariOnp        = Number(jPatchYangari.detalle.onp);
+    // 3100 × 29/31 = 2900.00 (exact); onp = 2900 × 0.13 = 377.00
+    const expectedYangariTotalBruto = Math.round(3100 * 29 / 31 * 100) / 100; // ≈ 2900.00
+    const expectedYangariOnp        = Math.round(expectedYangariTotalBruto * 0.13 * 100) / 100; // ≈ 377.00
     assert.ok(
-      yangariSueldoProrrateado < yangariSueldoBase,
-      `Yangari prorrateado (${yangariSueldoProrrateado}) must be < sueldo base (${yangariSueldoBase})`,
+      Math.abs(yangariTotalBruto - expectedYangariTotalBruto) <= 0.01,
+      `Yangari totalBruto=${yangariTotalBruto} must be ≈${expectedYangariTotalBruto} (29/31 prorrateo, tol 0.01)`,
     );
-    console.log(`  ✓ B-3. Yangari prorrateo: diasTrab=15, sueldoProrrateado=${yangariSueldoProrrateado} < base=${yangariSueldoBase}`);
+    assert.ok(
+      Math.abs(yangariOnp - expectedYangariOnp) <= 0.01,
+      `Yangari onp=${yangariOnp} must be ≈${expectedYangariOnp} (tol 0.01)`,
+    );
+    console.log(`  ✓ B-3. Yangari prorrateo: diasTrab=29/31, totalBruto=${yangariTotalBruto} (expected≈${expectedYangariTotalBruto}), onp=${yangariOnp} (expected≈${expectedYangariOnp})`);
 
-    // ── B-4: Override sub-test (Kelly manual renta5ta) ──
-    // PATCH Bautista imptoRenta5ta=500 (mark renta5taManual=true)
-    const bautistaDet = byDni[DNI_BAUTISTA]!;
-    const rPatchBautista = await patch(`/api/oficina/planilla-detalle/${bautistaDet.id}`, { imptoRenta5ta: 500 });
-    assert.equal(rPatchBautista.status, 200, `PATCH Bautista imptoRenta5ta=500 status ${rPatchBautista.status}`);
-    const jPatchBautista = await rPatchBautista.json() as { detalle: any };
-    assert.ok(jPatchBautista.detalle.renta5taManual ?? jPatchBautista.detalle.renta5ta_manual, 'renta5taManual must be true after PATCH');
-    console.log(`  ✓ B-4a. Bautista renta5taManual=true after PATCH imptoRenta5ta=500`);
+    // ── B-4: García neto via PRODUCTION-HONEST override path ──
+    // García's renta5ta = 1120 is a manual value in real production.
+    // PATCH García detalle imptoRenta5ta=1120 → sets renta5taManual=true.
+    // Recalcular → must preserve 1120.
+    // Then assert netoPago ≈ 10272.39 (Excel literal, tol 0.01).
+    const garciaDet = byDni[DNI_GARCIA]!;
+    const rPatchGarcia = await patch(`/api/oficina/planilla-detalle/${garciaDet.id}`, { imptoRenta5ta: 1120 });
+    assert.equal(rPatchGarcia.status, 200, `PATCH García imptoRenta5ta=1120 status ${rPatchGarcia.status}`);
+    const jPatchGarcia = await rPatchGarcia.json() as { detalle: any };
+    assert.ok(
+      jPatchGarcia.detalle.renta5taManual ?? jPatchGarcia.detalle.renta5ta_manual,
+      'García renta5taManual must be true after PATCH',
+    );
+    console.log(`  ✓ B-4a. García renta5taManual=true after PATCH imptoRenta5ta=1120`);
 
     // Recalcular — must NOT overwrite the manual renta5ta
     const r5 = await post(`/api/oficina/planilla/${testMesId}/calcular`, {});
-    assert.equal(r5.status, 200, `POST calcular (after override) status ${r5.status}`);
+    assert.equal(r5.status, 200, `POST calcular (after García override) status ${r5.status}`);
 
     const dets2 = await db
       .select()
@@ -376,16 +445,52 @@ let yangariOriginalActivo: boolean = false;
     const byDni2: Record<string, typeof dets2[0]> = {};
     for (const d of dets2) if (d.dni) byDni2[d.dni] = d;
 
-    const bautistaAfterCalc = byDni2[DNI_BAUTISTA]!;
+    const garciaAfterCalc = byDni2[DNI_GARCIA]!;
+    assert.ok(garciaAfterCalc, 'García detalle must exist after recalcular');
+    const garciaRentaAfter = Number(garciaAfterCalc.imptoRenta5ta);
+    assert.ok(
+      Math.abs(garciaRentaAfter - 1120) <= 0.01,
+      `García imptoRenta5ta=${garciaRentaAfter} must remain 1120 (manual preserved), tol 0.01`,
+    );
+    assert.ok(garciaAfterCalc.renta5taManual, `García renta5taManual must remain true after recalcular, got ${garciaAfterCalc.renta5taManual}`);
+
+    const garciaNetoAfterOverride = Number(garciaAfterCalc.netoPago);
+    // Excel literal: neto=10272.39 = totalBruto(12850) − afpAporte(1285) − afpSeguro(172.61) − afpComision(0) − renta5ta(1120)
+    assert.ok(
+      Math.abs(garciaNetoAfterOverride - 10272.39) <= 0.01,
+      `García netoPago=${garciaNetoAfterOverride} must be 10272.39 (Excel literal, tol 0.01)`,
+    );
+    console.log(`  ✓ B-4b. García override preserved: imptoRenta5ta=${garciaRentaAfter}, netoPago=${garciaNetoAfterOverride} (Excel=10272.39)`);
+
+    // ── B-5: Override preservation test (Bautista) ──
+    const bautistaDet = byDni2[DNI_BAUTISTA]!;
+    assert.ok(bautistaDet, 'Bautista detalle must exist after recalcular');
+    const rPatchBautista = await patch(`/api/oficina/planilla-detalle/${bautistaDet.id}`, { imptoRenta5ta: 500 });
+    assert.equal(rPatchBautista.status, 200, `PATCH Bautista imptoRenta5ta=500 status ${rPatchBautista.status}`);
+    const jPatchBautista = await rPatchBautista.json() as { detalle: any };
+    assert.ok(jPatchBautista.detalle.renta5taManual ?? jPatchBautista.detalle.renta5ta_manual, 'renta5taManual must be true after PATCH');
+    console.log(`  ✓ B-5a. Bautista renta5taManual=true after PATCH imptoRenta5ta=500`);
+
+    // Recalcular — must NOT overwrite the manual renta5ta
+    const r6 = await post(`/api/oficina/planilla/${testMesId}/calcular`, {});
+    assert.equal(r6.status, 200, `POST calcular (after Bautista override) status ${r6.status}`);
+
+    const dets3 = await db
+      .select()
+      .from(schema.planillaOficinaDetalle)
+      .where(eq(schema.planillaOficinaDetalle.planillaMesId, testMesId!));
+    const byDni3: Record<string, typeof dets3[0]> = {};
+    for (const d of dets3) if (d.dni) byDni3[d.dni] = d;
+
+    const bautistaAfterCalc = byDni3[DNI_BAUTISTA]!;
     assert.ok(bautistaAfterCalc, 'Bautista detalle must exist after recalcular');
     const bautistaRentaAfter = Number(bautistaAfterCalc.imptoRenta5ta);
     assert.ok(
       Math.abs(bautistaRentaAfter - 500) <= 0.01,
       `Bautista imptoRenta5ta=${bautistaRentaAfter} must remain 500 (manual preserved), tol 0.01`,
     );
-    const bautistaManualFlagAfter = bautistaAfterCalc.renta5taManual;
-    assert.ok(bautistaManualFlagAfter, `Bautista renta5taManual must remain true after recalcular, got ${bautistaManualFlagAfter}`);
-    console.log(`  ✓ B-4b. Override preserved: Bautista imptoRenta5ta=${bautistaRentaAfter} (manual=true) after recalcular`);
+    assert.ok(bautistaAfterCalc.renta5taManual, `Bautista renta5taManual must remain true after recalcular, got ${bautistaAfterCalc.renta5taManual}`);
+    console.log(`  ✓ B-5b. Override preserved: Bautista imptoRenta5ta=${bautistaRentaAfter} (manual=true) after recalcular`);
 
     console.log('\n  planilla-flow VERDE\n');
   } catch (e: any) {
@@ -410,22 +515,52 @@ let yangariOriginalActivo: boolean = false;
       await db.delete(schema.empleados).where(eq(schema.empleados.id, testEmpleadoId)).catch(() => {});
     }
 
-    // Restore anchor employee attributes
-    if (huertaOriginalSP !== null) {
+    // ── Restore ALL anchor employee attributes ──
+    if (garciaOrig !== null) {
       await db.update(schema.empleados)
-        .set({ sistemaPension: huertaOriginalSP, afpComisionTipo: huertaOriginalAfpTipo ?? 'saldo' })
+        .set({
+          sistemaPension: garciaOrig.sistemaPension,
+          afpComisionTipo: garciaOrig.afpComisionTipo ?? 'saldo',
+          sueldoBaseMensual: garciaOrig.sueldoBaseMensual,
+          tipoPlanilla: garciaOrig.tipoPlanilla ?? 'admin',
+          activo: garciaOrig.activo ?? true,
+        })
+        .where(eq(schema.empleados.numDoc, DNI_GARCIA))
+        .catch(() => {});
+    }
+    if (huertaOrig !== null) {
+      await db.update(schema.empleados)
+        .set({
+          sistemaPension: huertaOrig.sistemaPension,
+          afpComisionTipo: huertaOrig.afpComisionTipo ?? 'saldo',
+          sueldoBaseMensual: huertaOrig.sueldoBaseMensual,
+          tipoPlanilla: huertaOrig.tipoPlanilla ?? 'admin',
+          activo: huertaOrig.activo ?? true,
+        })
         .where(eq(schema.empleados.numDoc, DNI_HUERTA))
         .catch(() => {});
     }
-    if (bautistaOriginalSP !== null) {
+    if (bautistaOrig !== null) {
       await db.update(schema.empleados)
-        .set({ sistemaPension: bautistaOriginalSP })
+        .set({
+          sistemaPension: bautistaOrig.sistemaPension,
+          afpComisionTipo: bautistaOrig.afpComisionTipo ?? 'saldo',
+          sueldoBaseMensual: bautistaOrig.sueldoBaseMensual,
+          tipoPlanilla: bautistaOrig.tipoPlanilla ?? 'admin',
+          activo: bautistaOrig.activo ?? true,
+        })
         .where(eq(schema.empleados.numDoc, DNI_BAUTISTA))
         .catch(() => {});
     }
-    if (!yangariOriginalActivo) {
+    if (yangariOrig !== null) {
       await db.update(schema.empleados)
-        .set({ activo: false })
+        .set({
+          sistemaPension: yangariOrig.sistemaPension,
+          afpComisionTipo: yangariOrig.afpComisionTipo ?? 'saldo',
+          sueldoBaseMensual: yangariOrig.sueldoBaseMensual,
+          tipoPlanilla: yangariOrig.tipoPlanilla ?? 'obrero',
+          activo: yangariOrig.activo ?? false,
+        })
         .where(eq(schema.empleados.numDoc, DNI_YANGARI))
         .catch(() => {});
     }
