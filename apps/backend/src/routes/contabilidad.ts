@@ -2314,13 +2314,32 @@ async function filasComprasPeriodo(periodo: string): Promise<ple.FilaCompra[]> {
     ? await db.select().from(schema.detraccionDocumento).where(and(eq(schema.detraccionDocumento.docOrigenTipo, 'gasto'), inArray(schema.detraccionDocumento.docOrigenId, filables.map((g) => g.id))))
     : [];
   const detMap = new Map(det.map((d) => [d.docOrigenId, d]));
+  // F8.1 · CUO del cruce de libros = correlativo del asiento que centralizó la compra en el Diario
+  const asComp = filables.length
+    ? await db.select({ oid: schema.asientos.origenId, corr: schema.asientos.correlativo }).from(schema.asientos)
+      .where(and(eq(schema.asientos.origen, 'gasto'), eq(schema.asientos.status, 'registrado'), inArray(schema.asientos.origenId, filables.map((g) => g.id))))
+    : [];
+  const cuoMap = new Map(asComp.map((a) => [a.oid, a.corr]));
+  // F8.1 · TC obligatorio si moneda ≠ PEN: si la compra no lo trae, cae al TC (venta) de la tabla —
+  // día exacto o el más cercano ANTERIOR (SUNAT no publica fines de semana/feriados)
+  const hayFx = filables.some((g) => (g.moneda ?? 'PEN') !== 'PEN' && !g.tipoCambio);
+  const tcRows = hayFx
+    ? (await db.select().from(schema.tipoCambio).where(eq(schema.tipoCambio.moneda, 'USD'))).map((t) => ({ f: String(t.fecha), v: Number(t.venta) })).sort((a, b) => a.f.localeCompare(b.f))
+    : [];
+  const tcPara = (fecha: string): number | null => {
+    let mejor: number | null = null;
+    for (const t of tcRows) { if (t.f <= fecha) mejor = t.v; else break; }
+    return mejor;
+  };
   return filables.map((g) => {
     const dd = detMap.get(g.id);
     return {
+      cuo: cuoMap.get(g.id) ?? null,
       fecha: g.fecha, tipoComprobante: g.tipoComprobante, serie: g.serie, numero: g.numero,
       proveedorRuc: g.proveedorRuc, proveedorRazon: g.proveedorRazon,
       baseGravada: Number(g.subtotal), igv: Number(g.igv), noGravado: Number(g.exonerado), total: Number(g.total),
-      moneda: g.moneda, tipoCambio: g.tipoCambio ? Number(g.tipoCambio) : null,
+      moneda: g.moneda,
+      tipoCambio: g.tipoCambio ? Number(g.tipoCambio) : ((g.moneda ?? 'PEN') !== 'PEN' ? tcPara(String(g.fecha)) : null),
       destinoCredito: (g.destinoCredito ?? 'DG') as 'DG' | 'DGNG' | 'DNG',
       constanciaNumero: dd?.constanciaNumero ?? null,
       constanciaFecha: dd?.fechaDeposito ?? null,
@@ -2349,10 +2368,15 @@ async function filasVentasPeriodo(periodo: string): Promise<ple.FilaVenta[]> {
   const clis = cliIds.length ? await db.select().from(schema.clientes).where(inArray(schema.clientes.id, cliIds)) : [];
   const proyMap = new Map(proys.map((p) => [p.id, p]));
   const cliMap = new Map(clis.map((c) => [c.id, c]));
+  // F8.1 · CUO del cruce de libros = correlativo del asiento de centralización (valo o venta standalone)
+  const asVenta = await db.select({ origen: schema.asientos.origen, oid: schema.asientos.origenId, corr: schema.asientos.correlativo }).from(schema.asientos)
+    .where(and(inArray(schema.asientos.origen, ['valorizacion', 'venta']), eq(schema.asientos.status, 'registrado')));
+  const cuoVMap = new Map(asVenta.map((a) => [`${a.origen}:${a.oid}`, a.corr]));
   const deValos = vs.map((v) => {
     const proy = proyMap.get(v.proyectoId);
     const cli = proy?.clienteId ? cliMap.get(proy.clienteId) : null;
     return {
+      cuo: cuoVMap.get(`valorizacion:${v.id}`) ?? null,
       fecha: v.comprobanteFecha ?? v.fechaEmision,
       tipoComprobante: v.comprobanteTipo === 'boleta' ? 'Boleta' : 'Factura',
       // comprobante real capturado al facturar (o mock F001-correlativo); fallback al placeholder viejo si faltara
@@ -2382,6 +2406,7 @@ async function filasVentasPeriodo(periodo: string): Promise<ple.FilaVenta[]> {
   const tipoLabel = (t: string) => (t === '03' ? 'Boleta' : t === '07' ? 'Nota de Crédito' : t === '08' ? 'Nota de Débito' : 'Factura');
   const signo = (t: string) => (t === '07' ? -1 : 1);
   const deStandalone = standalone.map((v) => ({
+    cuo: cuoVMap.get(`venta:${v.id}`) ?? null,
     fecha: v.fechaEmision,
     tipoComprobante: tipoLabel(v.tipoCpe),
     serie: v.serie, numero: v.numero,
@@ -2426,7 +2451,9 @@ async function filasDiarioPeriodo(periodo: string): Promise<ple.FilaDiario[]> {
     const numero = guion > 0 ? a.docOrigen!.slice(guion + 1) : (a.docOrigen || null);
     for (const l of porAsiento.get(a.id) ?? []) {
       filas.push({
-        cuo: a.correlativo, correlativoAsiento: `M${String(i + 1).padStart(4, '0')}`,
+        // correlativo M derivado de los dígitos del correlativo interno — MISMA regla que usan 8.1/14.1
+        // para que el cruce CUO+correlativo entre libros sea idéntico (antes era posicional y no cruzaba)
+        cuo: a.correlativo, correlativoAsiento: `M${a.correlativo.replace(/\D/g, '') || String(i + 1)}`,
         fecha: a.fecha, glosa: a.glosa, cuenta: l.cuenta, debe: Number(l.debe), haber: Number(l.haber),
         moneda: a.moneda ?? 'PEN', contraparteDoc: a.contraparteRuc, tipoDoc: a.tipoDoc, serie, numero,
       });
@@ -2473,9 +2500,10 @@ router.get('/ple', async (req, res) => {
     ? ple.sireNombreArchivo(periodo, libro as 'RCE' | 'RVIE')
     : ple.nombreArchivo(periodo, ple.LIBROS[libro].codigo, conOper);
   if (conOper) contenido += '\r\n'; // PLE: cada línea termina en CRLF, incluida la última
-  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  // F8.1 · SUNAT exige ANSI (ISO-8859-1): en UTF-8 las tildes llegan corruptas (PERÃš) y el PLE rechaza
+  res.setHeader('Content-Type', 'text/plain; charset=iso-8859-1');
   res.setHeader('Content-Disposition', `attachment; filename="${nombre}"`);
-  res.send(contenido);
+  res.send(ple.toAnsi(contenido));
 });
 
 // ── Determinación de cuentas · mapa tipoGasto → cuenta PCGE (editable por la contadora) ──

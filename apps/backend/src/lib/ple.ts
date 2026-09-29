@@ -13,9 +13,39 @@ const EMPRESA_RUC = '20610639764';
 const IGV_PCT = 18;
 
 // ── helpers de formato ──────────────────────────────────────
-// el pipe es el separador del formato: un '|' o salto de línea DENTRO de un campo (glosas largas) rompe la fila
-const sinPipes = (c: string | number) => (typeof c === 'string' ? c.replace(/[|\r\n]+/g, ' ').trim() : c);
+// el pipe es el separador del formato: un '|' o salto de línea DENTRO de un campo (glosas largas) rompe la fila.
+// La data trae además entidades HTML sin decodificar («4 &quot ROJO») y caracteres de control que el
+// validador PLE rechaza — se limpian aquí, en la única puerta de salida del TXT.
+const ENT: Record<string, string> = { quot: '"', amp: '&', lt: '<', gt: '>', apos: "'", nbsp: ' ' };
+// Mojibake ALMACENADO en la DB (PERÃš = UTF-8 leído como Windows-1252 en algún import viejo).
+// Se repara POR PARES (Ã/Â + continuación), no por cadena completa: la misma glosa suele mezclar
+// mojibake con latin1 legítimo (·, tildes) y una re-decodificación total fallaría siempre.
+const CP1252: Record<string, number> = { '€': 0x80, '‚': 0x82, 'ƒ': 0x83, '„': 0x84, '…': 0x85, '†': 0x86, '‡': 0x87, 'ˆ': 0x88, '‰': 0x89, 'Š': 0x8a, '‹': 0x8b, 'Œ': 0x8c, 'Ž': 0x8e, '‘': 0x91, '’': 0x92, '“': 0x93, '”': 0x94, '•': 0x95, '–': 0x96, '—': 0x97, '˜': 0x98, '™': 0x99, 'š': 0x9a, '›': 0x9b, 'œ': 0x9c, 'ž': 0x9e, 'Ÿ': 0x9f };
+const reparaMojibake = (s: string): string => s.replace(/[ÂÃ](.)/g, (par, seg: string) => {
+  const b2 = CP1252[seg] ?? seg.codePointAt(0)!;
+  if (b2 < 0x80 || b2 > 0xbf) return par; // segundo char no es continuación UTF-8 → texto legítimo
+  const ch = Buffer.from([par.codePointAt(0)!, b2]).toString('utf8');
+  return ch.includes('�') ? par : ch;
+});
+const sinPipes = (c: string | number) => {
+  if (typeof c !== 'string') return c;
+  return reparaMojibake(c)
+    .replace(/&#(\d+);?/g, (_, n) => String.fromCharCode(Number(n)))
+    .replace(/&(quot|amp|lt|gt|apos|nbsp);?/gi, (_, e) => ENT[e.toLowerCase()]!)
+    .replace(/[|\u0000-\u001f\u00a0]+/g, ' ')
+    .replace(/ {2,}/g, ' ')
+    .trim();
+};
+// SUNAT exige los TXT en ANSI (ISO-8859-1): servirlos en UTF-8 corrompe las tildes y el PLE los
+// rechaza. Puntuación tipográfica se degrada a ASCII; lo que no quepa en latin1 termina en '?'.
+export const toAnsi = (s: string): Buffer => Buffer.from(
+  s.replace(/[“”]/g, '"').replace(/[‘’]/g, "'").replace(/[–—]/g, '-').replace(/[^\r\n -ÿ]/g, '?'),
+  'latin1',
+);
 const pipe = (campos: (string | number)[]) => campos.map((c) => (typeof c === 'number' ? c.toFixed(2) : sinPipes(c))).join('|') + '|';
+// Correlativo del asiento (campo 3): inicia A/M/C; derivado SIEMPRE de los dígitos del CUO para que
+// Diario, Compras y Ventas produzcan el mismo valor por operación (SUNAT cruza los libros por CUO+correlativo).
+const corrM = (cuo: string) => `M${cuo.replace(/\D/g, '') || '1'}`;
 const n2 = (x: unknown) => Number(x ?? 0); // los montos van como number → pipe() los formatea
 const dmy = (iso: string | null | undefined) => {
   if (!iso) return '';
@@ -59,6 +89,9 @@ export type FilaCompra = {
   fechaVencimiento?: string | null;
   sujetoRetencion?: boolean;      // campo 33 · marca del CP sujeto a retención (agente)
   estado?: '1' | '6' | '9';       // campo 41 · 1 oportuno · 6 emitido antes, anotado en plazo (periodoContable) · 9 ajuste
+  // F8.1 · cruce de libros: CUO = correlativo del asiento con el que la factura se centralizó en el
+  // Diario (mismo valor en campo 2 de ambos libros, o SUNAT marca inconsistencia). Sin asiento → índice.
+  cuo?: string | null;
 };
 export type FilaVenta = {
   fecha: string; tipoComprobante: string; serie: string; numero: string;
@@ -69,6 +102,7 @@ export type FilaVenta = {
   moneda?: string | null;
   modSerie?: string | null; modNumero?: string | null; // NC/ND: comprobante que modifica
   contrato?: string | null;                            // campo 31 · identificación del contrato/proyecto
+  cuo?: string | null;                                 // F8.1 · cruce con el Diario (ver FilaCompra.cuo)
 };
 export type FilaDiario = {
   cuo: string; correlativoAsiento: string; fecha: string; glosa: string;
@@ -84,12 +118,12 @@ export type FilaDiario = {
 export function compras80100(periodo: string, filas: FilaCompra[]): string {
   const P = periodoTxt(periodo);
   return filas.map((f, i) => {
-    const cuo = String(i + 1);
+    const cuo = f.cuo ?? String(i + 1);
     const dc = f.destinoCredito ?? 'DG';
     return pipe([
       P,                                  // 1 Periodo
-      cuo,                                // 2 CUO
-      `M${cuo}`,                          // 3 Correlativo del asiento (inicia en M)
+      cuo,                                // 2 CUO (= campo 2 del Diario si la compra ya se centralizó)
+      corrM(cuo),                         // 3 Correlativo del asiento (inicia en M)
       dmy(f.fecha),                       // 4 Fecha de emisión
       f.fechaVencimiento ? dmy(f.fechaVencimiento) : '', // 5 Fecha de vencimiento o pago
       tablaComprobante(f.tipoComprobante),// 6 Tipo CP (Tabla 10)
@@ -111,7 +145,7 @@ export function compras80100(periodo: string, filas: FilaCompra[]): string {
       0,                                  // 22 Otros conceptos, tributos y cargos
       n2(f.total),                        // 23 Importe total
       f.moneda ?? 'PEN',                  // 24 Código de moneda (Tabla 4)
-      f.tipoCambio ? n2(f.tipoCambio) : '', // 25 Tipo de cambio
+      f.tipoCambio ? Number(f.tipoCambio).toFixed(3) : '', // 25 Tipo de cambio (formato oficial 1.3 · obligatorio si moneda ≠ PEN)
       '',                                 // 26 Fecha CP que se modifica
       f.modSerie ? '01' : '',             // 27 Tipo CP que se modifica
       f.modSerie ?? '',                   // 28 Serie CP que se modifica
@@ -136,11 +170,11 @@ export function compras80100(periodo: string, filas: FilaCompra[]): string {
 export function ventas140100(periodo: string, filas: FilaVenta[]): string {
   const P = periodoTxt(periodo);
   return filas.map((f, i) => {
-    const cuo = String(i + 1);
+    const cuo = f.cuo ?? String(i + 1);
     return pipe([
       P,                                  // 1 Periodo
-      cuo,                                // 2 CUO / correlativo del mes
-      `M${cuo}`,                          // 3 Correlativo del asiento (inicia en M)
+      cuo,                                // 2 CUO (= campo 2 del Diario si la venta ya se centralizó)
+      corrM(cuo),                         // 3 Correlativo del asiento (inicia en M)
       dmy(f.fecha),                       // 4 Fecha de emisión
       f.fechaVencimiento ? dmy(f.fechaVencimiento) : '', // 5 Fecha de vencimiento o pago
       tablaComprobante(f.tipoComprobante),// 6 Tipo CP (Tabla 10)
@@ -163,7 +197,7 @@ export function ventas140100(periodo: string, filas: FilaVenta[]): string {
       0,                                  // 23 Otros conceptos y tributos
       n2(f.total),                        // 24 Importe total
       f.moneda ?? 'PEN',                  // 25 Código de moneda (Tabla 4)
-      f.tipoCambio ? n2(f.tipoCambio) : '', // 26 Tipo de cambio
+      f.tipoCambio ? Number(f.tipoCambio).toFixed(3) : '', // 26 Tipo de cambio (formato oficial 1.3 · obligatorio si moneda ≠ PEN)
       '',                                 // 27 Fecha CP que se modifica
       f.modSerie ? '01' : '',             // 28 Tipo CP que se modifica
       f.modSerie ?? '',                   // 29 Serie CP que se modifica
@@ -227,11 +261,11 @@ const iso = (d: string | null | undefined) => (d ? String(d).slice(0, 10) : '');
 export function rvieVentas(periodo: string, filas: FilaVenta[]): string {
   const P = periodo6(periodo);
   return filas.map((f, i) => {
-    const cuo = String(i + 1);
+    const cuo = f.cuo ?? String(i + 1);
     return [
       P,                                   // 1  Periodo (AAAAMM)
       cuo,                                 // 2  CUO / código único de operación
-      `M${cuo}`,                           // 3  Número correlativo del asiento
+      corrM(cuo),                          // 3  Número correlativo del asiento
       iso(f.fecha),                        // 4  Fecha de emisión
       iso(f.fechaVencimiento),             // 5  Fecha de vencimiento / pago
       tablaComprobante(f.tipoComprobante), // 6  Tipo de comprobante (Tabla 10)
@@ -275,11 +309,11 @@ export function rvieVentas(periodo: string, filas: FilaVenta[]): string {
 export function rceCompras(periodo: string, filas: FilaCompra[]): string {
   const P = periodo6(periodo);
   return filas.map((f, i) => {
-    const cuo = String(i + 1);
+    const cuo = f.cuo ?? String(i + 1);
     return [
       P,                                   // 1  Periodo
       cuo,                                 // 2  CUO
-      `M${cuo}`,                           // 3  Número correlativo del asiento
+      corrM(cuo),                          // 3  Número correlativo del asiento
       iso(f.fecha),                        // 4  Fecha de emisión
       '',                                  // 5  Fecha de vencimiento (s/dato)
       tablaComprobante(f.tipoComprobante), // 6  Tipo de comprobante
