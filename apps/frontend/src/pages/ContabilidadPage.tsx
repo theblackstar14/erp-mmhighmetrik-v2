@@ -25,8 +25,12 @@ import { type AsientoFull, type AuditEvento, type CuentaPlan, type MayorResumenF
 import { useAuthStore } from '@/lib/auth-store.js';
 import { cn, fmtPEN } from '@/lib/utils.js';
 import { SkelRows, TabFade } from '@/components/ui/Skeleton.js';
+import { SegTabs } from './FinanzasPage.js';
 
-type Tab = 'plan' | 'diario' | 'mayor' | 'bancos' | 'sombra' | 'fiscal' | 'eeff' | 'reportes' | 'auditoria' | 'cuentas';
+// F7 · 10 → 6 tabs alrededor del ciclo mensual de Kelly. Las herramientas de la transición del
+// cutover (Sombra 104x, invariante Bancos) quedan en código, sin entrada de UI: ya cumplieron.
+const MOSTRAR_HERRAMIENTAS_TRANSICION = false;
+type Tab = 'plan' | 'diario' | 'mayor' | 'cierre' | 'libros' | 'eeff' | 'bancos' | 'sombra';
 
 const hoyPeriodo = () => new Date().toISOString().slice(0, 7);
 
@@ -50,16 +54,13 @@ export function ContabilidadPage() {
       <div className="border-b border-line">
         <nav className="flex gap-1 -mb-px overflow-x-auto">
           {([
-            ['plan', 'Plan Contable', BookOpen],
-            ['diario', 'Libro Diario', FileSpreadsheet],
-            ['mayor', 'Libro Mayor', BookOpen],
-            ['bancos', 'Bancos y Conciliación', Landmark],
-            ['sombra', 'Sombra 104x', Scale],
-            ['fiscal', 'Fiscal (IGV / Renta)', Calculator],
+            ['plan', 'Plan contable', BookOpen],
+            ['diario', 'Diario', FileSpreadsheet],
+            ['mayor', 'Mayor', BookOpen],
+            ['cierre', 'Cierre del mes', Lock],
+            ['libros', 'Libros y SIRE', Calculator],
             ['eeff', 'Estados Financieros', Scale],
-            ['cuentas', 'Cuentas por tipo', BookOpen],
-            ['reportes', 'Reportes', FileSpreadsheet],
-            ['auditoria', 'Auditoría', History],
+            ...(MOSTRAR_HERRAMIENTAS_TRANSICION ? ([['bancos', 'Invariante 104x', Landmark], ['sombra', 'Sombra 104x', Scale]] as const) : []),
           ] as const).map(([k, l, Icon]) => (
             <button key={k} onClick={() => setTab(k)}
               className={cn('flex items-center gap-1.5 whitespace-nowrap px-3 py-2 text-[12.5px] font-medium border-b-2 transition-colors',
@@ -71,17 +72,127 @@ export function ContabilidadPage() {
       </div>
 
       <TabFade tabKey={tab}>
-        {tab === 'plan' && <PlanTab periodo={periodo} />}
+        {tab === 'plan' && <PlanHub periodo={periodo} />}
         {tab === 'diario' && <DiarioTab periodo={periodo} />}
         {tab === 'mayor' && <MayorTab periodo={periodo} />}
+        {tab === 'cierre' && <CierreTab periodo={periodo} />}
+        {tab === 'libros' && <LibrosTab periodo={periodo} />}
+        {tab === 'eeff' && <EstadosFinancierosTab />}
         {tab === 'bancos' && <BancosTab />}
         {tab === 'sombra' && <SombraTab periodo={periodo} />}
-        {tab === 'fiscal' && <FiscalTab periodo={periodo} />}
-        {tab === 'eeff' && <EstadosFinancierosTab />}
-        {tab === 'cuentas' && <CuentasTipoTab />}
-        {tab === 'reportes' && <ReportesTab periodo={periodo} />}
-        {tab === 'auditoria' && <AuditoriaTab periodo={periodo} />}
       </TabFade>
+    </div>
+  );
+}
+
+// ─── F7 · Plan contable + configuración de ruteo (tab = dominio, segmento = vista) ──
+function PlanHub({ periodo }: { periodo: string }) {
+  const [vista, setVista] = useState<'arbol' | 'tipos'>('arbol');
+  return (
+    <div className="space-y-3">
+      <SegTabs value={vista} onChange={setVista} opts={[
+        { v: 'arbol', l: 'Plan de cuentas' },
+        { v: 'tipos', l: 'Ruteo por tipo de gasto' },
+      ] as const} />
+      {vista === 'arbol' && <PlanTab periodo={periodo} />}
+      {vista === 'tipos' && <CuentasTipoTab />}
+    </div>
+  );
+}
+
+// ─── F7 · CIERRE DEL MES · el corazón del módulo: checklist en vivo → cerrar → auditoría ──
+function CierreTab({ periodo }: { periodo: string }) {
+  const qc = useQueryClient();
+  const email = useAuthStore((s) => s.user?.email ?? '');
+  const [vista, setVista] = useState<'checklist' | 'auditoria'>('checklist');
+  const perQ = useQuery({ queryKey: ['ctb-periodos'], queryFn: () => api.contabilidad.listPeriodos() });
+  const cobQ = useQuery({ queryKey: ['ctb-cobertura', periodo], queryFn: () => api.contabilidad.getCobertura(periodo) });
+  const preQ = useQuery({ queryKey: ['ctb-preclose', periodo], queryFn: () => api.contabilidad.getPrecloseCheck(periodo) });
+  const conQ = useQuery({ queryKey: ['concil-metricas', periodo], queryFn: () => api.conciliacion.metricas(periodo) });
+  const invQ = useQuery({ queryKey: ['ctb-conciliacion'], queryFn: () => api.contabilidad.getConciliacion() });
+  const provQ = useQuery({ queryKey: ['provisiones-48'], queryFn: () => api.contabilidad.listProvisiones() });
+
+  const periodoRow = perQ.data?.periodos.find((p) => p.periodo === periodo);
+  const cerrado = periodoRow?.estado === 'cerrado';
+  const meta = (periodoRow?.cierreMeta ?? null) as { diff?: number; asientosCount?: number; hash?: string } | null;
+  const cerrar = useMutation({
+    mutationFn: (force?: boolean) => api.contabilidad.cerrarPeriodo(periodo, { email, force }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['ctb-periodos'] }),
+    onError: (e: Error) => { if (confirm(`${e.message}\n\n¿Cerrar de todas formas (forzar)?`)) cerrar.mutate(true); },
+  });
+  const reabrir = useMutation({ mutationFn: (motivo: string) => api.contabilidad.reabrirPeriodo(periodo, motivo), onSuccess: () => qc.invalidateQueries({ queryKey: ['ctb-periodos'] }) });
+
+  // checklist: cada ítem = una condición del mes listo, con su dato vivo y a dónde ir a resolverla
+  const provAbiertas = (provQ.data?.provisiones ?? []).filter((p) => p.estado === 'abierta' && p.fecha.startsWith(periodo)).length;
+  const invarDiff = Math.abs(invQ.data?.diferencia ?? 0);
+  const items: { ok: boolean | null; titulo: string; dato: string; donde: string }[] = [
+    { ok: cobQ.data ? cobQ.data.total === 0 : null, titulo: 'Todo el periodo asentado', dato: cobQ.data ? (cobQ.data.total === 0 ? 'sin pendientes' : `${cobQ.data.total} documento(s) sin asentar`) : '…', donde: 'Diario → Generar' },
+    { ok: conQ.data ? conQ.data.pendiente === 0 && conQ.data.diferencia === 0 : null, titulo: 'Banco conciliado', dato: conQ.data ? `${conQ.data.pctConciliado}% · ${conQ.data.pendiente} pendiente(s) · ${conQ.data.diferencia} en disputa` : '…', donde: 'Finanzas → Conciliación' },
+    { ok: provQ.data ? provAbiertas === 0 : null, titulo: 'Provisiones 48 del mes resueltas', dato: provQ.data ? (provAbiertas === 0 ? 'sin abiertas' : `${provAbiertas} esperando factura`) : '…', donde: 'Finanzas → Compras → Provisiones 48' },
+    { ok: invQ.data ? invarDiff < 0.01 : null, titulo: 'Libro 104x = tesorería', dato: invQ.data ? (invarDiff < 0.01 ? 'cuadra exacto' : `difieren ${fmtPEN(invarDiff)}`) : '…', donde: 'suele resolverse generando el Diario' },
+    { ok: preQ.data ? preQ.data.ok : null, titulo: 'Integridad del motor (pre-cierre)', dato: preQ.data ? (preQ.data.ok ? 'sin bloqueos' : preQ.data.bloqueos.map((b) => `${b.count} ${b.tipo}`).join(' · ')) : '…', donde: preQ.data?.ok ? '' : 'revisar bloqueos listados' },
+  ];
+  const listos = items.filter((i) => i.ok === true).length;
+  const todoVerde = items.every((i) => i.ok === true);
+
+  return (
+    <div className="space-y-3">
+      <SegTabs value={vista} onChange={setVista} opts={[
+        { v: 'checklist', l: 'Checklist y cierre' },
+        { v: 'auditoria', l: 'Auditoría' },
+      ] as const} />
+      {vista === 'auditoria' && <AuditoriaTab periodo={periodo} />}
+      {vista === 'checklist' && (
+        <div className="space-y-3">
+          <div className="rounded-lg border border-line bg-bg-elev overflow-hidden">
+            <div className="flex items-center gap-2 border-b border-line px-4 py-2.5">
+              <h3 className="text-[13px] font-semibold">¿Listo para cerrar {periodo}?</h3>
+              <span className={cn('font-mono text-[11px]', todoVerde ? 'text-emerald-600' : 'text-amber-600')}>{listos}/{items.length}</span>
+            </div>
+            <div className="divide-y divide-line">
+              {items.map((it, i) => (
+                <div key={i} className="flex items-center gap-3 px-4 py-2.5">
+                  <span className={cn('inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white', it.ok === true ? 'bg-emerald-500' : it.ok === false ? 'bg-amber-500' : 'bg-ink-4/40')}>{it.ok === true ? '✓' : it.ok === false ? '!' : '·'}</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[12.5px] font-medium">{it.titulo}</div>
+                    <div className="text-[11px] text-ink-3">{it.dato}{it.ok === false && it.donde ? <span className="text-ink-4"> · {it.donde}</span> : null}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-line bg-bg-elev p-4 flex flex-wrap items-center gap-3">
+            {cerrado ? <Lock className="h-4 w-4 text-amber-600" /> : <LockOpen className="h-4 w-4 text-emerald-600" />}
+            <div className="flex-1 min-w-[200px]">
+              <div className="text-[13px] font-semibold">Periodo {periodo} · {cerrado ? 'CERRADO' : 'abierto'}</div>
+              <div className="text-[10.5px] text-ink-4">Cerrar <b>congela</b> las filas del mes (movimientos, gastos, asientos) y toma un snapshot con hash. Reabrir exige motivo y queda auditado.</div>
+              {cerrado && meta && <div className="text-[10px] font-mono text-ink-4 mt-1">snapshot · {meta.asientosCount ?? '?'} asientos · diff {typeof meta.diff === 'number' ? fmtPEN(meta.diff) : '—'} · hash {String(meta.hash ?? '').slice(0, 12)}…</div>}
+            </div>
+            {cerrado
+              ? <button onClick={() => { const m = window.prompt(`Motivo de reapertura de ${periodo} (obligatorio):`)?.trim(); if (m) reabrir.mutate(m); }} className="h-8 px-3 rounded-md border border-line text-[12px] hover:bg-bg-sunken">Reabrir</button>
+              : <button onClick={() => { if (confirm(`¿Cerrar periodo ${periodo}?${todoVerde ? '' : '\n\nOJO: el checklist aún no está todo en verde.'}`)) cerrar.mutate(undefined); }}
+                  className={cn('h-8 px-3 rounded-md text-[12px] font-medium', todoVerde ? 'bg-primary text-primary-foreground hover:opacity-90' : 'border border-amber-400 text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950/30')}>
+                  {todoVerde ? 'Cerrar periodo' : 'Cerrar con pendientes…'}
+                </button>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── F7 · Libros oficiales + impuestos del mes ──
+function LibrosTab({ periodo }: { periodo: string }) {
+  const [vista, setVista] = useState<'libros' | 'impuestos'>('libros');
+  return (
+    <div className="space-y-3">
+      <SegTabs value={vista} onChange={setVista} opts={[
+        { v: 'libros', l: 'PLE y SIRE' },
+        { v: 'impuestos', l: 'IGV y Renta del mes' },
+      ] as const} />
+      {vista === 'libros' && <PleExport periodo={periodo} />}
+      {vista === 'impuestos' && <FiscalTab periodo={periodo} />}
     </div>
   );
 }
@@ -345,7 +456,7 @@ function DiarioTab({ periodo }: { periodo: string }) {
     mutationFn: () => api.contabilidad.generar(periodo),
     onSuccess: (r) => {
       const d = r.detalle;
-      setGenMsg(`Generados ${r.generados}: ${d.gastos} compras · ${d.pagosOc} pagos OC · ${d.valorizaciones} valos · ${d.cobros} cobros · ${d.planillas} planillas${d.errores.length ? ` · ⚠ ${d.errores.length} errores: ${d.errores.slice(0, 3).join(' | ')}` : ''}`);
+      setGenMsg(`Generados ${r.generados}: ${d.gastos} compras · ${d.valorizaciones} valos · ${d.ventas ?? 0} ventas · ${d.movimientos ?? 0} movimientos de caja · ${d.planillas} planillas · ${d.adelantos ?? 0} anticipos${d.errores.length ? ` · ⚠ ${d.errores.length} errores: ${d.errores.slice(0, 3).join(' | ')}` : ''}`);
       inval();
     },
     onError: (e: Error) => setGenMsg(`Error: ${e.message}`),
@@ -376,7 +487,7 @@ function DiarioTab({ periodo }: { periodo: string }) {
       {cob && cob.total > 0 && (
         <div className="flex flex-wrap items-center gap-2 rounded-md border border-amber-300/50 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-[11.5px] text-amber-800 dark:text-amber-300">
           <span>⚠ {cob.total} documento(s) del periodo sin contabilizar:</span>
-          <span className="font-mono">{cob.gastos} gastos · {cob.pagosOc} pagos · {cob.valorizaciones} valos · {cob.cobros} cobros · {cob.planillas} planillas</span>
+          <span className="font-mono">{cob.gastos} compras · {cob.valorizaciones} valos · {cob.ventas ?? 0} ventas · {cob.movimientos ?? 0} mov. de caja · {cob.planillas} planillas · {cob.adelantos ?? 0} anticipos</span>
           <button onClick={() => generar.mutate()} disabled={generar.isPending} className="ml-auto h-7 px-2.5 rounded-md bg-amber-600 text-white text-[11px] font-medium hover:opacity-90 disabled:opacity-50">
             {generar.isPending ? 'Generando...' : 'Generar ahora'}
           </button>
@@ -1335,13 +1446,17 @@ function FiscalTab({ periodo }: { periodo: string }) {
           <div className="space-y-2 text-[12.5px]">
             <Row k="Débito fiscal (ventas)" v={fmtPEN(data.igv.debito)} />
             <Row k="Crédito fiscal (compras)" v={`− ${fmtPEN(data.igv.credito)}`} />
+            {(data.igv.creditoDiferido ?? 0) > 0 && <>
+              <Row k="Crédito diferido (detracción sin constancia)" v={`+ ${fmtPEN(data.igv.creditoDiferido ?? 0)}`} tone="warn" />
+              <Row k="Crédito usable este mes" v={`− ${fmtPEN(data.igv.creditoUsable ?? data.igv.credito)}`} />
+            </>}
             <div className="border-t border-line pt-2">
-              {data.igv.aPagar > 0
-                ? <Row k="IGV a pagar" v={fmtPEN(data.igv.aPagar)} bold tone="warn" />
-                : <Row k="Saldo a favor" v={fmtPEN(data.igv.saldoFavor)} bold tone="ok" />}
+              {(() => { const aPagar = data.igv.aPagarUsable ?? data.igv.aPagar; const favor = Math.max(0, -(data.igv.netoUsable ?? data.igv.neto)); return aPagar > 0
+                ? <Row k="IGV a pagar (criterio SUNAT)" v={fmtPEN(aPagar)} bold tone="warn" />
+                : <Row k="Saldo a favor" v={fmtPEN(favor)} bold tone="ok" />; })()}
             </div>
           </div>
-          <p className="text-[10.5px] text-ink-4 mt-3">Calculado de los asientos registrados del periodo (cuenta 40111). Genera los asientos automáticos primero.</p>
+          <p className="text-[10.5px] text-ink-4 mt-3">De los asientos del periodo (40111). El crédito de compras con detracción <b>sin constancia</b> se difiere al mes del depósito (F3.5) — deposítalas o registra la constancia para usarlo.</p>
         </div>
         <div className="rounded-lg border border-line bg-bg-elev p-4">
           <h3 className="text-[13px] font-semibold mb-3">Renta · pago a cuenta · {periodo}</h3>
@@ -1371,83 +1486,8 @@ function Row({ k, v, bold, tone }: { k: string; v: string; bold?: boolean; tone?
   );
 }
 
-// ─── Reportes ────────────────────────────────────────────────
-function ReportesTab({ periodo }: { periodo: string }) {
-  const qc = useQueryClient();
-  const email = useAuthStore((s) => s.user?.email ?? '');
-  const balQ = useQuery({ queryKey: ['ctb-balance', periodo], queryFn: () => api.contabilidad.getBalance(periodo) });
-  const perQ = useQuery({ queryKey: ['ctb-periodos'], queryFn: () => api.contabilidad.listPeriodos() });
-  const periodoRow = perQ.data?.periodos.find((p) => p.periodo === periodo);
-  const cerrado = periodoRow?.estado === 'cerrado';
-
-  const cerrar = useMutation({
-    mutationFn: (force?: boolean) => api.contabilidad.cerrarPeriodo(periodo, { email, force }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['ctb-periodos'] }),
-    onError: (e: Error) => {
-      // Regla 5 · gate: docs sin contabilizar → ofrecer forzar
-      if (confirm(`${e.message}\n\n¿Cerrar de todas formas (forzar)?`)) cerrar.mutate(true);
-    },
-  });
-  const reabrir = useMutation({ mutationFn: (motivo: string) => api.contabilidad.reabrirPeriodo(periodo, motivo), onSuccess: () => qc.invalidateQueries({ queryKey: ['ctb-periodos'] }) });
-  const meta = (periodoRow?.cierreMeta ?? null) as { diff?: number; asientosCount?: number; hash?: string } | null;
-
-  return (
-    <div className="space-y-4">
-      {/* Cierre de periodo */}
-      <div className="rounded-lg border border-line bg-bg-elev p-4 flex flex-wrap items-center gap-3">
-        {cerrado ? <Lock className="h-4 w-4 text-amber-600" /> : <LockOpen className="h-4 w-4 text-emerald-600" />}
-        <div className="flex-1 min-w-[200px]">
-          <div className="text-[13px] font-semibold">Periodo {periodo} · {cerrado ? 'CERRADO' : 'abierto'}</div>
-          <div className="text-[10.5px] text-ink-4">Cierra y <b>congela</b> filas del mes (movimientos/gastos/asientos). Reapertura exige motivo y queda auditada.</div>
-          {cerrado && meta && <div className="text-[10px] font-mono text-ink-4 mt-1">snapshot · {meta.asientosCount ?? '?'} asientos · diff {typeof meta.diff === 'number' ? fmtPEN(meta.diff) : '—'} · hash {String(meta.hash ?? '').slice(0, 12)}…</div>}
-        </div>
-        {cerrado
-          ? <button onClick={() => { const m = window.prompt(`Motivo de reapertura de ${periodo} (obligatorio):`)?.trim(); if (m) reabrir.mutate(m); }} className="h-8 px-3 rounded-md border border-line text-[12px] hover:bg-bg-sunken">Reabrir</button>
-          : <button onClick={() => { if (confirm(`¿Cerrar periodo ${periodo}? Se congelarán las filas del mes. (Si hay bloqueos de integridad se ofrecerá forzar.)`)) cerrar.mutate(undefined); }} className="h-8 px-3 rounded-md bg-primary text-primary-foreground text-[12px] font-medium">Cerrar periodo</button>}
-      </div>
-
-      {/* Balance de comprobación */}
-      <div className="rounded-lg border border-line bg-bg-elev overflow-hidden">
-        <div className="border-b border-line px-4 py-2.5"><h3 className="text-[13px] font-semibold">Balance de comprobación · acumulado al {periodo}</h3></div>
-        {balQ.isLoading ? <SkelRows rows={6} /> : (
-          <table className="w-full text-[12px]">
-            <thead className="bg-bg-sunken border-b border-line">
-              <tr className="text-left text-[10px] font-mono uppercase tracking-wider text-ink-4">
-                <th className="px-3 py-2 w-16">Cta</th><th className="px-3 py-2">Descripción</th>
-                <th className="px-3 py-2 text-right w-28">Debe</th><th className="px-3 py-2 text-right w-28">Haber</th>
-                <th className="px-3 py-2 text-right w-28">S. Deudor</th><th className="px-3 py-2 text-right w-28">S. Acreedor</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-line">
-              {(balQ.data?.filas ?? []).map((f) => (
-                <tr key={f.codigo} className="hover:bg-bg-sunken/30">
-                  <td className="px-3 py-1.5 font-mono font-semibold">{f.codigo}</td>
-                  <td className="px-3 py-1.5">{f.descripcion}</td>
-                  <td className="px-3 py-1.5 text-right font-mono tabular-nums">{fmtPEN(f.debe)}</td>
-                  <td className="px-3 py-1.5 text-right font-mono tabular-nums">{fmtPEN(f.haber)}</td>
-                  <td className="px-3 py-1.5 text-right font-mono tabular-nums">{f.saldoDeudor > 0 ? fmtPEN(f.saldoDeudor) : ''}</td>
-                  <td className="px-3 py-1.5 text-right font-mono tabular-nums">{f.saldoAcreedor > 0 ? fmtPEN(f.saldoAcreedor) : ''}</td>
-                </tr>
-              ))}
-              {(balQ.data?.filas.length ?? 0) === 0 && <tr><td colSpan={6} className="px-3 py-8 text-center text-ink-3">Sin movimientos · genera asientos primero</td></tr>}
-            </tbody>
-            {balQ.data && balQ.data.filas.length > 0 && (
-              <tfoot><tr className="bg-bg-sunken border-t border-line font-semibold">
-                <td colSpan={2} className="px-3 py-2 text-[11px]">TOTALES</td>
-                <td className="px-3 py-2 text-right font-mono tabular-nums">{fmtPEN(balQ.data.totales.debe)}</td>
-                <td className="px-3 py-2 text-right font-mono tabular-nums">{fmtPEN(balQ.data.totales.haber)}</td>
-                <td className="px-3 py-2 text-right font-mono tabular-nums">{fmtPEN(balQ.data.totales.saldoDeudor)}</td>
-                <td className="px-3 py-2 text-right font-mono tabular-nums">{fmtPEN(balQ.data.totales.saldoAcreedor)}</td>
-              </tr></tfoot>
-            )}
-          </table>
-        )}
-      </div>
-
-      <PleExport periodo={periodo} />
-    </div>
-  );
-}
+// ─── (F7) La antigua tab "Reportes" se repartió: cierre → Cierre del mes · PLE → Libros y SIRE.
+// El balance de comprobación vive solo en Estados Financieros (estaba duplicado).
 
 // ─── Estados Financieros · Balance de Comprobación + ESF + ER (derivados del mayor) ───
 function EstadosFinancierosTab() {

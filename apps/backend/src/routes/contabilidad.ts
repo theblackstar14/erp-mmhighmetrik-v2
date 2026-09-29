@@ -533,11 +533,30 @@ router.get('/fiscal', async (req, res) => {
     }
     if (m.cuenta.startsWith('70')) ingresosNetos += Number(m.haber) - Number(m.debe);
   }
-  const igvNeto = igvDebito - igvCredito; // >0 a pagar · <0 saldo a favor
+  // F7 · crédito DIFERIDO (F3.5): compras del periodo con detracción sin constancia — su IGV no se
+  // usa este mes (se toma cuando se deposite). Informativo, alineado con el criterio del RCE.
+  const { fechaInicio: dfi, fechaFin: dff } = partesPeriodo(periodo);
+  const gastosDetr = await db.select({ igv: schema.gastos.igv })
+    .from(schema.gastos)
+    .innerJoin(schema.detraccionDocumento, and(eq(schema.detraccionDocumento.docOrigenTipo, 'gasto'), eq(schema.detraccionDocumento.docOrigenId, schema.gastos.id)))
+    .where(and(
+      dsql`coalesce(${schema.gastos.periodoContable}, to_char(${schema.gastos.fecha}::date, 'YYYY-MM')) = ${periodo}`,
+      eq(schema.detraccionDocumento.estado, 'pendiente'),
+      dsql`${schema.gastos.destinoCredito} != 'DNG'`,
+      dsql`${schema.gastos.tipoComprobante} !~* '^03|boleta'`,
+    ));
+  const creditoDiferido = Number(gastosDetr.reduce((s, g) => s + Number(g.igv), 0).toFixed(2));
+  const creditoUsable = Number((igvCredito - creditoDiferido).toFixed(2));
+
+  const igvNeto = igvDebito - igvCredito; // >0 a pagar · <0 saldo a favor (criterio contable)
+  const igvNetoUsable = igvDebito - creditoUsable; // criterio SUNAT: sin el crédito diferido
   const rentaPagoCuenta = Math.max(0, ingresosNetos) * 0.01; // MYPE Tributario · 1% hasta 300 UIT
   res.json({
     periodo,
-    igv: { debito: igvDebito, credito: igvCredito, neto: igvNeto, aPagar: Math.max(0, igvNeto), saldoFavor: Math.max(0, -igvNeto) },
+    igv: {
+      debito: igvDebito, credito: igvCredito, neto: igvNeto, aPagar: Math.max(0, igvNeto), saldoFavor: Math.max(0, -igvNeto),
+      creditoDiferido, creditoUsable, netoUsable: igvNetoUsable, aPagarUsable: Math.max(0, igvNetoUsable),
+    },
     renta: { ingresosNetos, tasa: 0.01, pagoCuenta: rentaPagoCuenta, regimen: 'MYPE Tributario (1% hasta 300 UIT)' },
   });
 });
@@ -561,8 +580,23 @@ async function calcCobertura(periodo: string) {
   const cobrosPend = valosDelMes.filter((v) => v.status === 'cobrada' && !yaSet.has(`cobro_valo:${v.id}`)).length;
   const planillasPend = semanas.filter((s) => !yaSet.has(`planilla:${s.id}`)).length;
 
-  const total = gastosPend + pagosPend + valosPend + cobrosPend + planillasPend;
-  return { periodo, total, gastos: gastosPend, pagosOc: pagosPend, valorizaciones: valosPend, cobros: cobrosPend, planillas: planillasPend };
+  // F7 · faltaban 3 orígenes del motor (el banner del Diario y el checklist de cierre los necesitan)
+  const cfg = await getContabilidadConfig();
+  const [ventasList, adelantosList, movsList] = await Promise.all([
+    db.select({ id: schema.ventas.id }).from(schema.ventas).where(and(gte(schema.ventas.fechaEmision, desde), lte(schema.ventas.fechaEmision, hasta), dsql`${schema.ventas.total} > 0`)),
+    db.select({ id: schema.adelantos.id, fechaPago: schema.adelantos.fechaPago }).from(schema.adelantos).where(inArray(schema.adelantos.estado, ['pagado', 'amortizado'])),
+    db.select({ id: schema.movimientos.id, fecha: schema.movimientos.fecha, cuentaId: schema.movimientos.cuentaId, tipoMovimiento: schema.movimientos.tipoMovimiento, transferenciaId: schema.movimientos.transferenciaId })
+      .from(schema.movimientos).where(and(gte(schema.movimientos.fecha, desde), lte(schema.movimientos.fecha, hasta), ne(schema.movimientos.anulado, true))),
+  ]);
+  const ventasPend = ventasList.filter((v) => !yaSet.has(`venta:${v.id}`)).length;
+  const adelantosPend = adelantosList.filter((a) => a.fechaPago && periodoDe(String(a.fechaPago).slice(0, 10)) === periodo && !yaSet.has(`adelanto:${a.id}`)).length;
+  const movimientosPend = movsList.filter((m) =>
+    movOwnsCaja(String(m.fecha).slice(0, 10), cfg.cutover) && m.cuentaId
+    && !(m.transferenciaId && m.tipoMovimiento !== 'Egreso') // espejo de transferencia no asienta
+    && !yaSet.has(`movimiento:${m.id}`)).length;
+
+  const total = gastosPend + pagosPend + valosPend + cobrosPend + planillasPend + ventasPend + adelantosPend + movimientosPend;
+  return { periodo, total, gastos: gastosPend, pagosOc: pagosPend, valorizaciones: valosPend, cobros: cobrosPend, planillas: planillasPend, ventas: ventasPend, adelantos: adelantosPend, movimientos: movimientosPend };
 }
 
 router.get('/cobertura', async (req, res) => {

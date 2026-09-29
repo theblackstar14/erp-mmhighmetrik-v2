@@ -713,8 +713,8 @@ function GlobalLedger({ proyectoId, proyectos, kind }: { proyectoId: string; pro
   );
 }
 
-// ─── Consolidación · segmento interno (tab = dominio, segmento = vista) ──
-function SegTabs<T extends string>({ value, onChange, opts }: { value: T; onChange: (v: T) => void; opts: readonly { v: T; l: string; n?: number }[] }) {
+// ─── Consolidación · segmento interno (tab = dominio, segmento = vista) · compartido con Contabilidad ──
+export function SegTabs<T extends string>({ value, onChange, opts }: { value: T; onChange: (v: T) => void; opts: readonly { v: T; l: string; n?: number }[] }) {
   return (
     <div className="inline-flex rounded-md border border-line p-0.5 bg-bg-sunken">
       {opts.map((o) => (

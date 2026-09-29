@@ -342,7 +342,7 @@ export const api = {
 
   // Oficina · rendiciones / viáticos (FIN-5)
   oficina: {
-    listRendiciones: (scope: 'mias' | 'aprobar' | 'todas' = 'todas') => req<{ rendiciones: Rendicion[] }>(`/api/oficina/rendiciones?scope=${scope}`),
+    listRendiciones: (scope: 'aprobar' | 'todas' = 'todas', empleadoId?: string) => req<{ rendiciones: Rendicion[] }>(`/api/oficina/rendiciones?scope=${scope}${empleadoId ? `&empleadoId=${empleadoId}` : ''}`),
     getSaldosRendir: () => req<SaldosRendirResponse>('/api/oficina/saldos-rendir'),
     getRendicion: (id: string) => req<{ rendicion: Rendicion; items: RendicionItem[] }>(`/api/oficina/rendiciones/${id}`),
     crearRendicion: (data: RendicionInput) => req<{ rendicion: Rendicion }>('/api/oficina/rendiciones', { method: 'POST', body: JSON.stringify(data) }),
@@ -369,6 +369,12 @@ export const api = {
       if (!res.ok) { const b = await res.json().catch(() => ({})); throw new ApiError(res.status, b.error ?? res.statusText, b); }
       return res.json();
     },
+
+    // Asistencia biométrica (lector SenseFP M1 vía ZKBio Zlink)
+    getAsistenciaConfig: () => req<ZlinkEstado>('/api/oficina/asistencia/config'),
+    setAsistenciaConfig: (data: { baseUrl?: string; companyId?: string; accessToken?: string; refreshToken?: string; expiresIn?: number }) => req<ZlinkEstado>('/api/oficina/asistencia/config', { method: 'PUT', body: JSON.stringify(data) }),
+    listMarcaciones: (desde: string, hasta: string) => req<{ marcaciones: Marcacion[] }>(`/api/oficina/asistencia?desde=${desde}&hasta=${hasta}`),
+    syncAsistencia: () => req<SyncAsistenciaResult>('/api/oficina/asistencia/sync', { method: 'POST' }),
   },
 
   // Documentos · NAS Synology por proyecto
@@ -711,7 +717,7 @@ export const api = {
     getFiscal: (periodo: string) =>
       req<FiscalResumen>(`/api/contabilidad/fiscal?periodo=${periodo}`),
     generar: (periodo: string) =>
-      req<{ ok: boolean; periodo: string; generados: number; detalle: { gastos: number; pagosOc: number; valorizaciones: number; cobros: number; planillas: number; errores: string[] } }>('/api/contabilidad/generar', { method: 'POST', body: JSON.stringify({ periodo }) }),
+      req<{ ok: boolean; periodo: string; generados: number; detalle: { gastos: number; pagosOc: number; valorizaciones: number; cobros: number; planillas: number; ventas?: number; adelantos?: number; movimientos?: number; errores: string[] } }>('/api/contabilidad/generar', { method: 'POST', body: JSON.stringify({ periodo }) }),
     listPeriodos: () => req<{ periodos: PeriodoContable[] }>('/api/contabilidad/periodos'),
     cerrarPeriodo: (periodo: string, opts?: { email?: string; force?: boolean }) => req<{ ok: boolean; cierreMeta?: Record<string, unknown>; congeladas?: { movimientos: number; gastos: number; asientos: number }; bloqueos?: { tipo: string; count: number }[] }>(`/api/contabilidad/periodos/${periodo}/cerrar`, { method: 'POST', body: JSON.stringify(opts ?? {}) }),
     reabrirPeriodo: (periodo: string, motivo: string) => req<{ ok: boolean }>(`/api/contabilidad/periodos/${periodo}/reabrir`, { method: 'POST', body: JSON.stringify({ motivo }) }),
@@ -2165,10 +2171,11 @@ export type MayorMov = { fecha: string; correlativo: string; glosa: string; orig
 export type BalanceFila = { codigo: string; descripcion: string; debe: number; haber: number; saldoDeudor: number; saldoAcreedor: number };
 export type FiscalResumen = {
   periodo: string;
-  igv: { debito: number; credito: number; neto: number; aPagar: number; saldoFavor: number };
+  // F7 · creditoDiferido = IGV de compras con detracción sin constancia (F3.5) · usable = crédito − diferido
+  igv: { debito: number; credito: number; neto: number; aPagar: number; saldoFavor: number; creditoDiferido?: number; creditoUsable?: number; netoUsable?: number; aPagarUsable?: number };
   renta: { ingresosNetos: number; tasa: number; pagoCuenta: number; regimen: string };
 };
-export type CoberturaResumen = { periodo: string; total: number; gastos: number; pagosOc: number; valorizaciones: number; cobros: number; planillas: number };
+export type CoberturaResumen = { periodo: string; total: number; gastos: number; pagosOc: number; valorizaciones: number; cobros: number; planillas: number; ventas?: number; adelantos?: number; movimientos?: number };
 export type MayorResumenFila = { cuenta: string; descripcion: string; tipo: string; inicial: number; debe: number; haber: number; final: number; movs: number };
 export type SombraDiff = { tipo: string; docId: string; doc: string; legacyMonto: number; movMonto: number; detalle: string };
 export type PeriodoContable = { periodo: string; estado: string; estadoRaw: string; cerradoEn: string | null; cerradoPor: string | null; reabiertoPor: string | null; motivoReapertura: string | null; fechaReapertura: string | null; cierreMeta: Record<string, unknown> | null };
@@ -2353,7 +2360,7 @@ export type PlanillaLinea = { empleadoId: string; dias: number; jornadaDominical
 
 // ─── Oficina · rendiciones (FIN-5) ───────────────────────────
 export type Rendicion = {
-  id: string; codigo: string | null; solicitanteUserId: string | null; solicitanteNombre: string | null;
+  id: string; codigo: string | null; empleadoId: string | null; solicitanteUserId: string | null; solicitanteNombre: string | null;
   proyectoId: string | null; proyectoCodigo?: string | null; cuentaId: string | null; cuentaNombre?: string | null;
   modo: 'reembolso' | 'anticipo'; tipo: string; concepto: string | null; fecha: string;
   montoAnticipo: string; montoRendido: string; estado: 'borrador' | 'pendiente' | 'aprobado' | 'rendido' | 'cerrado' | 'rechazado';
@@ -2364,10 +2371,15 @@ export type RendicionItem = {
   ruc: string | null; razon: string | null; fecha: string | null; categoria: string | null;
   subtotal: string; igv: string; total: string; deducible: boolean; archivo: string | null;
 };
-export type SaldoRendir = { userId: string | null; nombre: string; saldo: number; count: number };
-export type SaldosRendirResponse = { saldos: SaldoRendir[]; total: number; miSaldo: number; miCount: number };
-export type RendicionInput = { modo: 'reembolso' | 'anticipo'; tipo: string; concepto?: string | null; fecha: string; proyectoId?: string | null; cuentaId?: string | null; montoAnticipo?: number };
+export type SaldoRendir = { empleadoId: string | null; nombre: string; saldo: number; count: number };
+export type SaldosRendirResponse = { saldos: SaldoRendir[]; total: number };
+export type RendicionInput = { empleadoId: string; modo: 'reembolso' | 'anticipo'; tipo: string; concepto?: string | null; fecha: string; proyectoId?: string | null; cuentaId?: string | null; montoAnticipo?: number };
 export type RendicionItemInput = { tipoComprobante: 'factura' | 'boleta' | 'rh' | 'recibo'; serie?: string | null; numero?: string | null; ruc?: string | null; razon?: string | null; fecha?: string | null; categoria?: string | null; subtotal: number; igv: number; total: number; deducible: boolean; archivo?: string | null };
+
+// ─── Asistencia biométrica · ZKBio Zlink ─────────────────────
+export type Marcacion = { id: string; zlinkId: string; employeeCode: string; empleadoId: string | null; nombre: string | null; punchTime: string; deviceSn: string | null; terminalAlias: string | null; createdAt: string };
+export type ZlinkEstado = { configurado: boolean; baseUrl: string; companyId: string | null; tokenExpiry: string | null; lastSyncAt: string | null; lastSyncMsg: string | null };
+export type SyncAsistenciaResult = { traidas: number; nuevas: number; sinMatch: number; desde: string; hasta: string };
 
 // ─── Oficina · planilla administrativa ───────────────────────────
 export type PlanillaOficinaMes = {
