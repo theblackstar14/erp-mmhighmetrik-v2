@@ -60,22 +60,32 @@ function calcImpuestoAnual(rentaNeta: number, uit: number): number {
 export function calcularRta5ta(i: Rta5taInput): Rta5taResult {
   const { sueldoMensual, mesNumero, acumuladoPercibidoAntes, retencionesPrevias, uit } = i;
 
-  // 1. Gratificaciones aún por percibir en el año
+  // 1. Gratificaciones proporcionales por semestre (Ley 27735 + Ley 30334)
   const mesIngreso = Math.min(Math.max(i.mesIngreso ?? 1, 1), 12);
-  const gratiMeses = [7, 12];
-  const nGrati =
-    i.gratificacionesPorPercibir ??
-    gratiMeses.filter((m) => m >= mesNumero && m >= mesIngreso).length;
 
-  const bonifExtraordinariaUnitaria = 0.09 * sueldoMensual; // Ley 30334 por cada grati
+  /**
+   * Meses trabajados dentro del semestre [ini..fin] considerando la fecha de ingreso.
+   * Solo cuentan meses desde mesIngreso en adelante.
+   */
+  const mesesEnSemestre = (ini: number, fin: number): number =>
+    Math.max(0, Math.min(fin, 12) - Math.max(ini, mesIngreso) + 1);
+
+  // Gratificación de julio cubre el semestre ene–jun (meses 1..6); se paga en mes 7
+  const fracGratiJul = 7 >= mesNumero ? Math.min(6, mesesEnSemestre(1, 6)) / 6 : 0;
+  // Gratificación de diciembre cubre el semestre jul–dic (meses 7..12); se paga en mes 12
+  const fracGratiDic = 12 >= mesNumero ? Math.min(6, mesesEnSemestre(7, 12)) / 6 : 0;
+  const factorGrati = fracGratiJul + fracGratiDic; // expresado en "salarios"
+
+  const gratiProyectada = round2(factorGrati * sueldoMensual);
+  const bonifExtraProyectada = round2(factorGrati * 0.09 * sueldoMensual); // Ley 30334
 
   // 2. Proyección anual
   const mesesRestantes = 12 - mesNumero + 1; // incluye el mes actual
   const proyeccionAnual = round2(
     acumuladoPercibidoAntes +
       sueldoMensual * mesesRestantes +
-      nGrati * sueldoMensual +
-      nGrati * bonifExtraordinariaUnitaria
+      gratiProyectada +
+      bonifExtraProyectada
   );
 
   // 3. Renta neta (deducción 7 UIT)

@@ -100,9 +100,17 @@ import { calcularRta5ta } from "../../src/lib/rta5taCalc.js";
 }
 
 // ── Case D ────────────────────────────────────────────────────────────────────
-// Alta en mayo, sueldo 5000, calculando julio; acumulado may+jun = 10000
-// mesIngreso=5 → nGrati = [7,12].filter(m>=7 && m>=5) = 2
-// proyeccion = 10000 + 5000*6 + 2*5000 + 2*450 = 50900
+// Alta en mayo (mesIngreso=5), sueldo 5000, calculando julio (mesNumero=7), acumulado may+jun = 10000
+// PROPORCIONAL:
+//   mesesEnSemestre(ini, fin) = max(0, min(fin, 12) - max(ini, mesIngreso) + 1)
+//   fracGratiJul: 7 >= 7 → mesesEnSemestre(1, 6) = max(0, min(6,12) - max(1,5) + 1) = max(0, 6-5+1) = 2
+//                fracGratiJul = min(6, 2) / 6 = 2/6
+//   fracGratiDic: 12 >= 7 → mesesEnSemestre(7, 12) = max(0, min(12,12) - max(7,5) + 1) = max(0, 12-7+1) = 6
+//                fracGratiDic = min(6, 6) / 6 = 6/6 = 1
+//   factorGrati = 2/6 + 1 = 4/3 ≈ 1.33333
+//   gratiProyectada     = round2(4/3 * 5000) = 6666.67
+//   bonifExtraProyectada = round2(4/3 * 0.09 * 5000) = round2(600) = 600.00
+//   proyeccionAnual = round2(10000 + 30000 + 6666.67 + 600) = 47266.67
 {
   const near = (a: number, b: number, m = 1) => Math.abs(a - b) <= m;
   const r = calcularRta5ta({
@@ -116,12 +124,40 @@ import { calcularRta5ta } from "../../src/lib/rta5taCalc.js";
 
   console.log("Case D:", r);
   assert.ok(
-    near(r.proyeccionAnual, 10000 + 30000 + 10000 + 900),
-    `D:proyeccionAnual esperado 50900, obtenido ${r.proyeccionAnual}`
+    near(r.proyeccionAnual, 47266.67, 0.5),
+    `D:proyeccionAnual esperado 47266.67 (proporcional), obtenido ${r.proyeccionAnual}`
   );
   assert.ok(
     r.rentaNeta <= 0 ? r.retencionMes === 0 : r.retencionMes >= 0,
     `D:retencion no negativa, obtenido ${r.retencionMes}`
+  );
+}
+
+// ── Case E ────────────────────────────────────────────────────────────────────
+// Backward-compat: mesIngreso=1 (ingreso en enero), mes 7, sueldo 5000
+// factorGrati debe ser 2 (dos gratis completas):
+//   fracGratiJul: mesesEnSemestre(1,6) = 6-1+1 = 6 → min(6,6)/6 = 1
+//   fracGratiDic: mesesEnSemestre(7,12) = 12-7+1 = 6 → min(6,6)/6 = 1
+//   factorGrati = 2
+//   gratiProyectada = round2(2 * 5000) = 10000
+//   bonifExtraProyectada = round2(2 * 0.09 * 5000) = 900
+//   proyeccionAnual = round2(12000 + 30000 + 10000 + 900) = 52900
+{
+  const near = (a: number, b: number, m = 1) => Math.abs(a - b) <= m;
+  const rE = calcularRta5ta({
+    sueldoMensual: 5000,
+    mesNumero: 7,
+    mesIngreso: 1,
+    acumuladoPercibidoAntes: 12000,
+    retencionesPrevias: 0,
+    uit: 5350,
+  });
+
+  console.log("Case E:", rE);
+  // Two full gratis: proyección incluye 2*5000 + 2*450 = 10900 en gratis
+  assert.ok(
+    near(rE.proyeccionAnual, 12000 + 30000 + 10000 + 900, 0.5),
+    `E:proyeccionAnual esperado 52900 (dos gratis completas), obtenido ${rE.proyeccionAnual}`
   );
 }
 
