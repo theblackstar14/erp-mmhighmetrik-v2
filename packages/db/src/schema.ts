@@ -1160,6 +1160,10 @@ export const empleados = pgTable('empleados', {
   sueldoBaseMensual: decimal('sueldo_base_mensual', { precision: 14, scale: 2 }),
   fechaCese: date('fecha_cese'),
   asignacionFamiliar: boolean('asignacion_familiar').notNull().default(false),
+  // v2 · tipo de comisión AFP para régimen general (saldo | flujo | mixta)
+  afpComisionTipo: varchar('afp_comision_tipo', { length: 8 }).notNull().default('saldo'),
+  // v2 · practicante bajo modalidad formativa (no aporta pensión ni EsSalud)
+  modalidadFormativa: boolean('modalidad_formativa').notNull().default(false),
   createdAt: timestamp('created_at').notNull().defaultNow(),
 });
 export type Empleado = typeof empleados.$inferSelect;
@@ -1264,6 +1268,9 @@ export const afpTasas = pgTable('afp_tasas', {
   pctAporte: decimal('pct_aporte', { precision: 6, scale: 4 }).notNull().default('0.10'),
   pctComision: decimal('pct_comision', { precision: 6, scale: 4 }).notNull().default('0'),
   pctSeguro: decimal('pct_seguro', { precision: 6, scale: 4 }).notNull().default('0.0184'),
+  // v2 · comisión sobre flujo (% del aporte mensual) y mixta (% sobre saldo acumulado)
+  pctComisionFlujo: decimal('pct_comision_flujo', { precision: 6, scale: 4 }).notNull().default('0'),
+  pctComisionMixta: decimal('pct_comision_mixta', { precision: 6, scale: 4 }).notNull().default('0'),
 });
 export type AfpTasa = typeof afpTasas.$inferSelect;
 
@@ -1352,12 +1359,71 @@ export const planillaOficinaMes = pgTable(
     createdAt: timestamp('created_at').notNull().defaultNow(),
     cerradoPor: uuid('cerrado_por').references(() => users.id, { onDelete: 'set null' }),
     cerradoEn: timestamp('cerrado_en'),
+    // v2 · snapshot completo del cálculo (líneas por empleado, totales, params vigentes)
+    calculoSnapshot: jsonb('calculo_snapshot').$type<Record<string, unknown>>(),
   },
   (t) => ({
     empresaMesUq: uniqueIndex('pom_empresa_mes_uq').on(t.empresaId, t.mes),
   }),
 );
 export type PlanillaOficinaMes = typeof planillaOficinaMes.$inferSelect;
+
+// ─── Planilla oficina v2 · params legales vigentes por fecha ──
+// Cada fila = un período tarifario (RMV, UIT, topes, tasas).
+// El motor selecciona la fila con fecha_vigencia <= mes_planilla más reciente.
+export const paramLegalOficina = pgTable('param_legal_oficina', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  fechaVigencia: date('fecha_vigencia').notNull().unique(),
+  rmv: decimal('rmv', { precision: 14, scale: 2 }).notNull(),
+  uit: decimal('uit', { precision: 14, scale: 2 }).notNull(),
+  topeRma: decimal('tope_rma', { precision: 14, scale: 2 }).notNull(),
+  pctEssalud: decimal('pct_essalud', { precision: 6, scale: 4 }).notNull(),
+  pctOnp: decimal('pct_onp', { precision: 6, scale: 4 }).notNull(),
+  pctAfpAporte: decimal('pct_afp_aporte', { precision: 6, scale: 4 }).notNull(),
+  pctAsigFamiliar: decimal('pct_asig_familiar', { precision: 6, scale: 4 }).notNull(),
+});
+export type ParamLegalOficina = typeof paramLegalOficina.$inferSelect;
+
+// ─── Renta 5.ª categoría · acumulado importado al inicio del año ──
+// Permite cargar retenciones ya practicadas (por otro empleador / período anterior)
+// para que el motor no recalcule desde cero al iniciar un ejercicio en marcha.
+export const renta5taBaseline = pgTable(
+  'renta5ta_baseline',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    empleadoId: uuid('empleado_id').notNull().references(() => empleados.id, { onDelete: 'cascade' }),
+    anio: integer('anio').notNull(),
+    acumuladoImportado: decimal('acumulado_importado', { precision: 14, scale: 2 }).notNull().default('0'),
+    retencionesImportadas: decimal('retenciones_importadas', { precision: 14, scale: 2 }).notNull().default('0'),
+    importadoPor: uuid('importado_por'),
+    importadoEn: timestamp('importado_en').defaultNow(),
+  },
+  (t) => ({
+    empAnioUq: uniqueIndex('r5b_emp_anio_uq').on(t.empleadoId, t.anio),
+  }),
+);
+export type Renta5taBaseline = typeof renta5taBaseline.$inferSelect;
+
+// ─── Renta 5.ª categoría · ledger mensual por planilla ───────
+// Una fila por (empleado, planilla_mes). Acumula la remuneración computable
+// y la retención determinada para el mes. Base del proyectado anual.
+export const renta5taMes = pgTable(
+  'renta5ta_mes',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    empleadoId: uuid('empleado_id').notNull().references(() => empleados.id, { onDelete: 'cascade' }),
+    planillaMesId: uuid('planilla_mes_id').notNull().references(() => planillaOficinaMes.id, { onDelete: 'cascade' }),
+    anio: integer('anio').notNull(),
+    mesNumero: integer('mes_numero').notNull(),
+    remunComputable: decimal('remun_computable', { precision: 14, scale: 2 }).notNull().default('0'),
+    retencion: decimal('retencion', { precision: 14, scale: 2 }).notNull().default('0'),
+  },
+  (t) => ({
+    empPlanillaUq: uniqueIndex('r5m_emp_planilla_uq').on(t.empleadoId, t.planillaMesId),
+    empAnioIdx: index('r5m_emp_anio_idx').on(t.empleadoId, t.anio, t.mesNumero),
+  }),
+);
+export type Renta5taMes = typeof renta5taMes.$inferSelect;
 
 export const planillaOficinaDetalle = pgTable(
   'planilla_oficina_detalle',
