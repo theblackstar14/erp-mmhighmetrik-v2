@@ -6,7 +6,7 @@ import multer from 'multer';
 import { calcularDetalleOficina } from '../lib/planillaOficinaCalc.js';
 import { calcularRta5ta } from '../lib/rta5taCalc.js';
 import { resolverParamLegal, cargarTasasAfp } from '../lib/paramLegalOficina.js';
-import { getYtd } from '../lib/renta5taYtd.js';
+import { getYtd, upsertLedgerMes } from '../lib/renta5taYtd.js';
 import { requireAuth } from '../middleware/auth.js';
 import { resolverEmpresa } from '../lib/permisos.js';
 import { cargarDerivarCtx } from '../lib/clasificacion.js';
@@ -1011,6 +1011,22 @@ router.post('/planilla/:mesId/cerrar', requireOficinaEdit, async (req, res) => {
     })
     .where(eq(schema.planillaOficinaMes.id, mesId!))
     .returning();
+
+  // ── Step 5b: Upsert renta5ta_mes ledger rows (idempotent) ──
+  // remunComputable = totalBruto (= remuneraciónAfecta + gratificación + bonif. extraordinaria)
+  // retencion = imptoRenta5ta determinado para el mes
+  const anioMes = Number(mesRow.mes.slice(0, 4));
+  const mesNumeroMes = Number(mesRow.mes.slice(5, 7));
+  for (const det of detalleRows) {
+    await upsertLedgerMes({
+      empleadoId: det.empleadoId,
+      planillaMesId: mesId!,
+      anio: anioMes,
+      mesNumero: mesNumeroMes,
+      remunComputable: Number(det.totalBruto),
+      retencion: Number(det.imptoRenta5ta),
+    });
+  }
 
   // ── Step 6: Boleta PDF batch (best-effort, outside accounting tx) ──
   // Load empresa row for razonSocial/ruc/direccion. Fail-safe: use empty strings if missing.

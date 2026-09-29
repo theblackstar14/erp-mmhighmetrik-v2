@@ -200,6 +200,19 @@ let testMesId: string | null = null;
     assert.equal(asientoRowsRetry[0].id, asientoId, `Retry reused same asientoId=${asientoId}, not a new one`);
     console.log(`  ✓ 6b. idempotency retry → 1 asiento (no duplicate), reused id=${asientoRowsRetry[0].id}`);
 
+    // ── T7-A. Assert: renta5ta_mes rows written after cerrar ──
+    const ledgerAntes = await db
+      .select()
+      .from(schema.renta5taMes)
+      .where(eq(schema.renta5taMes.planillaMesId, testMesId!));
+    const detalleCount = j2.detalle.length;
+    assert.equal(ledgerAntes.length, detalleCount, `cerrar debe escribir ${detalleCount} filas en renta5ta_mes, got ${ledgerAntes.length}`);
+    // Optionally verify the test employee's ledger row
+    const ledgerDet = ledgerAntes.find((r: any) => r.empleadoId === testEmp.id);
+    assert.ok(ledgerDet, `renta5ta_mes row found for testEmpleado ${testEmp.id}`);
+    assert.ok(Number(ledgerDet!.remunComputable) > 0, `remunComputable > 0, got ${ledgerDet!.remunComputable}`);
+    console.log(`  ✓ T7-A. cerrar escribió ${ledgerAntes.length} filas en renta5ta_mes (remunComputable=${ledgerDet?.remunComputable}, retencion=${ledgerDet?.retencion})`);
+
     // ── 7. POST reabrir → 200, estado=calculada ──
     const r7 = await post(`/api/oficina/planilla/${testMesId}/reabrir`, {});
     if (r7.status !== 200) {
@@ -232,6 +245,22 @@ let testMesId: string | null = null;
     assert.ok(ade9, `adelanto ${testAdelantoId} found after reabrir`);
     assert.equal(ade9.saldoPendiente, 900, `saldoPendiente=900 after reabrir, got ${ade9.saldoPendiente}`);
     console.log(`  ✓ 9. after reabrir: cuota_aplicada=0, saldoPendiente=${ade9.saldoPendiente}`);
+
+    // ── T7-B. Re-cerrar + assert no duplication in renta5ta_mes ──
+    const r10 = await post(`/api/oficina/planilla/${testMesId}/cerrar`, {});
+    if (r10.status !== 200) {
+      const body = await r10.text();
+      assert.fail(`POST cerrar (re-close for idempotency) failed ${r10.status}: ${body}`);
+    }
+    const j10 = await r10.json() as { mes: any; asientoId: string };
+    assert.equal(j10.mes.estado, 'cerrada', `mes estado=cerrada after re-close, got ${j10.mes.estado}`);
+
+    const ledgerDespues = await db
+      .select()
+      .from(schema.renta5taMes)
+      .where(eq(schema.renta5taMes.planillaMesId, testMesId!));
+    assert.equal(ledgerDespues.length, ledgerAntes.length, `cerrar 2x no duplica ledger: antes=${ledgerAntes.length} después=${ledgerDespues.length}`);
+    console.log(`  ✓ T7-B. re-close idempotency: renta5ta_mes count estable (${ledgerAntes.length} → ${ledgerDespues.length}, sin duplicados)`);
 
     console.log('\n  cierre VERDE\n');
   } catch (e: any) {
@@ -287,6 +316,8 @@ let testMesId: string | null = null;
           eq(schema.asientos.origenId, testMesId),
         ))
         .catch(() => {});
+      // Delete renta5ta_mes rows for this planilla_mes
+      await db.delete(schema.renta5taMes).where(eq(schema.renta5taMes.planillaMesId, testMesId)).catch(() => {});
       await db.delete(schema.planillaOficinaMes).where(eq(schema.planillaOficinaMes.id, testMesId)).catch(() => {});
     }
 
