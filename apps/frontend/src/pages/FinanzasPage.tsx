@@ -3171,7 +3171,7 @@ function ResumenConciliacionPanel({ cuentaHint, periodoHint }: { cuentaHint?: st
           </div>
           <div className="text-[11px] text-ink-3">{r.kpis.partidasLibroPendientes} partidas del libro · {r.kpis.movimientosBancoPendientes} del banco pendientes · <b>{r.calidad.pctConciliado}% conciliado</b> ({r.calidad.conciliados}/{r.calidad.total})</div>
           {r.saldoExtracto.oficial != null && !r.saldoExtracto.inconsistente && (
-            <div className="text-[10.5px] text-ink-4">Saldo banco tomado del <b>resumen oficial del estado de cuenta</b> · la lectura de las {' '}líneas cuadra con él.</div>
+            <div className="text-[10.5px] text-ink-4">Saldo banco tomado del <b>resumen oficial del estado de cuenta</b> · la lectura de las líneas cuadra con él.</div>
           )}
           {(r.saldoExtracto.inconsistente || r.saldoExtracto.estimado) && (
             <div className="rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/40 p-2 text-[10.5px] text-amber-800 dark:text-amber-300">
