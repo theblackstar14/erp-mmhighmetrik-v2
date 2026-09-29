@@ -5,6 +5,8 @@ import { Router } from 'express';
 import multer from 'multer';
 import { calcularDetalleOficina } from '../lib/planillaOficinaCalc.js';
 import { calcularRta5ta } from '../lib/rta5taCalc.js';
+import { resolverParamLegal, cargarTasasAfp } from '../lib/paramLegalOficina.js';
+import { getYtd } from '../lib/renta5taYtd.js';
 import { requireAuth } from '../middleware/auth.js';
 import { resolverEmpresa } from '../lib/permisos.js';
 import { cargarDerivarCtx } from '../lib/clasificacion.js';
@@ -191,22 +193,13 @@ router.post('/planilla/:mesId/calcular', requireOficinaEdit, async (req, res) =>
     .from(schema.empleados)
     .where(and(eq(schema.empleados.tipoPlanilla, 'admin'), eq(schema.empleados.activo, true)));
 
-  // Load AFP tasas
-  const afpTasasList = await db.select().from(schema.afpTasas);
-  const afpTasasMap = new Map(afpTasasList.map((t) => [afpKey(t.afp), t]));
+  // ── v2: resolve versioned legal params + AFP rates once per run ──
+  const param = await resolverParamLegal(mesRow.mes + '-01');
+  const afps = await cargarTasasAfp();
 
-  // Build base TasasOficina from config
-  const cfg = await getConfig();
-  const baseTasas = cfgToDto(cfg);
-
-  // Build afp snapshot map (all AFPs as fractions), keyed by STRIPPED name (no (F)/(M) suffix)
-  const afpSnapshotMap: Record<string, { pctSeguro: number; pctComision: number }> = {};
-  for (const t of afpTasasList) {
-    afpSnapshotMap[afpKey(t.afp)] = { pctSeguro: frac(t.pctSeguro), pctComision: frac(t.pctComision) };
-  }
-
-  // Snapshot: config + afp tasas
-  const tasasSnapshot = { config: baseTasas, afp: afpSnapshotMap };
+  // Normalization helper matching cargarTasasAfp key format (strip (F)/(M), trim, UPPERCASE)
+  const normAfpKey = (s: string | null | undefined) =>
+    (s ?? '').replace(/\s*\([FM]\)\s*$/i, '').trim().toUpperCase();
 
   // Load existing detalle to preserve manual inputs
   const existingDetalle = await db
@@ -261,19 +254,35 @@ router.post('/planilla/:mesId/calcular', requireOficinaEdit, async (req, res) =>
   const anioNum = Number(mesRow.mes.slice(0, 4));
   const diasMes = new Date(Date.UTC(anioNum, mesNum, 0)).getUTCDate();
 
+  // Snapshot per-worker data collected during the loop
+  const porTrabajador: Record<string, {
+    sistemaPension: string | null;
+    afpComisionTipo: string;
+    asignacionFamiliar: boolean;
+    modalidadFormativa: boolean;
+    acumuladoPercibido: number;
+    retencionesPrevias: number;
+  }> = {};
+
   // Build new detalle rows
   const rows: (typeof schema.planillaOficinaDetalle.$inferInsert)[] = [];
   for (const emp of empleados) {
     const tipoSP = sistemaPensionToTipo(emp.sistemaPension);
     // Keep original sistemaPension (with suffix) for display on boleta; strip only for tasa lookup
     const afpName = tipoSP === 'AFP' ? (emp.sistemaPension ?? null) : null;
-    const afpTasa = afpName ? afpTasasMap.get(afpKey(afpName)) : undefined;
 
-    const afpForEngine = afpTasa
-      ? { pctSeguro: frac(afpTasa.pctSeguro), pctComision: frac(afpTasa.pctComision) }
-      : undefined;
-
-    const tasas = { ...baseTasas, afp: afpForEngine };
+    // ── v2: build TasasOficina from versioned params ──
+    const afpRates = afpName ? afps[normAfpKey(afpName)] : undefined;
+    const tasas = {
+      rmv: param.rmv,
+      uit: param.uit,
+      topeRma: param.topeRma,
+      pctEssalud: param.pctEssalud,
+      pctOnp: param.pctOnp,
+      pctAfpAporte: param.pctAfpAporte,
+      pctAsigFamiliar: param.pctAsigFamiliar,
+      afp: afpRates,
+    };
 
     // Preserve manual inputs from existing detalle
     const prev = existingByEmpleado.get(emp.id);
@@ -309,24 +318,39 @@ router.post('/planilla/:mesId/calcular', requireOficinaEdit, async (req, res) =>
     const adelantoCuota = adelantoCuotaByEmpleado.get(emp.id) ?? 0;
     const sueldoMensual = Number(emp.sueldoBaseMensual ?? 0);
 
-    // Compute AUTO Renta 5ta (v1 approximation: continuous employment from January)
-    const acumuladoPercibidoAntes = sueldoMensual * (mesNum - 1);
-    const autoRenta5ta = calcularRta5ta({
-      sueldoMensual,
-      mesNumero: mesNum,
-      acumuladoPercibidoAntes,
-      retencionesPrevias: 0,
-      uit: Number(cfg.uit),
-    }).retencionMes;
+    // ── v2: mesIngreso — if same year as the planilla, use the actual ingreso month; else 1 ──
+    const fechaIngresoAnio = emp.fechaIngreso ? Number(emp.fechaIngreso.slice(0, 4)) : null;
+    const mesIngreso = (fechaIngresoAnio && fechaIngresoAnio === anioNum)
+      ? Number(emp.fechaIngreso!.slice(5, 7))
+      : 1;
 
-    // Preserve Kelly's override if renta5taManual flag is set on existing detalle
+    // ── v2: YTD renta 5ta suggestion via getYtd ──
     const useManualRenta5ta = !!(prev && prev.renta5taManual);
-    const imptoRenta5taFinal = useManualRenta5ta ? Number(prev!.imptoRenta5ta ?? 0) : autoRenta5ta;
+    let imptoRenta5taFinal: number;
+    let ytdAcumulado = 0;
+    let ytdRetenciones = 0;
+    if (useManualRenta5ta) {
+      imptoRenta5taFinal = Number(prev!.imptoRenta5ta ?? 0);
+    } else {
+      const ytd = await getYtd(emp.id, anioNum, mesNum);
+      ytdAcumulado = ytd.acumuladoPercibido;
+      ytdRetenciones = ytd.retencionesPrevias;
+      imptoRenta5taFinal = calcularRta5ta({
+        sueldoMensual,
+        mesNumero: mesNum,
+        mesIngreso,
+        acumuladoPercibidoAntes: ytd.acumuladoPercibido,
+        retencionesPrevias: ytd.retencionesPrevias,
+        uit: param.uit,
+      }).retencionMes;
+    }
 
     const calc = calcularDetalleOficina(
       {
         sueldoMensual,
         sistemaPension: tipoSP,
+        afpComisionTipo: (emp.afpComisionTipo as 'flujo' | 'mixta' | 'saldo') ?? 'saldo',
+        modalidadFormativa: emp.modalidadFormativa ?? false,
         asignacionFamiliar: emp.asignacionFamiliar ?? false,
         cantHe25: manualInputs.cantHe25,
         cantHe35: manualInputs.cantHe35,
@@ -342,10 +366,19 @@ router.post('/planilla/:mesId/calcular', requireOficinaEdit, async (req, res) =>
         otrosDescuentos: manualInputs.otrosDescuentos,
         diasTrab: manualInputs.diasTrab,
         diasMes,
-        esPracticante: emp.tipoTrabajador === 'practicante',
       },
       tasas,
     );
+
+    // Collect per-worker snapshot data
+    porTrabajador[emp.id] = {
+      sistemaPension: emp.sistemaPension ?? null,
+      afpComisionTipo: emp.afpComisionTipo ?? 'saldo',
+      asignacionFamiliar: emp.asignacionFamiliar ?? false,
+      modalidadFormativa: emp.modalidadFormativa ?? false,
+      acumuladoPercibido: ytdAcumulado,
+      retencionesPrevias: ytdRetenciones,
+    };
 
     nextBolNum += 1;
     const boletaCorrelativo = `BOL-${String(nextBolNum).padStart(6, '0')}`;
@@ -386,13 +419,13 @@ router.post('/planilla/:mesId/calcular', requireOficinaEdit, async (req, res) =>
       afpSeguro: String(calc.afpSeguro),
       afpComision: String(calc.afpComision),
       imptoRenta5ta: String(calc.imptoRenta5ta),
-      retencionJudicial: String(calc.retencionJudicial),
-      adelantoCuota: String(calc.adelantoCuota),
-      otrosDescuentos: String(calc.otrosDescuentos),
+      retencionJudicial: String(manualInputs.retencionJudicial),
+      adelantoCuota: String(adelantoCuota),
+      otrosDescuentos: String(manualInputs.otrosDescuentos),
       totalDescuento: String(calc.totalDescuento),
       essalud: String(calc.essalud),
-      essaludVida: String(calc.essaludVida),
-      totalAporte: String(calc.totalAporte),
+      essaludVida: '0',
+      totalAporte: String(calc.essalud),
       netoPago: String(calc.netoPago),
       costoTotal: String(calc.costoTotal),
       cuentaContable: null,
@@ -405,10 +438,13 @@ router.post('/planilla/:mesId/calcular', requireOficinaEdit, async (req, res) =>
 
   if (rows.length) await db.insert(schema.planillaOficinaDetalle).values(rows);
 
-  // Update mes: estado=calculada + snapshot
+  // ── v2: calculoSnapshot (param + afps + porTrabajador) ──
+  const calculoSnapshot = { param, afps, porTrabajador };
+
+  // Update mes: estado=calculada + snapshot (keep tasasSnapshot for PATCH backward-compat)
   const [updatedMes] = await db
     .update(schema.planillaOficinaMes)
-    .set({ estado: 'calculada', tasasSnapshot })
+    .set({ estado: 'calculada', calculoSnapshot })
     .where(eq(schema.planillaOficinaMes.id, mesId!))
     .returning();
 
@@ -480,35 +516,74 @@ router.patch('/planilla-detalle/:id', requireOficinaEdit, async (req, res) => {
   const diasMes = new Date(Date.UTC(Number(mesRow.mes.slice(0, 4)), Number(mesRow.mes.slice(5, 7)), 0)).getUTCDate();
   const diasTrab = b.diasTrab !== undefined ? Number(b.diasTrab) : (detRow.diasTrab ?? diasMes);
 
-  // Build tasas from mes snapshot
-  const snapshot = (mesRow.tasasSnapshot ?? {}) as {
-    config?: {
-      pctEssalud: number; pctOnp: number; pctAfpAporte: number;
-      rmv: number; topeSeguroAfp: number; horasMesBase: number;
-    };
+  // Build tasas from mes calculoSnapshot (v2) or legacy tasasSnapshot
+  const calcSnap = (mesRow.calculoSnapshot ?? {}) as {
+    param?: { rmv: number; uit: number; topeRma: number; pctEssalud: number; pctOnp: number; pctAfpAporte: number; pctAsigFamiliar: number };
+    afps?: Record<string, { pctAporte: number; pctSeguro: number; pctComisionFlujo: number; pctComisionMixta: number }>;
+    porTrabajador?: Record<string, { afpComisionTipo?: string; modalidadFormativa?: boolean }>;
+  };
+  const legacySnap = (mesRow.tasasSnapshot ?? {}) as {
+    config?: { pctEssalud: number; pctOnp: number; pctAfpAporte: number; rmv: number; topeSeguroAfp: number; horasMesBase: number };
     afp?: Record<string, { pctSeguro: number; pctComision: number }>;
   };
 
-  const cfgSnap = snapshot.config;
-  const baseTasas = cfgSnap
-    ? {
-        pctEssalud: cfgSnap.pctEssalud,
-        pctOnp: cfgSnap.pctOnp,
-        pctAfpAporte: cfgSnap.pctAfpAporte,
-        rmv: cfgSnap.rmv,
-        topeSeguroAfp: cfgSnap.topeSeguroAfp,
-        horasMesBase: cfgSnap.horasMesBase,
-      }
-    : cfgToDto(await getConfig());
+  // Determine normalization helper (UPPERCASE key for v2 afps map)
+  const normAfpKeyPatch = (s: string | null | undefined) =>
+    (s ?? '').replace(/\s*\([FM]\)\s*$/i, '').trim().toUpperCase();
 
-  // Strip (F)/(M) suffix from stored afp name before looking up snapshot (keys are stripped)
-  const afpRates = detRow.afp && snapshot.afp ? snapshot.afp[afpKey(detRow.afp)] : undefined;
-  const afpForEngine = afpRates ? { pctSeguro: afpRates.pctSeguro, pctComision: afpRates.pctComision } : undefined;
+  let patchTasas: Parameters<typeof calcularDetalleOficina>[1];
+  if (calcSnap.param) {
+    // v2 snapshot available
+    const afpData = detRow.afp ? calcSnap.afps?.[normAfpKeyPatch(detRow.afp)] : undefined;
+    patchTasas = {
+      rmv: calcSnap.param.rmv,
+      uit: calcSnap.param.uit,
+      topeRma: calcSnap.param.topeRma,
+      pctEssalud: calcSnap.param.pctEssalud,
+      pctOnp: calcSnap.param.pctOnp,
+      pctAfpAporte: calcSnap.param.pctAfpAporte,
+      pctAsigFamiliar: calcSnap.param.pctAsigFamiliar,
+      afp: afpData,
+    };
+  } else if (legacySnap.config) {
+    // legacy snapshot — build best-effort TasasOficina from old shape
+    const cfg = legacySnap.config;
+    const afpRates = detRow.afp && legacySnap.afp ? legacySnap.afp[afpKey(detRow.afp)] : undefined;
+    patchTasas = {
+      rmv: cfg.rmv,
+      uit: 5350,
+      topeRma: cfg.topeSeguroAfp ?? 12599.27,
+      pctEssalud: cfg.pctEssalud,
+      pctOnp: cfg.pctOnp,
+      pctAfpAporte: cfg.pctAfpAporte,
+      pctAsigFamiliar: 0.10,
+      afp: afpRates ? { pctAporte: 0.10, pctSeguro: afpRates.pctSeguro, pctComisionFlujo: afpRates.pctComision, pctComisionMixta: 0 } : undefined,
+    };
+  } else {
+    // No snapshot: resolve live params
+    const liveParam = await resolverParamLegal(mesRow.mes + '-01');
+    const liveAfps = await cargarTasasAfp();
+    const afpData = detRow.afp ? liveAfps[normAfpKeyPatch(detRow.afp)] : undefined;
+    patchTasas = {
+      rmv: liveParam.rmv, uit: liveParam.uit, topeRma: liveParam.topeRma,
+      pctEssalud: liveParam.pctEssalud, pctOnp: liveParam.pctOnp,
+      pctAfpAporte: liveParam.pctAfpAporte, pctAsigFamiliar: liveParam.pctAsigFamiliar,
+      afp: afpData,
+    };
+  }
+
+  // Derive afpComisionTipo and modalidadFormativa from snapshot or employee record
+  const workerSnap = calcSnap.porTrabajador?.[detRow.empleadoId];
+  const patchAfpComisionTipo: 'flujo' | 'mixta' | 'saldo' =
+    (workerSnap?.afpComisionTipo as 'flujo' | 'mixta' | 'saldo') ?? 'saldo';
+  const patchModalidadFormativa = workerSnap?.modalidadFormativa ?? (empRow?.tipoTrabajador === 'practicante');
 
   const calc = calcularDetalleOficina(
     {
       sueldoMensual,
       sistemaPension: tipoSP,
+      afpComisionTipo: patchAfpComisionTipo,
+      modalidadFormativa: patchModalidadFormativa,
       asignacionFamiliar,
       cantHe25,
       cantHe35,
@@ -524,9 +599,8 @@ router.patch('/planilla-detalle/:id', requireOficinaEdit, async (req, res) => {
       otrosDescuentos,
       diasTrab,
       diasMes,
-      esPracticante: empRow?.tipoTrabajador === 'practicante',
     },
-    { ...baseTasas, afp: afpForEngine },
+    patchTasas,
   );
 
   // Determine cuentaContable update
@@ -564,12 +638,12 @@ router.patch('/planilla-detalle/:id', requireOficinaEdit, async (req, res) => {
       afpSeguro: String(calc.afpSeguro),
       afpComision: String(calc.afpComision),
       imptoRenta5ta: String(calc.imptoRenta5ta),
-      retencionJudicial: String(calc.retencionJudicial),
-      otrosDescuentos: String(calc.otrosDescuentos),
+      retencionJudicial: String(retencionJudicial),
+      otrosDescuentos: String(otrosDescuentos),
       totalDescuento: String(calc.totalDescuento),
       essalud: String(calc.essalud),
-      essaludVida: String(calc.essaludVida),
-      totalAporte: String(calc.totalAporte),
+      essaludVida: '0',
+      totalAporte: String(calc.essalud),
       netoPago: String(calc.netoPago),
       costoTotal: String(calc.costoTotal),
       cuentaContable: newCuentaContable,
