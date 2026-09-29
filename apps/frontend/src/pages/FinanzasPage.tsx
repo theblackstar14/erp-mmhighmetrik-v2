@@ -3127,12 +3127,15 @@ const CLASE_CONCIL: Record<string, string> = {
 };
 const agingCls = (d: number) => (d <= 7 ? 'text-emerald-600' : d <= 30 ? 'text-amber-600' : 'text-rose-600');
 
-function ResumenConciliacionPanel() {
+function ResumenConciliacionPanel({ cuentaHint, periodoHint }: { cuentaHint?: string | null; periodoHint?: string | null }) {
   const cuentasQ = useQuery({ queryKey: ['cuentas'], queryFn: () => api.finanzas.listCuentas() });
   const cuentas = cuentasQ.data?.cuentas ?? [];
   const [cuenta, setCuenta] = useState('');
-  const [periodo, setPeriodo] = useState('2026-04');
-  useEffect(() => { if (!cuenta && cuentas[0]) setCuenta(cuentas[0].id); }, [cuentas, cuenta]);
+  const [periodo, setPeriodo] = useState('');
+  // F6 · el cuadre sigue al extracto en trabajo (cuenta y mes de sus líneas) · el usuario puede cambiarlos
+  useEffect(() => { if (cuentaHint) setCuenta(cuentaHint); }, [cuentaHint]);
+  useEffect(() => { if (periodoHint) setPeriodo(periodoHint); }, [periodoHint]);
+  useEffect(() => { if (!cuenta && !cuentaHint && cuentas.length) setCuenta((cuentas.find((c) => c.tipo !== 'caja') ?? cuentas[0]!).id); }, [cuentas, cuenta, cuentaHint]);
   const q = useQuery({ queryKey: ['concil-resumen', cuenta, periodo], queryFn: () => api.conciliacion.resumen(cuenta, periodo), enabled: !!cuenta && /^\d{4}-\d{2}$/.test(periodo) });
   const r: ConciliacionResumen | undefined = q.data;
   const fila = (p: PartidaConcil) => (
@@ -3211,108 +3214,164 @@ function ConciliacionView({ proyectos, defaultProyecto }: { proyectos: { id: str
     onSuccess: (r) => { setErr(''); setFile(null); inval(); setSel(r.extracto.id); },
     onError: (e: Error) => setErr(e.message),
   });
-  const conciliar = useMutation({ mutationFn: (v: { id: string; mid: string }) => api.conciliacion.conciliar(v.id, v.mid), onSuccess: inval });
+  const conciliar = useMutation({ mutationFn: (v: { id: string; mid: string }) => api.conciliacion.conciliar(v.id, v.mid), onSuccess: inval, onError: (e: Error) => setErr(e.message) });
   const setEstado = useMutation({ mutationFn: (v: { id: string; estado: string }) => api.conciliacion.setEstado(v.id, v.estado), onSuccess: inval });
+  // F6 · confirmar sugerencias del matcher en lote (las de confianza baja quedan para revisión manual)
+  const confirmarSug = useMutation({
+    mutationFn: () => api.conciliacion.confirmarSugeridas(sel!),
+    onSuccess: (r) => { setErr(''); inval(); if (r.bajaExcluidas > 0) setErr(`${r.conciliadas} conciliadas · ${r.bajaExcluidas} de confianza baja quedan para revisión manual`); },
+    onError: (e: Error) => setErr(e.message),
+  });
+  const [filtro, setFiltro] = useState<'pendientes' | 'sugeridas' | 'cargos' | 'sinpareja' | 'conciliadas' | 'todas'>('pendientes');
   const cuentas = cuentasQ.data?.cuentas ?? [];
   const lineas = linQ.data?.lineas ?? [];
-  const extSel = (extQ.data?.extractos ?? []).find((e) => e.id === sel); // cuenta bancaria del extracto (prefill)
-  const chip = (e: string) => e === 'conciliado' ? 'text-emerald-600' : e === 'diferencia' ? 'text-destructive' : e === 'ignorado' ? 'text-ink-4' : 'text-amber-600';
+  const extractos = extQ.data?.extractos ?? [];
+  const extSel = extractos.find((e) => e.id === sel); // cuenta bancaria del extracto (prefill)
+  useEffect(() => { if (!sel && extractos.length) setSel(extractos[0]!.id); }, [sel, extractos]);
+
+  // F6 · categorías de trabajo de una línea (gobiernan filtros, conteos y acciones)
+  const catDe = (l: ExtractoLineaUI): 'sugerida' | 'cargo' | 'sinpareja' | 'conciliada' | 'otras' => {
+    if (l.estado === 'conciliado') return 'conciliada';
+    if (l.estado !== 'pendiente') return 'otras'; // diferencia · ignorado
+    if (l.movimientoId) return 'sugerida';
+    if (l.caso === 'itf' || l.caso === 'cargo_banco') return 'cargo';
+    return 'sinpareja';
+  };
+  const conteo = { sugerida: 0, cargo: 0, sinpareja: 0, conciliada: 0, otras: 0 };
+  for (const l of lineas) conteo[catDe(l)]++;
+  const sugConfirmables = lineas.filter((l) => catDe(l) === 'sugerida' && l.confianza !== 'baja').length;
+  const visibles = lineas.filter((l) => {
+    const c = catDe(l);
+    if (filtro === 'todas') return true;
+    if (filtro === 'pendientes') return c === 'sugerida' || c === 'cargo' || c === 'sinpareja';
+    if (filtro === 'sugeridas') return c === 'sugerida';
+    if (filtro === 'cargos') return c === 'cargo';
+    if (filtro === 'sinpareja') return c === 'sinpareja';
+    return c === 'conciliada' || c === 'otras';
+  });
 
   return (
     <div className="space-y-4">
-      <ResumenConciliacionPanel />
+      <ResumenConciliacionPanel cuentaHint={extSel?.cuentaId} periodoHint={lineas[0]?.fecha.slice(0, 7)} />
 
-      {/* Importar */}
-      <div className="rounded-lg border border-line bg-bg-elev p-4 flex flex-wrap items-end gap-3">
-        <div className="flex-1 min-w-[180px]">
-          <div className="text-[13px] font-semibold mb-1">Importar extracto bancario</div>
-          <div className="text-[10.5px] text-ink-4">CSV / XLSX (detecta columnas) · o <strong>PDF</strong> de estado de cuenta BCP (lee con IA · ~2 min)</div>
-        </div>
-        <select value={cuentaId} onChange={(e) => setCuentaId(e.target.value)} className="h-8 px-2.5 rounded-md border border-line bg-bg-elev text-[12px]">
-          <option value="">— cuenta (opcional) —</option>
+      {/* Extracto en trabajo + importar · una fila de contexto (el detalle vive en la bandeja) */}
+      <div className="rounded-lg border border-line bg-bg-elev px-3.5 py-3 flex flex-wrap items-center gap-2.5">
+        <span className="font-mono text-[10px] uppercase tracking-wider text-ink-4">Extracto</span>
+        <select value={sel ?? ''} onChange={(e) => setSel(e.target.value || null)} className="h-8 px-2.5 rounded-md border border-line bg-bg-elev text-[12px] min-w-[240px] max-w-[340px] truncate">
+          {extractos.length === 0 && <option value="">— sin extractos importados —</option>}
+          {extractos.map((e) => <option key={e.id} value={e.id}>{e.nombreArchivo ?? 'extracto'} · {e.totalFilas} mov. · {new Date(e.importadoEn).toLocaleDateString('es-PE')}</option>)}
+        </select>
+        <div className="flex-1" />
+        <select value={cuentaId} onChange={(e) => setCuentaId(e.target.value)} className="h-8 px-2 rounded-md border border-line bg-bg-elev text-[11.5px] max-w-[180px] truncate">
+          <option value="">— cuenta del archivo —</option>
           {cuentas.map((c) => <option key={c.id} value={c.id}>{c.descripcion ?? c.codigo}</option>)}
         </select>
-        <input type="file" accept=".csv,.xlsx,.xls,.pdf" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="text-[11px] max-w-[200px]" />
-        <button disabled={!file || importar.isPending} onClick={() => importar.mutate()} className="h-8 px-3 rounded-md bg-primary text-primary-foreground text-[12px] font-medium disabled:opacity-50">{importar.isPending ? 'Importando…' : 'Importar'}</button>
-        {err && <div className="w-full text-[11px] text-destructive">{err}</div>}
+        <input type="file" accept=".csv,.xlsx,.xls,.pdf" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="text-[11px] max-w-[190px]" />
+        <button disabled={!file || importar.isPending} onClick={() => importar.mutate()} className="h-8 px-3 rounded-md bg-primary text-primary-foreground text-[12px] font-medium hover:opacity-90 disabled:opacity-50">{importar.isPending ? 'Leyendo…' : 'Importar'}</button>
+        <div className="w-full text-[10.5px] text-ink-4">PDF del estado de cuenta BCP (lectura automática, ~2 min) o CSV / XLSX de cualquier banco · los re-imports del mismo mes se detectan solos</div>
+        {err && <div className="w-full text-[11px] text-amber-700">{err}</div>}
       </div>
 
-      {/* Extractos */}
-      <div className="rounded-lg border border-line bg-bg-elev overflow-hidden">
-        <div className="border-b border-line px-4 py-2.5"><h3 className="text-[13px] font-semibold">Extractos importados</h3></div>
-        {extQ.isLoading ? <SkelRows rows={3} /> : (
-          <table className="w-full text-[12px]">
-            <thead className="bg-bg-sunken border-b border-line"><tr className="text-left text-[10px] font-mono uppercase tracking-wider text-ink-4">
-              <th className="px-3 py-2">Archivo</th><th className="px-3 py-2 w-20">Filas</th><th className="px-3 py-2">Estados</th><th className="px-3 py-2 w-32">Importado</th>
-            </tr></thead>
-            <tbody className="divide-y divide-line">
-              {(extQ.data?.extractos ?? []).map((e) => (
-                <tr key={e.id} onClick={() => setSel(e.id)} className={cn('cursor-pointer hover:bg-bg-sunken/40', sel === e.id && 'bg-bg-sunken/60')}>
-                  <td className="px-3 py-2 text-[11.5px]">{e.nombreArchivo ?? '—'} {e.banco && <span className="text-ink-4">· {e.banco}</span>}</td>
-                  <td className="px-3 py-2 font-mono tabular-nums">{e.totalFilas}</td>
-                  <td className="px-3 py-2 text-[10.5px]">{Object.entries(e.conteos).map(([k, v]) => <span key={k} className={cn('mr-2', chip(k))}>{k}:{v}</span>)}</td>
-                  <td className="px-3 py-2 font-mono text-[10px] text-ink-4">{new Date(e.importadoEn).toLocaleDateString('es-PE')}</td>
-                </tr>
-              ))}
-              {(extQ.data?.extractos ?? []).length === 0 && <tr><td colSpan={4} className="px-3 py-8 text-center text-[12px] text-ink-3">Sin extractos · importa un CSV/XLSX del banco</td></tr>}
-            </tbody>
-          </table>
-        )}
-      </div>
-
-      {/* Líneas del extracto seleccionado */}
-      {sel && (() => {
-        const cargosPend = lineas.filter((l) => l.estado === 'pendiente' && !l.movimientoId && (l.caso === 'itf' || l.caso === 'cargo_banco'));
-        return (
+      {/* F6 · Bandeja de trabajo: una lista, filtrada por lo que falta decidir, con acciones en lote */}
+      {sel && (
         <div className="rounded-lg border border-line bg-bg-elev overflow-hidden">
-          <div className="flex items-center gap-2 border-b border-line px-4 py-2.5">
-            <h3 className="text-[13px] font-semibold">Líneas · match ERP ↔ banco</h3>
+          <div className="flex flex-wrap items-center gap-2 border-b border-line px-3.5 py-2.5">
+            <SegTabs value={filtro} onChange={setFiltro} opts={[
+              { v: 'pendientes', l: 'Pendientes', n: conteo.sugerida + conteo.cargo + conteo.sinpareja },
+              { v: 'sugeridas', l: 'Sugeridas', n: conteo.sugerida },
+              { v: 'cargos', l: 'Cargos del banco', n: conteo.cargo },
+              { v: 'sinpareja', l: 'Sin pareja', n: conteo.sinpareja },
+              { v: 'conciliadas', l: 'Resueltas', n: conteo.conciliada + conteo.otras },
+              { v: 'todas', l: 'Todas' },
+            ] as const} />
             <div className="flex-1" />
-            {cargosPend.length > 0 && (
-              <button onClick={() => setLoteOpen(true)} className="h-7 px-2.5 rounded-md border border-amber-400/60 text-amber-700 text-[11px] font-semibold hover:bg-amber-50 dark:hover:bg-amber-950/30">
-                Registrar {cargosPend.length} cargo(s) del banco en lote
+            {sugConfirmables > 0 && (
+              <button disabled={confirmarSug.isPending} onClick={() => confirmarSug.mutate()}
+                title="Concilia las sugerencias de confianza alta y media · las de confianza baja (montos empatados) se revisan una por una"
+                className="h-7 px-2.5 rounded-md bg-emerald-600 text-white text-[11px] font-semibold hover:opacity-90 disabled:opacity-50">
+                {confirmarSug.isPending ? 'Conciliando…' : `Confirmar ${sugConfirmables} sugerida(s)`}
+              </button>
+            )}
+            {conteo.cargo > 0 && (
+              <button onClick={() => setLoteOpen(true)} className="h-7 px-2.5 rounded-md border border-line text-[11px] font-semibold text-ink-2 hover:bg-bg-sunken">
+                Registrar {conteo.cargo} cargo(s) del banco
               </button>
             )}
           </div>
-          {linQ.isLoading ? <SkelRows rows={6} /> : (
+          {linQ.isLoading ? <SkelRows rows={8} /> : (
+          <div className="overflow-x-auto">
             <table className="w-full text-[12px]">
               <thead className="bg-bg-sunken border-b border-line"><tr className="text-left text-[10px] font-mono uppercase tracking-wider text-ink-4">
-                <th className="px-3 py-2 w-24">Fecha</th><th className="px-3 py-2">Descripción banco</th><th className="px-3 py-2 w-28 text-right">Monto</th>
-                <th className="px-3 py-2 w-24">Estado</th><th className="px-3 py-2">Movimiento sugerido</th><th className="px-3 py-2 w-44">Acción</th>
+                <th className="px-3 py-2 w-16">Fecha</th><th className="px-3 py-2">Movimiento del banco</th><th className="px-3 py-2 w-28 text-right">Monto</th>
+                <th className="px-3 py-2">Pareja en el ERP</th><th className="px-3 py-2 w-56"></th>
               </tr></thead>
               <tbody className="divide-y divide-line">
-                {lineas.map((l) => (
-                  <tr key={l.id} className="hover:bg-bg-sunken/30">
-                    <td className="px-3 py-2 font-mono text-[10.5px]">{l.fecha}</td>
-                    <td className="px-3 py-2 text-[11px] max-w-[220px] truncate" title={l.descripcion ?? ''}>{l.descripcion || '—'}{l.referencia && <span className="text-ink-4"> · {l.referencia}</span>}</td>
-                    <td className={cn('px-3 py-2 text-right font-mono tabular-nums', Number(l.monto) < 0 && 'text-destructive')}>{fmtPEN(Number(l.monto))}</td>
-                    <td className="px-3 py-2">
-                      <span className={cn('chip', chip(l.estado))}>{l.estado}</span>
-                      {(l.caso === 'itf' || l.caso === 'cargo_banco') && <span className="block text-[9px] text-amber-600">cargo banco</span>}
-                      {l.caso === 'transfer_propia' && <span className="block text-[9px] text-ink-4">cta. propia</span>}
+                {visibles.map((l) => { const c = catDe(l); return (
+                  <tr key={l.id} className={cn('hover:bg-bg-sunken/30', c === 'conciliada' && 'opacity-55')}>
+                    <td className="px-3 py-1.5 font-mono text-[10.5px] text-ink-3 whitespace-nowrap">{l.fecha.slice(5)}</td>
+                    <td className="px-3 py-1.5 max-w-[280px]">
+                      <div className="truncate text-[11.5px]" title={l.descripcion ?? ''}>{l.descripcion || '—'}</div>
+                      {l.referencia && <div className="font-mono text-[9.5px] text-ink-4">op. {l.referencia}</div>}
                     </td>
-                    <td className="px-3 py-2 text-[11px]">{l.movimiento ? <span>{l.movimiento.descripcion ?? l.movimiento.tipoMovimiento} · {fmtPEN(Number(l.movimiento.montoBase ?? l.movimiento.monto))} {l.confianza && <span className="text-ink-4">({l.confianza} {l.score})</span>}</span> : <span className="text-ink-4">sin sugerencia</span>}</td>
-                    <td className="px-3 py-2">
-                      {l.estado === 'conciliado'
-                        ? <button onClick={() => setEstado.mutate({ id: l.id, estado: 'pendiente' })} className="text-[10.5px] text-ink-4 hover:text-foreground">deshacer</button>
-                        : <div className="flex gap-1.5">
-                            {l.movimientoId && <button onClick={() => conciliar.mutate({ id: l.id, mid: l.movimientoId! })} className="h-6 px-2 rounded bg-emerald-600 text-white text-[10.5px]">Conciliar</button>}
-                            {!l.movimientoId && l.caso !== 'itf' && l.caso !== 'cargo_banco' && (
-                              <button onClick={() => setRegistrarLinea(l)} title="Abre el formulario prellenado con esta línea del banco; al guardar queda conciliada" className="h-6 px-2 rounded border border-primary/60 text-primary text-[10.5px] font-semibold">Registrar</button>
-                            )}
-                            <button onClick={() => setEstado.mutate({ id: l.id, estado: 'diferencia' })} className="h-6 px-2 rounded border border-line text-[10.5px] hover:text-destructive">Diferencia</button>
-                            <button onClick={() => setEstado.mutate({ id: l.id, estado: 'ignorado' })} className="h-6 px-2 rounded border border-line text-[10.5px] text-ink-4">Ignorar</button>
-                          </div>}
+                    <td className={cn('px-3 py-1.5 text-right font-mono tabular-nums whitespace-nowrap', Number(l.monto) < 0 ? 'text-rose-600' : 'text-emerald-600')}>{fmtPEN(Number(l.monto))}</td>
+                    <td className="px-3 py-1.5 text-[11px]">
+                      {c === 'conciliada' && l.movimiento ? (
+                        <span className="text-ink-2">✓ {l.movimiento.descripcion ?? l.movimiento.tipoMovimiento} · {fmtPEN(Number(l.movimiento.montoBase ?? l.movimiento.monto))}</span>
+                      ) : c === 'sugerida' && l.movimiento ? (
+                        <span>
+                          {l.movimiento.descripcion ?? l.movimiento.tipoMovimiento} · {fmtPEN(Number(l.movimiento.montoBase ?? l.movimiento.monto))}
+                          <span className={cn('ml-1.5 font-mono text-[9.5px]', l.confianza === 'alta' ? 'text-emerald-600' : l.confianza === 'media' ? 'text-amber-600' : 'text-rose-600')}>
+                            {l.confianza}{l.confianza === 'baja' ? ' · monto repetido, revisar' : ''}
+                          </span>
+                        </span>
+                      ) : c === 'cargo' ? (
+                        <span className="text-ink-4">ITF / comisión del banco → lote (cuenta {l.cuentaSugerida})</span>
+                      ) : l.estado === 'ignorado' ? (
+                        <span className="text-ink-4">ignorada</span>
+                      ) : l.estado === 'diferencia' ? (
+                        <span className="text-rose-600">marcada como diferencia</span>
+                      ) : (
+                        <span className="text-ink-4">sin movimiento en el ERP</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-1.5">
+                      {c === 'conciliada' ? (
+                        <button onClick={() => setEstado.mutate({ id: l.id, estado: 'pendiente' })} className="text-[10.5px] text-ink-4 hover:text-foreground">deshacer</button>
+                      ) : l.estado === 'ignorado' || l.estado === 'diferencia' ? (
+                        <button onClick={() => setEstado.mutate({ id: l.id, estado: 'pendiente' })} className="text-[10.5px] text-ink-4 hover:text-foreground">reactivar</button>
+                      ) : (
+                        <div className="flex gap-1.5">
+                          {c === 'sugerida' && <>
+                            <button onClick={() => conciliar.mutate({ id: l.id, mid: l.movimientoId! })} className="h-6 px-2 rounded-md bg-emerald-600 text-white text-[10.5px] font-medium hover:opacity-90">Confirmar</button>
+                            <button onClick={() => setEstado.mutate({ id: l.id, estado: 'pendiente' })} title="Quita la sugerencia · la línea pasa a Sin pareja para registrarla o conciliarla con otro movimiento" className="h-6 px-2 rounded-md border border-line text-[10.5px] text-ink-3 hover:bg-bg-sunken">Quitar</button>
+                          </>}
+                          {c === 'sinpareja' && (
+                            <button onClick={() => setRegistrarLinea(l)} title="Abre el formulario prellenado con esta línea; al guardar queda conciliada" className="h-6 px-2 rounded-md border border-primary/60 text-primary text-[10.5px] font-semibold hover:bg-primary/5">Registrar</button>
+                          )}
+                          {c !== 'sugerida' && (
+                            <button onClick={() => setEstado.mutate({ id: l.id, estado: 'diferencia' })} className="h-6 px-2 rounded-md border border-line text-[10.5px] text-ink-3 hover:text-rose-600">Diferencia</button>
+                          )}
+                          <button onClick={() => setEstado.mutate({ id: l.id, estado: 'ignorado' })} className="h-6 px-2 rounded-md border border-line text-[10.5px] text-ink-4 hover:bg-bg-sunken">Ignorar</button>
+                        </div>
+                      )}
                     </td>
                   </tr>
-                ))}
-                {lineas.length === 0 && <tr><td colSpan={6} className="px-3 py-8 text-center text-[12px] text-ink-3">Sin líneas</td></tr>}
+                ); })}
+                {visibles.length === 0 && (
+                  <tr><td colSpan={5} className="px-3 py-10 text-center text-[12px] text-ink-3">
+                    {filtro === 'pendientes' ? 'Nada pendiente en este extracto · todo decidido' : 'Sin líneas en este filtro'}
+                  </td></tr>
+                )}
               </tbody>
             </table>
+          </div>
           )}
+          <div className="flex flex-wrap justify-between gap-2 border-t border-line px-3.5 py-2 text-[10.5px] text-ink-4">
+            <span>{lineas.length} movimiento(s) del banco · {conteo.conciliada} conciliado(s)</span>
+            <span className="font-mono tabular-nums">Σ abonos {fmtPEN(lineas.reduce((s, l) => s + Math.max(Number(l.monto), 0), 0))} · Σ cargos {fmtPEN(lineas.reduce((s, l) => s + Math.min(Number(l.monto), 0), 0))}</span>
+          </div>
         </div>
-        );
-      })()}
+      )}
 
       {/* F6 · Registrar desde extracto: formulario nuevo prellenado; al guardar la línea queda conciliada */}
       {registrarLinea && (

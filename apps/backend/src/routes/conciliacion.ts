@@ -246,6 +246,34 @@ router.get('/:id/lineas', async (req, res) => {
   });
 });
 
+// F6 · POST /:id/confirmar-sugeridas · aprueba en lote las sugerencias del matcher.
+// Las de confianza BAJA (empates de monto/fecha) quedan FUERA por defecto: esas las revisa
+// Kelly una por una con "Otra pareja". Valida dirección igual que el conciliar individual.
+router.post('/:id/confirmar-sugeridas', async (req, res) => {
+  const incluirBaja = (req.body as { incluirBaja?: boolean })?.incluirBaja === true;
+  const lineas = await db.select().from(schema.extractoLineas).where(and(
+    eq(schema.extractoLineas.extractoId, req.params.id!),
+    eq(schema.extractoLineas.estado, 'pendiente'),
+    sql`${schema.extractoLineas.movimientoId} is not null`,
+  ));
+  const candidatas = lineas.filter((l) => incluirBaja || l.confianza !== 'baja');
+  if (!candidatas.length) return res.json({ conciliadas: 0, saltadas: lineas.length, motivo: 'sin sugerencias confirmables (las de confianza baja se revisan a mano)' });
+  const movs = await db.select().from(schema.movimientos).where(inArray(schema.movimientos.id, candidatas.map((l) => l.movimientoId!) ));
+  const movMap = new Map(movs.map((m) => [m.id, m]));
+  let conciliadas = 0;
+  const saltadas: string[] = [];
+  for (const l of candidatas) {
+    const m = movMap.get(l.movimientoId!);
+    const dirLinea = Number(l.monto) >= 0 ? 'Ingreso' : 'Egreso';
+    if (!m || m.anulado || (m.tipoMovimiento !== dirLinea && !m.transferenciaId)) { saltadas.push(`${l.fecha} ${fmtMini(l.monto)}`); continue; }
+    await db.update(schema.extractoLineas).set({ estado: 'conciliado', matchedPor: req.user!.id, matchedEn: new Date() }).where(eq(schema.extractoLineas.id, l.id));
+    conciliadas++;
+  }
+  await audit(req, { action: 'conciliar_lote', entityType: 'extracto_bancario', entityId: req.params.id!, after: { conciliadas, saltadas: saltadas.length, bajaExcluidas: lineas.length - candidatas.length } });
+  res.json({ conciliadas, saltadas: saltadas.length, bajaExcluidas: lineas.length - candidatas.length });
+});
+const fmtMini = (m: unknown) => Number(m).toFixed(2);
+
 // F6 · POST /cargos-banco · lote: N líneas de cargos del banco (ITF/COM/MANT) → N movimientos
 // egreso con cuenta contra manual (editable por fila) + línea conciliada de frente (link directo,
 // sin depender del matcher: el ITF no trae N° de operación). El asiento nace en /generar.

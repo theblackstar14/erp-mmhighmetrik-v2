@@ -814,6 +814,9 @@ export const api = {
     getLineas: (extractoId: string) => req<{ lineas: ExtractoLineaUI[] }>(`/api/conciliacion/${extractoId}/lineas`),
     conciliar: (lineaId: string, movimientoId: string) => req<{ linea: ExtractoLineaUI }>(`/api/conciliacion/lineas/${lineaId}/conciliar`, { method: 'POST', body: JSON.stringify({ movimientoId }) }),
     setEstado: (lineaId: string, estado: string, motivo?: string) => req<{ linea: ExtractoLineaUI }>(`/api/conciliacion/lineas/${lineaId}/estado`, { method: 'POST', body: JSON.stringify({ estado, motivo }) }),
+    // F6 · confirma en lote las sugerencias del matcher (confianza baja queda fuera por defecto)
+    confirmarSugeridas: (extractoId: string) =>
+      req<{ conciliadas: number; saltadas: number; bajaExcluidas: number }>(`/api/conciliacion/${extractoId}/confirmar-sugeridas`, { method: 'POST', body: JSON.stringify({}) }),
     // F6 · lote de cargos del banco (ITF/COM/MANT) → movimientos 6412/679 conciliados de frente
     cargosBanco: (items: { lineaId: string; cuenta?: string }[]) =>
       req<{ creados: { lineaId: string; movimientoId: string; cuenta: string }[]; errores: string[] }>('/api/conciliacion/cargos-banco', { method: 'POST', body: JSON.stringify({ items }) }),
