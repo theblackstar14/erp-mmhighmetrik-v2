@@ -729,8 +729,8 @@ export const api = {
     getCobertura: (periodo: string) => req<CoberturaResumen>(`/api/contabilidad/cobertura?periodo=${periodo}`),
     getMayorResumen: (periodo?: string) =>
       req<{ filas: MayorResumenFila[]; totales: { cuentas: number; movs: number; debe: number; haber: number } }>(`/api/contabilidad/mayor-resumen${periodo ? `?periodo=${periodo}` : ''}`),
-    getConciliacion: () =>
-      req<{ saldoContable: number; saldoTesoreria: number; diferencia: number; cuentas: { cuenta: CuentaBancaria; saldoTesoreria: number; movimientos: number }[] }>('/api/contabilidad/conciliacion'),
+    getConciliacion: (hasta?: string) =>
+      req<{ hasta: string | null; saldoContable: number; saldoTesoreria: number; diferencia: number; residualContable: number; cuentas: { cuenta: CuentaBancaria; saldoTesoreria: number; saldoContable: number | null; delta: number | null; movimientos: number }[] }>(`/api/contabilidad/conciliacion${hasta ? `?hasta=${hasta}` : ''}`),
     // F3-B · reporte sombra (read-only · legacy 104x vs movimientos · readiness del flip cutover)
     getReporteSombra: (periodo: string, cutover?: string) =>
       req<ReporteSombra>(`/api/contabilidad/reporte-sombra?periodo=${periodo}${cutover ? `&cutover=${cutover}` : ''}`),

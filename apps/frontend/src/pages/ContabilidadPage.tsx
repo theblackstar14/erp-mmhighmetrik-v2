@@ -30,7 +30,7 @@ import { SegTabs } from './FinanzasPage.js';
 // F7 · 10 → 6 tabs alrededor del ciclo mensual de Kelly. Las herramientas de la transición del
 // cutover (Sombra 104x, invariante Bancos) quedan en código, sin entrada de UI: ya cumplieron.
 const MOSTRAR_HERRAMIENTAS_TRANSICION = false;
-type Tab = 'plan' | 'diario' | 'mayor' | 'cierre' | 'libros' | 'eeff' | 'bancos' | 'sombra';
+type Tab = 'plan' | 'diario' | 'cierre' | 'libros' | 'eeff' | 'bancos' | 'sombra';
 
 const hoyPeriodo = () => new Date().toISOString().slice(0, 7);
 
@@ -55,8 +55,7 @@ export function ContabilidadPage() {
         <nav className="flex gap-1 -mb-px overflow-x-auto">
           {([
             ['plan', 'Plan contable', BookOpen],
-            ['diario', 'Diario', FileSpreadsheet],
-            ['mayor', 'Mayor', BookOpen],
+            ['diario', 'Diario y mayor', FileSpreadsheet],
             ['cierre', 'Cierre del mes', Lock],
             ['libros', 'Libros y SIRE', Calculator],
             ['eeff', 'Estados Financieros', Scale],
@@ -73,8 +72,7 @@ export function ContabilidadPage() {
 
       <TabFade tabKey={tab}>
         {tab === 'plan' && <PlanHub periodo={periodo} />}
-        {tab === 'diario' && <DiarioTab periodo={periodo} />}
-        {tab === 'mayor' && <MayorTab periodo={periodo} />}
+        {tab === 'diario' && <DiarioMayorHub periodo={periodo} />}
         {tab === 'cierre' && <CierreTab periodo={periodo} />}
         {tab === 'libros' && <LibrosTab periodo={periodo} />}
         {tab === 'eeff' && <EstadosFinancierosTab />}
@@ -100,6 +98,21 @@ function PlanHub({ periodo }: { periodo: string }) {
   );
 }
 
+// ─── F7 · Diario + Mayor en una tab (dos vistas del mismo libro) ──
+function DiarioMayorHub({ periodo }: { periodo: string }) {
+  const [vista, setVista] = useState<'diario' | 'mayor'>('diario');
+  return (
+    <div className="space-y-3">
+      <SegTabs value={vista} onChange={setVista} opts={[
+        { v: 'diario', l: 'Diario · asientos' },
+        { v: 'mayor', l: 'Mayor · por cuenta' },
+      ] as const} />
+      {vista === 'diario' && <DiarioTab periodo={periodo} />}
+      {vista === 'mayor' && <MayorTab periodo={periodo} />}
+    </div>
+  );
+}
+
 // ─── F7 · CIERRE DEL MES · el corazón del módulo: checklist en vivo → cerrar → auditoría ──
 function CierreTab({ periodo }: { periodo: string }) {
   const qc = useQueryClient();
@@ -109,7 +122,9 @@ function CierreTab({ periodo }: { periodo: string }) {
   const cobQ = useQuery({ queryKey: ['ctb-cobertura', periodo], queryFn: () => api.contabilidad.getCobertura(periodo) });
   const preQ = useQuery({ queryKey: ['ctb-preclose', periodo], queryFn: () => api.contabilidad.getPrecloseCheck(periodo) });
   const conQ = useQuery({ queryKey: ['concil-metricas', periodo], queryFn: () => api.conciliacion.metricas(periodo) });
-  const invQ = useQuery({ queryKey: ['ctb-conciliacion'], queryFn: () => api.contabilidad.getConciliacion() });
+  // F7 · invariante CORTADO al fin del mes que se cierra (el global mezclaba meses futuros)
+  const finMes = (() => { const [y, m] = periodo.split('-').map(Number); return `${periodo}-${String(new Date(y!, m!, 0).getDate()).padStart(2, '0')}`; })();
+  const invQ = useQuery({ queryKey: ['ctb-conciliacion', finMes], queryFn: () => api.contabilidad.getConciliacion(finMes) });
   const provQ = useQuery({ queryKey: ['provisiones-48'], queryFn: () => api.contabilidad.listProvisiones() });
 
   const periodoRow = perQ.data?.periodos.find((p) => p.periodo === periodo);
@@ -125,11 +140,23 @@ function CierreTab({ periodo }: { periodo: string }) {
   // checklist: cada ítem = una condición del mes listo, con su dato vivo y a dónde ir a resolverla
   const provAbiertas = (provQ.data?.provisiones ?? []).filter((p) => p.estado === 'abierta' && p.fecha.startsWith(periodo)).length;
   const invarDiff = Math.abs(invQ.data?.diferencia ?? 0);
+  // F7 · el invariante ya no es un número opaco: nombra las cuentas que difieren y adapta la guía —
+  // con documentos sin asentar la causa es Generar; sin ellos son partidas históricas (reseed)
+  const deltasCuenta = (invQ.data?.cuentas ?? []).filter((c) => c.delta != null && Math.abs(c.delta) > 0.01)
+    .sort((a, b) => Math.abs(b.delta!) - Math.abs(a.delta!));
+  const invarDato = !invQ.data ? '…' : invarDiff < 0.01 ? 'cuadra exacto al fin del mes' : [
+    `difieren ${fmtPEN(invarDiff)} al ${finMes}`,
+    deltasCuenta.slice(0, 3).map((c) => `${(c.cuenta.descripcion ?? c.cuenta.codigo)?.slice(0, 18)} ${fmtPEN(c.delta!)}`).join(' · '),
+    Math.abs(invQ.data.residualContable) > 0.01 ? `sin cuenta mapeada ${fmtPEN(invQ.data.residualContable)}` : '',
+  ].filter(Boolean).join(' · ');
+  const invarDonde = cobQ.data && cobQ.data.total > 0
+    ? 'primero genera el Diario'
+    : 'partidas históricas: asientos sin movimiento o transferencias sin espejo · se sanean en el reseed';
   const items: { ok: boolean | null; titulo: string; dato: string; donde: string }[] = [
     { ok: cobQ.data ? cobQ.data.total === 0 : null, titulo: 'Todo el periodo asentado', dato: cobQ.data ? (cobQ.data.total === 0 ? 'sin pendientes' : `${cobQ.data.total} documento(s) sin asentar`) : '…', donde: 'Diario → Generar' },
     { ok: conQ.data ? conQ.data.pendiente === 0 && conQ.data.diferencia === 0 : null, titulo: 'Banco conciliado', dato: conQ.data ? `${conQ.data.pctConciliado}% · ${conQ.data.pendiente} pendiente(s) · ${conQ.data.diferencia} en disputa` : '…', donde: 'Finanzas → Conciliación' },
     { ok: provQ.data ? provAbiertas === 0 : null, titulo: 'Provisiones 48 del mes resueltas', dato: provQ.data ? (provAbiertas === 0 ? 'sin abiertas' : `${provAbiertas} esperando factura`) : '…', donde: 'Finanzas → Compras → Provisiones 48' },
-    { ok: invQ.data ? invarDiff < 0.01 : null, titulo: 'Libro 104x = tesorería', dato: invQ.data ? (invarDiff < 0.01 ? 'cuadra exacto' : `difieren ${fmtPEN(invarDiff)}`) : '…', donde: 'suele resolverse generando el Diario' },
+    { ok: invQ.data ? invarDiff < 0.01 : null, titulo: 'Libro 104x = tesorería', dato: invarDato, donde: invarDonde },
     { ok: preQ.data ? preQ.data.ok : null, titulo: 'Integridad del motor (pre-cierre)', dato: preQ.data ? (preQ.data.ok ? 'sin bloqueos' : preQ.data.bloqueos.map((b) => `${b.count} ${b.tipo}`).join(' · ')) : '…', donde: preQ.data?.ok ? '' : 'revisar bloqueos listados' },
   ];
   const listos = items.filter((i) => i.ok === true).length;
@@ -456,7 +483,10 @@ function DiarioTab({ periodo }: { periodo: string }) {
     mutationFn: () => api.contabilidad.generar(periodo),
     onSuccess: (r) => {
       const d = r.detalle;
-      setGenMsg(`Generados ${r.generados}: ${d.gastos} compras · ${d.valorizaciones} valos · ${d.ventas ?? 0} ventas · ${d.movimientos ?? 0} movimientos de caja · ${d.planillas} planillas · ${d.adelantos ?? 0} anticipos${d.errores.length ? ` · ⚠ ${d.errores.length} errores: ${d.errores.slice(0, 3).join(' | ')}` : ''}`);
+      // F7 · solo los orígenes con conteo (una lista de ceros no informa nada)
+      const partes = ([[d.gastos, 'compras'], [d.valorizaciones, 'valorizaciones'], [d.ventas ?? 0, 'ventas'], [d.movimientos ?? 0, 'movimientos de caja'], [d.planillas, 'planillas'], [d.adelantos ?? 0, 'anticipos'], [d.pagosOc, 'pagos OC'], [d.cobros, 'cobros']] as const)
+        .filter(([n]) => n > 0).map(([n, l]) => `${n} ${l}`);
+      setGenMsg(r.generados === 0 ? 'Nada por generar: el periodo ya está asentado.' : `Generados ${r.generados}: ${partes.join(' · ')}${d.errores.length ? ` · ⚠ ${d.errores.length} errores: ${d.errores.slice(0, 3).join(' | ')}` : ''}`);
       inval();
     },
     onError: (e: Error) => setGenMsg(`Error: ${e.message}`),
@@ -487,7 +517,7 @@ function DiarioTab({ periodo }: { periodo: string }) {
       {cob && cob.total > 0 && (
         <div className="flex flex-wrap items-center gap-2 rounded-md border border-amber-300/50 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-[11.5px] text-amber-800 dark:text-amber-300">
           <span>⚠ {cob.total} documento(s) del periodo sin contabilizar:</span>
-          <span className="font-mono">{cob.gastos} compras · {cob.valorizaciones} valos · {cob.ventas ?? 0} ventas · {cob.movimientos ?? 0} mov. de caja · {cob.planillas} planillas · {cob.adelantos ?? 0} anticipos</span>
+          <span className="font-mono">{([[cob.gastos, 'compras'], [cob.valorizaciones, 'valorizaciones'], [cob.ventas ?? 0, 'ventas'], [cob.movimientos ?? 0, 'mov. de caja'], [cob.planillas, 'planillas'], [cob.adelantos ?? 0, 'anticipos'], [cob.pagosOc, 'pagos OC'], [cob.cobros, 'cobros']] as const).filter(([n]) => n > 0).map(([n, l]) => `${n} ${l}`).join(' · ')}</span>
           <button onClick={() => generar.mutate()} disabled={generar.isPending} className="ml-auto h-7 px-2.5 rounded-md bg-amber-600 text-white text-[11px] font-medium hover:opacity-90 disabled:opacity-50">
             {generar.isPending ? 'Generando...' : 'Generar ahora'}
           </button>

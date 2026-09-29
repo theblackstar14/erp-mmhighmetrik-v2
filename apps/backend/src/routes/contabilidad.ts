@@ -742,19 +742,29 @@ router.get('/estados-financieros', async (req, res) => {
   });
 });
 
-// ── Conciliación bancaria · libros (104x) vs tesorería (movimientos) ──
-router.get('/conciliacion', async (_req, res) => {
-  // contable (líneas banco/caja) + cuentas + tesorería (GROUP BY) · en paralelo
-  // (antes traía TODA movimientos y filtraba O(cuentas×movs) en JS)
-  const [movsC, cuentasB, tesRows] = await Promise.all([
-    db.select({ debe: schema.asientosLineas.debe, haber: schema.asientosLineas.haber })
+// ── Conciliación interna · libros (101/104/107) vs tesorería (movimientos) ──
+// F7 · ?hasta=YYYY-MM-DD corta ambos lados a esa fecha (el checklist de cierre pasa el fin de mes).
+// Devuelve el DESGLOSE por cuenta (saldo contable de su divisionaria vs tesorería y su delta) +
+// el residuo contable sin cuenta bancaria mapeada — así la diferencia deja de ser un número opaco.
+// Fix: la tesorería sumaba movimientos ANULADOS.
+router.get('/conciliacion', async (req, res) => {
+  const hasta = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.hasta ?? '')) ? String(req.query.hasta) : null;
+  const asientoConds = [ne(schema.asientos.status, 'anulado'), dsql`(${schema.asientosLineas.cuenta} LIKE '104%' OR ${schema.asientosLineas.cuenta} LIKE '101%' OR ${schema.asientosLineas.cuenta} LIKE '107%')`];
+  if (hasta) asientoConds.push(lte(schema.asientos.fecha, hasta));
+  const movConds = [ne(schema.movimientos.anulado, true)];
+  if (hasta) movConds.push(lte(schema.movimientos.fecha, hasta));
+
+  const [libroRows, cuentasB, tesRows] = await Promise.all([
+    db.select({ cuenta: schema.asientosLineas.cuenta, v: dsql<number>`coalesce(sum(${schema.asientosLineas.debe} - ${schema.asientosLineas.haber}),0)::float8` })
       .from(schema.asientosLineas)
       .innerJoin(schema.asientos, eq(schema.asientosLineas.asientoId, schema.asientos.id))
-      .where(and(eq(schema.asientos.status, 'registrado'), dsql`(${schema.asientosLineas.cuenta} LIKE '104%' OR ${schema.asientosLineas.cuenta} LIKE '101%' OR ${schema.asientosLineas.cuenta} LIKE '107%')`)),
+      .where(and(...asientoConds))
+      .groupBy(schema.asientosLineas.cuenta),
     db.select().from(schema.cuentasBancarias),
-    db.select({ cuentaId: schema.movimientos.cuentaId, tipo: schema.movimientos.tipoMovimiento, total: dsql<number>`coalesce(sum(${schema.movimientos.monto}),0)::float8`, n: dsql<number>`count(*)::int` }).from(schema.movimientos).groupBy(schema.movimientos.cuentaId, schema.movimientos.tipoMovimiento),
+    db.select({ cuentaId: schema.movimientos.cuentaId, tipo: schema.movimientos.tipoMovimiento, total: dsql<number>`coalesce(sum(${schema.movimientos.monto}),0)::float8`, n: dsql<number>`count(*)::int` })
+      .from(schema.movimientos).where(and(...movConds)).groupBy(schema.movimientos.cuentaId, schema.movimientos.tipoMovimiento),
   ]);
-  const saldoContable = movsC.reduce((s, m) => s + Number(m.debe) - Number(m.haber), 0);
+  const saldoContable = libroRows.reduce((s, m) => s + Number(m.v), 0);
 
   const tesByC = new Map<string, { ing: number; egr: number; n: number }>();
   for (const r of tesRows) {
@@ -765,15 +775,25 @@ router.get('/conciliacion', async (_req, res) => {
     e.n += r.n;
     tesByC.set(k, e);
   }
+  const r2c = (n: number) => Math.round(n * 100) / 100;
+  // saldo contable de la divisionaria de cada cuenta bancaria (prefijo · 1041801 cae bajo 10418…)
+  const contableDe = (cc: string | null) => (cc ? r2c(libroRows.filter((l) => l.cuenta.startsWith(cc)).reduce((s, l) => s + Number(l.v), 0)) : null);
   const cuentas = cuentasB.map((c) => {
     const e = tesByC.get(c.id) ?? { ing: 0, egr: 0, n: 0 };
-    return { cuenta: c, saldoTesoreria: e.ing - e.egr, movimientos: e.n };
+    const saldoTes = r2c(e.ing - e.egr);
+    const saldoCont = contableDe(c.cuentaContable);
+    return { cuenta: c, saldoTesoreria: saldoTes, saldoContable: saldoCont, delta: saldoCont != null ? r2c(saldoCont - saldoTes) : null, movimientos: e.n };
   });
-  const saldoTesoreria = cuentas.reduce((s, c) => s + c.saldoTesoreria, 0);
+  const saldoTesoreria = r2c(cuentas.reduce((s, c) => s + c.saldoTesoreria, 0));
+  // libro que no cae bajo NINGUNA divisionaria mapeada (ej. asientos legacy contra 1041 genérica)
+  const ccs = cuentasB.map((c) => c.cuentaContable).filter(Boolean) as string[];
+  const residualContable = r2c(libroRows.filter((l) => !ccs.some((cc) => l.cuenta.startsWith(cc))).reduce((s, l) => s + Number(l.v), 0));
   res.json({
-    saldoContable,
+    hasta,
+    saldoContable: r2c(saldoContable),
     saldoTesoreria,
-    diferencia: saldoContable - saldoTesoreria,
+    diferencia: r2c(saldoContable - saldoTesoreria),
+    residualContable,
     cuentas,
   });
 });
