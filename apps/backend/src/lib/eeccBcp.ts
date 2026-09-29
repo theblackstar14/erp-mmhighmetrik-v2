@@ -21,17 +21,23 @@ export interface EeccParseResult {
   abonos: number;
   cargos: number;
   saldoFinal: number | null;
+  // F6 · bloque "RESUMEN DEL MES" impreso por el banco (A + B + C - D - E + F - G = H)
+  resumen: { saldoAnterior: number | null; saldoFinal: number | null } | null;
   modelo: string;
   latencyMs: number;
 }
 
 const PROMPT = `Eres parser de estados de cuenta bancarios del BCP (Perú). Del PDF adjunto extrae JSON ESTRICTO:
 {
+  "resumen": { "saldoAnterior": number, "saldoFinal": number },
   "movimientos": [
     { "fecha": "YYYY-MM-DD", "descripcion": "string", "medioAtencion": "string", "numOp": "string", "monto": number, "saldo": number|null }
   ]
 }
 REGLAS CRÍTICAS:
+- "resumen" sale del bloque RESUMEN DEL MES de la primera página (fórmula A + B + C - D - E + F - G = H):
+  saldoAnterior = A (SALDO CONTABLE AL mes anterior) · saldoFinal = H (SALDO CONTABLE AL fin del periodo).
+  OJO: H NO es el "SALDO PROMEDIO" (columna vecina). Verifica: A + abonos - cargos = H.
 - Extrae TODAS las filas de movimiento del estado de cuenta (suelen ser ~200). NO omitas ninguna, NO resumas.
 - monto: si el número termina en "-" es CARGO (débito) → NEGATIVO. Si no tiene signo es ABONO (crédito) → POSITIVO.
 - El año del periodo está en la cabecera del estado (DD-MM → ese año).
@@ -51,7 +57,7 @@ export async function parseEeccBcp(pdfBuffer: Buffer, anioDefault = 2026): Promi
   const latencyMs = Date.now() - t0;
   const text = result.response.text();
   const cleaned = text.replace(/^```json\s*/i, '').replace(/```$/, '').trim();
-  let j: { movimientos?: unknown[] };
+  let j: { movimientos?: unknown[]; resumen?: { saldoAnterior?: unknown; saldoFinal?: unknown } };
   try {
     j = JSON.parse(cleaned);
   } catch {
@@ -81,8 +87,10 @@ export async function parseEeccBcp(pdfBuffer: Buffer, anioDefault = 2026): Promi
   const abonos = movimientos.filter((m) => m.monto > 0).reduce((s, m) => s + m.monto, 0);
   const cargos = movimientos.filter((m) => m.monto < 0).reduce((s, m) => s + Math.abs(m.monto), 0);
   const saldoFinal = movimientos.length ? movimientos[movimientos.length - 1]!.saldo : null;
+  const num = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : null);
+  const resumen = j.resumen ? { saldoAnterior: num(j.resumen.saldoAnterior), saldoFinal: num(j.resumen.saldoFinal) } : null;
 
-  return { movimientos, abonos, cargos, saldoFinal, modelo: env.GEMINI_MODEL, latencyMs };
+  return { movimientos, abonos, cargos, saldoFinal, resumen, modelo: env.GEMINI_MODEL, latencyMs };
 }
 
 // Cargos internos del banco que la empresa normalmente NO registra como movimiento propio

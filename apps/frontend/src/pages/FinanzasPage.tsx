@@ -3121,9 +3121,10 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
 }
 
 // H3.5 · Conciliación bancaria · importar extracto + match ERP ↔ banco
+// F6 · etiquetas en lenguaje de Kelly (la clase técnica viene del backend)
 const CLASE_CONCIL: Record<string, string> = {
-  cheques_pendientes: 'Cheque pendiente', depositos_en_transito: 'Depósito en tránsito', transferencias_pendientes: 'Transferencia pendiente',
-  itf: 'ITF', comisiones: 'Comisión', intereses: 'Interés', debitos_automaticos: 'Débito automático', creditos_no_registrados: 'Crédito no registrado',
+  cheques_pendientes: 'Pago registrado · no salió del banco', depositos_en_transito: 'Ingreso registrado · no abonado aún', transferencias_pendientes: 'Transferencia en tránsito',
+  itf: 'ITF', comisiones: 'Comisión bancaria', intereses: 'Interés', debitos_automaticos: 'Cargo del banco', creditos_no_registrados: 'Abono por registrar',
 };
 const agingCls = (d: number) => (d <= 7 ? 'text-emerald-600' : d <= 30 ? 'text-amber-600' : 'text-rose-600');
 
@@ -3149,7 +3150,7 @@ function ResumenConciliacionPanel({ cuentaHint, periodoHint }: { cuentaHint?: st
   return (
     <div className="rounded-lg border border-line bg-bg-elev p-4 space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="text-[13px] font-semibold">Resumen de conciliación <span className="text-ink-4 font-normal">· ¿está cuadrado?</span></h3>
+        <h3 className="text-[13px] font-semibold">Resumen de conciliación</h3>
         <div className="flex items-center gap-2">
           <select value={cuenta} onChange={(e) => setCuenta(e.target.value)} className="h-8 px-2 rounded-md border border-line bg-bg-elev text-[12px] max-w-[200px] truncate">
             {cuentas.map((c) => <option key={c.id} value={c.id}>{c.descripcion ?? c.codigo}</option>)}
@@ -3169,10 +3170,18 @@ function ResumenConciliacionPanel({ cuentaHint, periodoHint }: { cuentaHint?: st
             <div className="rounded-md border border-line p-2.5"><div className="font-mono text-[9px] uppercase tracking-wider text-ink-4">Estado</div><div className={cn('mt-0.5 text-[14px] font-bold', r.kpis.estado === 'cuadrado' ? 'text-emerald-600' : 'text-rose-600')}>{r.kpis.estado === 'cuadrado' ? '✓ Cuadrado' : '✗ Descuadrado'}</div></div>
           </div>
           <div className="text-[11px] text-ink-3">{r.kpis.partidasLibroPendientes} partidas del libro · {r.kpis.movimientosBancoPendientes} del banco pendientes · <b>{r.calidad.pctConciliado}% conciliado</b> ({r.calidad.conciliados}/{r.calidad.total})</div>
+          {r.saldoExtracto.oficial != null && !r.saldoExtracto.inconsistente && (
+            <div className="text-[10.5px] text-ink-4">Saldo banco tomado del <b>resumen oficial del estado de cuenta</b> · la lectura de las {' '}líneas cuadra con él.</div>
+          )}
           {(r.saldoExtracto.inconsistente || r.saldoExtracto.estimado) && (
             <div className="rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/40 p-2 text-[10.5px] text-amber-800 dark:text-amber-300">
-              {r.saldoExtracto.inconsistente && <>Saldo del extracto <b>inconsistente</b>: columna {fmtPEN(r.saldoExtracto.viaColumna ?? 0)} vs calculado {fmtPEN(r.saldoExtracto.viaMovimientos ?? 0)} — el extracto no cuadra consigo mismo. </>}
-              {r.saldoExtracto.estimado && <>Saldo <b>estimado</b> (el extracto no trae saldo inicial). </>}
+              {r.saldoExtracto.inconsistente && r.saldoExtracto.oficial != null && (
+                <>El banco imprime saldo final {fmtPEN(r.saldoExtracto.oficial)}, pero las líneas leídas del PDF suman {fmtPEN(r.saldoExtracto.viaMovimientos ?? 0)}: la lectura automática {(r.saldoExtracto.lecturaPerdida ?? 0) > 0 ? 'perdió' : 'agregó'} <b>{fmtPEN(Math.abs(r.saldoExtracto.lecturaPerdida ?? 0))}</b> en movimientos. Compara el PDF con la bandeja antes de cerrar el mes. </>
+              )}
+              {r.saldoExtracto.inconsistente && r.saldoExtracto.oficial == null && (
+                <>Este extracto no trae el resumen del banco y sus saldos por línea no cierran (columna {fmtPEN(r.saldoExtracto.viaColumna ?? 0)} vs suma {fmtPEN(r.saldoExtracto.viaMovimientos ?? 0)}) · usamos la columna, verifica contra el PDF. </>
+              )}
+              {r.saldoExtracto.estimado && <>Saldo <b>estimado</b> solo con la suma de movimientos (el extracto no trae saldos). </>}
             </div>
           )}
           <div className="rounded-md bg-bg-sunken/40 p-3 text-[11px] font-mono space-y-0.5">
@@ -3182,11 +3191,11 @@ function ResumenConciliacionPanel({ cuentaHint, periodoHint }: { cuentaHint?: st
           </div>
           <div className="grid gap-3 lg:grid-cols-2">
             <div className="rounded-md border border-line overflow-hidden">
-              <div className="bg-bg-sunken px-2 py-1.5 text-[10px] font-mono uppercase text-ink-4">Libro → Banco (en tránsito) · {r.partidas.libroNoBanco.length}</div>
+              <div className="bg-bg-sunken px-2 py-1.5 text-[10px] font-mono uppercase text-ink-4" title="Movimientos registrados en el ERP que el banco aún no muestra este mes: pagos que no salieron, ingresos no abonados, o registros por revisar">En el libro · aún no en el banco · {r.partidas.libroNoBanco.length}</div>
               <div className="max-h-60 overflow-auto"><table className="w-full"><tbody>{r.partidas.libroNoBanco.slice(0, 50).map(fila)}{r.partidas.libroNoBanco.length === 0 && <tr><td className="px-2 py-3 text-[11px] text-ink-4">Sin partidas</td></tr>}</tbody></table></div>
             </div>
             <div className="rounded-md border border-line overflow-hidden">
-              <div className="bg-bg-sunken px-2 py-1.5 text-[10px] font-mono uppercase text-ink-4">Banco → Libro (ITF/comisiones/…) · {r.partidas.bancoNoLibro.length}</div>
+              <div className="bg-bg-sunken px-2 py-1.5 text-[10px] font-mono uppercase text-ink-4" title="Movimientos que el banco muestra y el ERP no tiene: se resuelven en la bandeja de abajo (lote de cargos o Registrar)">En el banco · falta en el libro · {r.partidas.bancoNoLibro.length}</div>
               <div className="max-h-60 overflow-auto"><table className="w-full"><tbody>{r.partidas.bancoNoLibro.slice(0, 50).map(fila)}{r.partidas.bancoNoLibro.length === 0 && <tr><td className="px-2 py-3 text-[11px] text-ink-4">Sin partidas</td></tr>}</tbody></table></div>
             </div>
           </div>
@@ -3262,12 +3271,19 @@ function ConciliacionView({ proyectos, defaultProyecto }: { proyectos: { id: str
           {extractos.map((e) => <option key={e.id} value={e.id}>{e.nombreArchivo ?? 'extracto'} · {e.totalFilas} mov. · {new Date(e.importadoEn).toLocaleDateString('es-PE')}</option>)}
         </select>
         <div className="flex-1" />
-        <select value={cuentaId} onChange={(e) => setCuentaId(e.target.value)} className="h-8 px-2 rounded-md border border-line bg-bg-elev text-[11.5px] max-w-[180px] truncate">
-          <option value="">— cuenta del archivo —</option>
-          {cuentas.map((c) => <option key={c.id} value={c.id}>{c.descripcion ?? c.codigo}</option>)}
-        </select>
+        {/* F6 · importar OTRO extracto: la cuenta es del ARCHIVO nuevo y es obligatoria — sin ella
+            el matcher compararía contra todas las cuentas y el cuadre no sabría dónde mirar */}
+        <span className="font-mono text-[10px] uppercase tracking-wider text-ink-4">Importar nuevo</span>
         <input type="file" accept=".csv,.xlsx,.xls,.pdf" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="text-[11px] max-w-[190px]" />
-        <button disabled={!file || importar.isPending} onClick={() => importar.mutate()} className="h-8 px-3 rounded-md bg-primary text-primary-foreground text-[12px] font-medium hover:opacity-90 disabled:opacity-50">{importar.isPending ? 'Leyendo…' : 'Importar'}</button>
+        {file && (
+          <select value={cuentaId} onChange={(e) => setCuentaId(e.target.value)} className={cn('h-8 px-2 rounded-md border bg-bg-elev text-[11.5px] max-w-[190px] truncate', cuentaId ? 'border-line' : 'border-amber-400')}>
+            <option value="">¿de qué cuenta es? *</option>
+            {cuentas.map((c) => <option key={c.id} value={c.id}>{c.descripcion ?? c.codigo}</option>)}
+          </select>
+        )}
+        <button disabled={!file || !cuentaId || importar.isPending} onClick={() => importar.mutate()}
+          title={!cuentaId && file ? 'Elige la cuenta bancaria del archivo' : undefined}
+          className="h-8 px-3 rounded-md bg-primary text-primary-foreground text-[12px] font-medium hover:opacity-90 disabled:opacity-50">{importar.isPending ? 'Leyendo…' : 'Importar'}</button>
         <div className="w-full text-[10.5px] text-ink-4">PDF del estado de cuenta BCP (lectura automática, ~2 min) o CSV / XLSX de cualquier banco · los re-imports del mismo mes se detectan solos</div>
         {err && <div className="w-full text-[11px] text-amber-700">{err}</div>}
       </div>

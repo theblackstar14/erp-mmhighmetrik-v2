@@ -2241,7 +2241,7 @@ export type ConciliacionResumen = {
   cuenta: { id: string; codigo: string; descripcion: string | null; banco: string | null; cuentaContable: string | null };
   periodo: string;
   kpis: { saldoBanco: number; saldoLibro: number; diferencia: number; estado: 'cuadrado' | 'descuadrado'; partidasLibroPendientes: number; movimientosBancoPendientes: number };
-  saldoExtracto: { viaColumna: number | null; viaMovimientos: number | null; usado: number; estimado: boolean; inconsistente: boolean };
+  saldoExtracto: { viaColumna: number | null; viaMovimientos: number | null; usado: number; estimado: boolean; inconsistente: boolean; oficial: number | null; lecturaPerdida: number | null };
   partidas: { libroNoBanco: PartidaConcil[]; bancoNoLibro: PartidaConcil[] };
   calidad: { total: number; conciliados: number; pendientes: number; pctConciliado: number };
 };

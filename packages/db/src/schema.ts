@@ -968,6 +968,10 @@ export const extractosBancarios = pgTable('extractos_bancarios', {
   importadoPor: uuid('importado_por').references(() => users.id, { onDelete: 'set null' }),
   importadoEn: timestamp('importado_en').notNull().defaultNow(),
   contenidoHash: varchar('contenido_hash', { length: 64 }), // F4B.3 · dedup de import (sha256 cuenta+totales+contenido) · UNIQUE
+  // F6 · saldos OFICIALES del "RESUMEN DEL MES" del EECC (A anterior · H final): el cuadre usa el
+  // número impreso por el banco, no la columna de saldos por línea (que la lectura del PDF desalinea)
+  saldoAnterior: decimal('saldo_anterior', { precision: 14, scale: 2 }),
+  saldoFinal: decimal('saldo_final', { precision: 14, scale: 2 }),
 }, (t) => ({
   hashIdx: uniqueIndex('extbanc_hash_unq').on(t.contenidoHash),
 }));

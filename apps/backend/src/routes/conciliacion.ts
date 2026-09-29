@@ -76,11 +76,14 @@ router.post('/importar', upload.single('file'), async (req, res) => {
   const esPdf = /\.pdf$/i.test(req.file.originalname) || req.file.mimetype === 'application/pdf';
 
   const lineas: { fecha: string; descripcion: string; referencia: string | null; monto: number; moneda: string; saldo: number | null }[] = [];
+  let saldoAnterior: number | null = null, saldoFinal: number | null = null; // F6 · resumen oficial del EECC
 
   if (esPdf) {
     // Estado de cuenta BCP en PDF · parser IA (Gemini) · ~110s · extrae todas las líneas con signo
     try {
       const parsed = await parseEeccBcp(req.file.buffer);
+      saldoAnterior = parsed.resumen?.saldoAnterior ?? null;
+      saldoFinal = parsed.resumen?.saldoFinal ?? null;
       for (const m of parsed.movimientos) {
         lineas.push({ fecha: m.fecha, descripcion: m.descripcion, referencia: m.numOp, monto: m.monto, moneda: moneda || 'PEN', saldo: m.saldo });
       }
@@ -148,6 +151,8 @@ router.post('/importar', upload.single('file'), async (req, res) => {
     const [ext] = await db.insert(schema.extractosBancarios).values({
       cuentaId: cuentaId || null, banco: banco || null, moneda: moneda || 'PEN',
       nombreArchivo: req.file.originalname, totalFilas: limpias.length, importadoPor: req.user!.id, contenidoHash,
+      saldoAnterior: saldoAnterior != null ? saldoAnterior.toFixed(2) : null,
+      saldoFinal: saldoFinal != null ? saldoFinal.toFixed(2) : null,
     }).returning();
     await db.insert(schema.extractoLineas).values(limpias.map((l) => ({
       extractoId: ext!.id, fecha: l.fecha, descripcion: l.descripcion, referencia: l.referencia,
@@ -413,15 +418,29 @@ router.get('/resumen', async (req, res) => {
     .where(and(eq(schema.extractosBancarios.cuentaId, cuentaId), gte(schema.extractoLineas.fecha, desde), lte(schema.extractoLineas.fecha, hasta)))
     .orderBy(schema.extractoLineas.fecha);
 
-  // Saldo banco · vía A = columna saldo (última con valor) · vía B = saldo inicial + Σ montos signed
+  // Saldo banco · PRIORIDAD: el "RESUMEN DEL MES" impreso por el banco (saldo_final del extracto).
+  // Fallbacks (extractos sin resumen, p.ej. CSV): columna saldo de la última línea → suma de movimientos.
+  const extractosCta = await db.select().from(schema.extractosBancarios).where(eq(schema.extractosBancarios.cuentaId, cuentaId));
+  const extPeriodo = extractosCta
+    .filter((e) => e.saldoFinal != null)
+    .sort((a, b) => +new Date(b.importadoEn) - +new Date(a.importadoEn))[0] ?? null;
+  const oficial = extPeriodo?.saldoFinal != null ? n(extPeriodo.saldoFinal) : null;
+  const oficialAnterior = extPeriodo?.saldoAnterior != null ? n(extPeriodo.saldoAnterior) : null;
+
   const conSaldo = lineas.filter((l) => l.saldo != null);
   const sumMovs = lineas.reduce((s, l) => s + n(l.monto), 0);
   const viaColumna = conSaldo.length ? n(conSaldo[conSaldo.length - 1]!.saldo) : null;
   let viaMovimientos: number | null = null, estimado = false;
-  if (conSaldo.length) { const p = conSaldo[0]!; viaMovimientos = r2(n(p.saldo) - n(p.monto) + sumMovs); }
-  else { estimado = true; viaMovimientos = r2(sumMovs); }
-  const saldoBanco = viaColumna ?? viaMovimientos ?? 0;
-  const inconsistente = viaColumna != null && viaMovimientos != null && Math.abs(viaColumna - viaMovimientos) > 0.5;
+  if (oficialAnterior != null) { viaMovimientos = r2(oficialAnterior + sumMovs); }
+  else if (conSaldo.length) { const p = conSaldo[0]!; viaMovimientos = r2(n(p.saldo) - n(p.monto) + sumMovs); }
+  else { estimado = oficial == null; viaMovimientos = r2(sumMovs); }
+  const saldoBanco = oficial ?? viaColumna ?? viaMovimientos ?? 0;
+  // con saldo oficial: "inconsistente" pasa a significar "la lectura del PDF perdió movimientos"
+  // (anterior + Σ líneas ≠ final impreso) · sin oficial: columna vs suma, como antes
+  const lecturaPerdida = oficial != null && viaMovimientos != null ? r2(oficial - viaMovimientos) : null;
+  const inconsistente = oficial != null
+    ? lecturaPerdida != null && Math.abs(lecturaPerdida) > 0.5
+    : viaColumna != null && viaMovimientos != null && Math.abs(viaColumna - viaMovimientos) > 0.5;
 
   // Saldo libro = Σ(debe − haber) de la cuenta 104x de esta cuenta bancaria, hasta fin de periodo
   const cc = cuenta.cuentaContable;
@@ -467,7 +486,7 @@ router.get('/resumen', async (req, res) => {
     cuenta: { id: cuenta.id, codigo: cuenta.codigo, descripcion: cuenta.descripcion, banco: cuenta.banco, cuentaContable: cc },
     periodo,
     kpis: { saldoBanco: r2(saldoBanco), saldoLibro: r2(saldoLibro), diferencia, estado, partidasLibroPendientes: libroNoBanco.length, movimientosBancoPendientes: bancoNoLibro.length },
-    saldoExtracto: { viaColumna: viaColumna != null ? r2(viaColumna) : null, viaMovimientos, usado: r2(saldoBanco), estimado, inconsistente },
+    saldoExtracto: { viaColumna: viaColumna != null ? r2(viaColumna) : null, viaMovimientos, usado: r2(saldoBanco), estimado, inconsistente, oficial, lecturaPerdida },
     partidas: { libroNoBanco, bancoNoLibro },
     calidad: { total, conciliados: conc, pendientes: total - conc, pctConciliado: total ? Number(((conc / total) * 100).toFixed(1)) : 100 },
   });
