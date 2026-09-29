@@ -203,13 +203,19 @@ async function autoMatch(extractoId: string): Promise<number> {
   }
   // 2 · ordenar score DESC (desempate: menos días, luego ids → determinístico)
   cands.sort((a, b) => b.score - a.score || a.dias - b.dias || (a.lineaId + a.movId).localeCompare(b.lineaId + b.movId));
+  // F6 fix · ambigüedad: 4 líneas de 951.25 el mismo día generan candidatos EMPATADOS — la
+  // asignación greedy es determinística pero arbitraria → confianza forzada a 'baja' para revisión
+  const scoresPorLinea = new Map<string, number[]>();
+  for (const c of cands) { const a = scoresPorLinea.get(c.lineaId) ?? []; a.push(c.score); scoresPorLinea.set(c.lineaId, a); }
   // 3 · consumir GREEDY: cada movimiento y cada línea se usan UNA sola vez
   const usedMov = new Set<string>(); const usedLinea = new Set<string>();
   let n = 0;
   for (const c of cands) {
     if (usedMov.has(c.movId) || usedLinea.has(c.lineaId)) continue;
     usedMov.add(c.movId); usedLinea.add(c.lineaId);
-    const conf = c.score >= 80 ? 'alta' : c.score >= 65 ? 'media' : 'baja';
+    const scores = (scoresPorLinea.get(c.lineaId) ?? []).sort((a, b) => b - a);
+    const empatada = scores.length > 1 && scores[1] === c.score;
+    const conf = empatada ? 'baja' : c.score >= 80 ? 'alta' : c.score >= 65 ? 'media' : 'baja';
     await db.update(schema.extractoLineas).set({ movimientoId: c.movId, score: c.score.toFixed(2), confianza: conf }).where(eq(schema.extractoLineas.id, c.lineaId));
     n++;
   }
@@ -266,6 +272,8 @@ router.post('/cargos-banco', async (req, res) => {
     if (monto >= 0) { errores.push(`${l.fecha} ${l.descripcion?.slice(0, 20)}: no es un cargo`); continue; }
     const ext = extMap.get(l.extractoId);
     if (!ext?.cuentaId) { errores.push(`${l.fecha}: el extracto no tiene cuenta bancaria asignada`); continue; }
+    // F6 fix · moneda extranjera necesita TC histórico → registrar manual (formulario), no el lote
+    if ((l.moneda ?? 'PEN') !== 'PEN') { errores.push(`${l.fecha} ${l.descripcion?.slice(0, 20)}: cargo en ${l.moneda} · regístralo manual (necesita TC)`); continue; }
     const cuenta = it.cuenta ?? clasificarLinea(l.descripcion, monto).cuentaSugerida ?? '679';
     try {
       const [mov] = await db.insert(schema.movimientos).values({
@@ -290,12 +298,23 @@ router.post('/cargos-banco', async (req, res) => {
 });
 
 // POST /lineas/:id/conciliar · aprueba el match (confirma movimientoId)
+// F6 fix · valida el movimiento: existe, NO anulado, misma dirección banco↔ERP. El monto NO se
+// exige igual (una línea puede cubrir un pago parcial) ni se bloquea reuso del mov (un ingreso
+// del ERP puede cubrir 2 abonos del banco: cliente que paga en partes).
 router.post('/lineas/:id/conciliar', async (req, res) => {
   const movimientoId = String((req.body as { movimientoId?: string }).movimientoId ?? '');
   if (!movimientoId) return res.status(400).json({ error: 'movimientoId requerido' });
+  const [linea] = await db.select().from(schema.extractoLineas).where(eq(schema.extractoLineas.id, req.params.id!));
+  if (!linea) return res.status(404).json({ error: 'Línea no encontrada' });
+  const [mov] = await db.select().from(schema.movimientos).where(eq(schema.movimientos.id, movimientoId));
+  if (!mov) return res.status(404).json({ error: 'El movimiento no existe' });
+  if (mov.anulado) return res.status(400).json({ error: 'El movimiento está ANULADO · no se puede conciliar contra él' });
+  const dirLinea = Number(linea.monto) >= 0 ? 'Ingreso' : 'Egreso';
+  if (mov.tipoMovimiento !== dirLinea && !mov.transferenciaId) {
+    return res.status(400).json({ error: `Dirección distinta: la línea es ${dirLinea === 'Ingreso' ? 'abono' : 'cargo'} y el movimiento es ${mov.tipoMovimiento}` });
+  }
   const [l] = await db.update(schema.extractoLineas).set({ estado: 'conciliado', movimientoId, matchedPor: req.user!.id, matchedEn: new Date() }).where(eq(schema.extractoLineas.id, req.params.id!)).returning();
-  if (!l) return res.status(404).json({ error: 'Línea no encontrada' });
-  await audit(req, { action: 'conciliar', entityType: 'extracto_linea', entityId: l.id, after: { movimientoId, monto: l.monto } });
+  await audit(req, { action: 'conciliar', entityType: 'extracto_linea', entityId: l!.id, after: { movimientoId, monto: l!.monto } });
   res.json({ linea: l });
 });
 // POST /lineas/:id/estado · marcar diferencia / ignorado / pendiente

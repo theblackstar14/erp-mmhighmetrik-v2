@@ -106,6 +106,45 @@ const movIds: string[] = [];
     assert.equal(L3.body.lineas.filter((l: any) => l.estado === 'pendiente').length, 1, 'D: la nueva queda pendiente');
     console.log('  ✓ D re-import: 2 repetidas ignoradas · 1 nueva pendiente');
 
+    // E · conciliar VALIDA: dirección distinta → 400 · movimiento anulado → 400
+    const cargo = porDesc('PROVEEDOR');
+    const E1 = await call('POST', `/conciliacion/lineas/${cargo.id}/conciliar`, { movimientoId: C1.body.movimiento.id });
+    assert.equal(E1.status, 400, 'E: cargo del banco vs Ingreso del ERP → rechazado (dirección)');
+
+    // F · anular el movimiento REVIERTE la conciliación de su línea (era conciliada en C)
+    const F1 = await call('POST', `/movimientos/${C1.body.movimiento.id}/anular`, { motivo: 'test F6: revertir conciliación' });
+    assert.equal(F1.status, 200, 'F: anulación ok');
+    const LF = await call('GET', `/conciliacion/${A.body.extracto.id}/lineas`);
+    const abonoF = LF.body.lineas.find((l: any) => l.id === abono.id);
+    assert.equal(abonoF.estado, 'pendiente', 'F: línea vuelve a pendiente');
+    assert.equal(abonoF.movimientoId, null, 'F: sin movimiento fantasma');
+    const E2 = await call('POST', `/conciliacion/lineas/${abono.id}/conciliar`, { movimientoId: C1.body.movimiento.id });
+    assert.equal(E2.status, 400, 'E: conciliar contra movimiento ANULADO → rechazado');
+    console.log('  ✓ E/F conciliar valida dirección y anulado · anular revierte la conciliación');
+
+    // G · empate de candidatos (2 líneas iguales, 2 movs iguales) → confianza forzada a baja
+    //     + guard USD: cargo del banco en dólares no entra al lote (necesita TC)
+    for (let i = 0; i < 2; i++) {
+      const m = await call('POST', '/movimientos', { fecha: '2026-03-10', tipoMovimiento: 'Egreso', cuentaId: bcp!.id, monto: 300, subtotal: 300, igv: 0, clienteNombre: `EMPATE TEST ${i}`, descripcion: `Pago empatado ${i}` });
+      movIds.push(m.body.movimiento.id);
+    }
+    const csv3 = ['fecha,descripcion,referencia,monto,moneda',
+      '2026-03-10,TRANSF EMPATE A,,-300.00,PEN',
+      '2026-03-10,TRANSF EMPATE B,,-300.00,PEN',
+      '2026-03-12,COM.HK USD,888001,-12.00,USD',
+    ].join('\n');
+    const G = await importCsv(csv3, 'flujos-test-3.csv', bcp!.id);
+    assert.equal(G.status, 200, `G import (${JSON.stringify(G.body).slice(0, 200)})`);
+    extractoIds.push(G.body.extracto.id);
+    const LG = await call('GET', `/conciliacion/${G.body.extracto.id}/lineas`);
+    const empates = LG.body.lineas.filter((l: any) => l.descripcion.includes('EMPATE'));
+    assert.ok(empates.every((l: any) => l.movimientoId && l.confianza === 'baja'), `G: sugerencias empatadas → confianza baja (${empates.map((l: any) => l.confianza).join(',')})`);
+    const usd = LG.body.lineas.find((l: any) => l.descripcion.includes('USD'));
+    const G2 = await call('POST', '/conciliacion/cargos-banco', { items: [{ lineaId: usd.id }] });
+    assert.equal(G2.body.creados.length, 0, 'G: cargo USD no entra al lote');
+    assert.ok(G2.body.errores[0]?.includes('TC'), 'G: error pide TC / registro manual');
+    console.log('  ✓ G empate → confianza baja · cargo USD rechazado del lote');
+
     console.log('\n  ✅ F6 flujos de conciliación VERDE\n');
   } catch (e: any) {
     failed = true;

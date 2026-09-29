@@ -423,7 +423,16 @@ router.post('/movimientos/:id/anular', async (req, res) => {
   }
   // F2.2 · pago anulado devuelve el saldo a sus documentos (anula aplicaciones activas)
   const devueltas = await anularAplicacionesDe(db, 'movimiento', prev.id);
-  await audit(req, { action: 'anular', entityType: 'movimiento', entityId: mov!.id, before: { anulado: false, monto: prev.monto }, after: { anulado: true, aplicacionesAnuladas: devueltas }, motivo });
+  // F6 fix · conciliación fantasma: la(s) línea(s) del extracto ligadas a un movimiento anulado
+  // vuelven a pendiente (si no, el % conciliado queda inflado contra un movimiento muerto)
+  const movsAnulados = prev.transferenciaId
+    ? (await db.select({ id: schema.movimientos.id }).from(schema.movimientos).where(eq(schema.movimientos.transferenciaId, prev.transferenciaId))).map((m) => m.id)
+    : [prev.id];
+  const lineasRevertidas = await db.update(schema.extractoLineas)
+    .set({ estado: 'pendiente', movimientoId: null, matchedPor: null, matchedEn: null, score: null, confianza: null })
+    .where(inArray(schema.extractoLineas.movimientoId, movsAnulados))
+    .returning({ id: schema.extractoLineas.id });
+  await audit(req, { action: 'anular', entityType: 'movimiento', entityId: mov!.id, before: { anulado: false, monto: prev.monto }, after: { anulado: true, aplicacionesAnuladas: devueltas, conciliacionesRevertidas: lineasRevertidas.length }, motivo });
   res.json({ movimiento: mov });
 });
 
