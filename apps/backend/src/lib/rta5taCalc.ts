@@ -10,8 +10,11 @@ export type Rta5taInput = {
   acumuladoPercibidoAntes: number; // remuneraciones percibidas en meses anteriores del año
   retencionesPrevias: number; // Rta5ta ya retenida en meses anteriores del año
   uit: number; // e.g. 5350
+  /** Mes de ingreso del trabajador al año (1..12). Default 1.
+   * Afecta el filtro de gratificaciones: solo cuentan las gratis desde mesIngreso en adelante. */
+  mesIngreso?: number;
   /** Cantidad de gratificaciones AÚN por percibir en el año (jul+dic).
-   * Default: count of {7, 12} where month >= mesNumero. */
+   * Default: count of {7, 12} where month >= mesNumero && month >= mesIngreso. */
   gratificacionesPorPercibir?: number;
 };
 
@@ -58,10 +61,11 @@ export function calcularRta5ta(i: Rta5taInput): Rta5taResult {
   const { sueldoMensual, mesNumero, acumuladoPercibidoAntes, retencionesPrevias, uit } = i;
 
   // 1. Gratificaciones aún por percibir en el año
+  const mesIngreso = Math.min(Math.max(i.mesIngreso ?? 1, 1), 12);
   const gratiMeses = [7, 12];
   const nGrati =
     i.gratificacionesPorPercibir ??
-    gratiMeses.filter((m) => m >= mesNumero).length;
+    gratiMeses.filter((m) => m >= mesNumero && m >= mesIngreso).length;
 
   const bonifExtraordinariaUnitaria = 0.09 * sueldoMensual; // Ley 30334 por cada grati
 

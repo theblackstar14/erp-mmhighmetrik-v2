@@ -99,5 +99,31 @@ import { calcularRta5ta } from "../../src/lib/rta5taCalc.js";
   );
 }
 
+// ── Case D ────────────────────────────────────────────────────────────────────
+// Alta en mayo, sueldo 5000, calculando julio; acumulado may+jun = 10000
+// mesIngreso=5 → nGrati = [7,12].filter(m>=7 && m>=5) = 2
+// proyeccion = 10000 + 5000*6 + 2*5000 + 2*450 = 50900
+{
+  const near = (a: number, b: number, m = 1) => Math.abs(a - b) <= m;
+  const r = calcularRta5ta({
+    sueldoMensual: 5000,
+    mesNumero: 7,
+    mesIngreso: 5,
+    acumuladoPercibidoAntes: 10000,
+    retencionesPrevias: 0,
+    uit: 5350,
+  });
+
+  console.log("Case D:", r);
+  assert.ok(
+    near(r.proyeccionAnual, 10000 + 30000 + 10000 + 900),
+    `D:proyeccionAnual esperado 50900, obtenido ${r.proyeccionAnual}`
+  );
+  assert.ok(
+    r.rentaNeta <= 0 ? r.retencionMes === 0 : r.retencionMes >= 0,
+    `D:retencion no negativa, obtenido ${r.retencionMes}`
+  );
+}
+
 console.log("rta5ta VERDE");
 process.exit(0);
