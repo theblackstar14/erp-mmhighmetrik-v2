@@ -15,6 +15,14 @@ dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
 const sql = postgres(process.env.DATABASE_URL ?? 'postgresql://erp:erp@localhost:5432/erp_mmh', { max: 1 });
 
 const stmts = [
+  // 0· precondición: la cuenta 6271 debe existir (sembrada por el PCGE)
+  `DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM plan_contable WHERE codigo = '6271') THEN
+    RAISE EXCEPTION 'alter-planilla-oficina-f2 requiere la cuenta 6271 en plan_contable (sembrar el PCGE antes de correr esta migracion)';
+  END IF;
+END $$;`,
+
   // 1· distribución del costo por obra (empleado_id null = regla global)
   `CREATE TABLE IF NOT EXISTS planilla_oficina_distribucion (
      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -38,7 +46,12 @@ const stmts = [
   // 3· link movimiento de tesorería ↔ planilla (idempotencia + skip en /generar)
   `ALTER TABLE movimientos ADD COLUMN IF NOT EXISTS planilla_oficina_mes_id uuid;`,
   `DO $$ BEGIN
-     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'mov_planilla_oficina_mes_fk') THEN
+     IF NOT EXISTS (
+       SELECT 1 FROM pg_constraint c
+         JOIN pg_class r ON r.oid = c.conrelid
+       WHERE c.conname = 'mov_planilla_oficina_mes_fk'
+         AND r.relname = 'movimientos'
+     ) THEN
        ALTER TABLE movimientos ADD CONSTRAINT mov_planilla_oficina_mes_fk
          FOREIGN KEY (planilla_oficina_mes_id) REFERENCES planilla_oficina_mes(id) ON DELETE SET NULL;
      END IF;
