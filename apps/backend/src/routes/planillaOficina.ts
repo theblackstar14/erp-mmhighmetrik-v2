@@ -1198,14 +1198,16 @@ router.put('/param-legal', requireOficinaEdit, async (req, res) => {
   if (!fechaVigencia || typeof fechaVigencia !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(fechaVigencia)) {
     return res.status(400).json({ error: 'fechaVigencia requerida (YYYY-MM-DD)' });
   }
+  // Guard: every numeric field is REQUIRED (not just checked when present).
+  // Number(undefined) → NaN, which would silently corrupt decimal columns.
   const numFields: [string, unknown][] = [
     ['rmv', rmv], ['uit', uit], ['topeRma', topeRma],
     ['pctEssalud', pctEssalud], ['pctOnp', pctOnp],
     ['pctAfpAporte', pctAfpAporte], ['pctAsigFamiliar', pctAsigFamiliar],
   ];
   for (const [field, val] of numFields) {
-    if (val !== undefined && !Number.isFinite(Number(val))) {
-      return res.status(400).json({ error: `Campo '${field}' debe ser un número finito` });
+    if (val === undefined || val === null || !Number.isFinite(Number(val))) {
+      return res.status(400).json({ error: `Campo '${field}' requerido y numérico` });
     }
   }
 
