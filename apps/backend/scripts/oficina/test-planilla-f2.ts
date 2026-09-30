@@ -45,10 +45,38 @@ const MES = '2026-07'; // periodo abierto
   const [obraA, obraB] = obras as [(typeof obras)[0], (typeof obras)[0]];
 
   // La planilla del mes debe existir y estar calculada.
-  const planilla = await get(`/api/oficina/planilla?mes=${MES}`).then((x) => x.json());
-  assert.ok(planilla.mes?.id, `no hay planilla ${MES}; córrela con test-planilla-julio17 primero`);
+  // Si no existe, la creamos aquí para que el script sea independiente del orden de ejecución.
+  let planilla = await get(`/api/oficina/planilla?mes=${MES}`).then((x) => x.json());
+  if (!planilla.mes?.id) {
+    const crea = await send('POST', '/api/oficina/planilla', { mes: MES });
+    assert.equal(crea.status, 200, `no se pudo crear la planilla ${MES}: ${await crea.clone().text()}`);
+    const creaBody = await crea.json() as { mes: any };
+    assert.ok(creaBody.mes?.id, `POST /api/oficina/planilla no devolvió mes.id`);
+
+    const calc = await send('POST', `/api/oficina/planilla/${creaBody.mes.id}/calcular`, {});
+    assert.equal(calc.status, 200, `no se pudo calcular la planilla ${MES}: ${await calc.clone().text()}`);
+    const calcBody = await calc.json() as { mes: any };
+    assert.equal(calcBody.mes?.estado, 'calculada', `calcular no dejó la planilla en estado 'calculada'`);
+
+    // Re-GET para que mesId y empresaIdMes vengan de la fila real
+    planilla = await get(`/api/oficina/planilla?mes=${MES}`).then((x) => x.json());
+    assert.ok(planilla.mes?.id, `planilla ${MES} no encontrada tras crear y calcular`);
+  } else if (!['calculada'].includes(planilla.mes.estado)) {
+    // Existe pero no está calculada (ej. estado='borrador') → calcular para que haya filas de detalle
+    const calc = await send('POST', `/api/oficina/planilla/${planilla.mes.id}/calcular`, {});
+    assert.equal(calc.status, 200, `no se pudo calcular la planilla ${MES}: ${await calc.clone().text()}`);
+    planilla = await get(`/api/oficina/planilla?mes=${MES}`).then((x) => x.json());
+    assert.equal(planilla.mes?.estado, 'calculada', `calcular no dejó la planilla en estado 'calculada'`);
+  }
   const mesId = planilla.mes.id as string;
   const empresaIdMes = planilla.mes.empresaId as number;
+
+  // Verificar que la planilla calculada tiene al menos 2 empleados en detalle
+  const detalleCheck = await db
+    .select({ id: schema.planillaOficinaDetalle.empleadoId })
+    .from(schema.planillaOficinaDetalle)
+    .where(eq(schema.planillaOficinaDetalle.planillaMesId, mesId));
+  assert.ok(detalleCheck.length >= 2, `se requieren al menos 2 empleados en el detalle de la planilla ${MES}; hay ${detalleCheck.length}`);
 
   // ── Caso 4 · asiento cuadra y la clase se deriva GG_OBRA / GG_CORP ──
   // 60% obraA / 40% oficina en modo global.
