@@ -834,7 +834,7 @@ router.post('/generar', async (req, res) => {
     .from(schema.asientos)
     .where(and(dsql`${schema.asientos.origen} != 'manual'`, dsql`${schema.asientos.status} != 'anulado'`));
   const yaSet = new Set(yaGenerados.map((a) => `${a.origen}:${a.origenId}`));
-  const resultado = { gastos: 0, pagosOc: 0, valorizaciones: 0, cobros: 0, adelantos: 0, ventas: 0, planillas: 0, movimientos: 0, movSkip: { preCutover: 0, sinCuenta104x: 0, transferEspejo: 0 }, errores: [] as string[] };
+  const resultado = { gastos: 0, pagosOc: 0, valorizaciones: 0, cobros: 0, adelantos: 0, ventas: 0, planillas: 0, movimientos: 0, movSkip: { preCutover: 0, sinCuenta104x: 0, transferEspejo: 0, planillaOficina: 0 }, errores: [] as string[] };
 
   // F3 · CUTOVER del 104x · legacy (pago_oc/cobro_valo) manda ANTES del cutover, movimientos DESPUÉS.
   // cutover=null → inerte: legacy asienta todo (comportamiento actual), pass de movimientos no asienta nada.
@@ -1179,6 +1179,9 @@ router.post('/generar', async (req, res) => {
   for (const a of apsRows) { const l = apsPorMov.get(a.origenId) ?? []; l.push(a); apsPorMov.set(a.origenId, l); }
   for (const m of movs) {
     if (yaSet.has(`movimiento:${m.id}`)) continue;
+    // F2 · el asiento de la planilla de oficina YA acredito el 104x por este neto.
+    // Sin este skip, tras el cutover el banco se acreditaria dos veces.
+    if (m.planillaOficinaMesId) { resultado.movSkip.planillaOficina++; continue; }
     const fmov = String(m.fecha).slice(0, 10);
     if (!movOwns(fmov)) { resultado.movSkip.preCutover++; continue; } // < cutover o sin cutover → manda legacy
     const esTransfer = !!m.transferenciaId;

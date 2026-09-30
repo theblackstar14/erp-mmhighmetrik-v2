@@ -7,9 +7,10 @@
 import assert from 'node:assert/strict';
 import express from 'express';
 import { db, schema } from '@erp/db';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { authMiddleware } from '../../src/middleware/auth.js';
 import planillaOficinaRoutes from '../../src/routes/planillaOficina.js';
+import contabilidadRoutes from '../../src/routes/contabilidad.js';
 import { lucia } from '../../src/auth.js';
 
 const USER = 'af36a9b1-3b8e-4471-99d0-d08cf271187d'; // admin
@@ -20,6 +21,7 @@ const MES = '2026-07'; // periodo abierto
   app.use(express.json());
   app.use(authMiddleware);
   app.use('/api/oficina', planillaOficinaRoutes);
+  app.use('/api/contabilidad', contabilidadRoutes);
   const server = app.listen(0);
   const port = (server.address() as any).port;
   const base = `http://localhost:${port}`;
@@ -181,6 +183,129 @@ const MES = '2026-07'; // periodo abierto
 
   // limpiar las reglas del empleado para no ensuciar corridas siguientes
   await send('PUT', '/api/oficina/planilla/distribucion', { empleadoId: empId, filas: [] });
+
+  // ── Fixture: una cuenta bancaria PEN activa con 104x ──
+  const cuentas = await db.select().from(schema.cuentasBancarias);
+  const cbOk = cuentas.find((c) => c.activo && c.moneda === 'PEN' && !!c.cuentaContable);
+  assert.ok(cbOk, 'se requiere una cuenta bancaria PEN activa con cuentaContable');
+
+  // ── Caso 11 (resto) · cuenta bancaria invalida → 400 (Review Focus) ──
+  const cbUsd = cuentas.find((c) => c.moneda !== 'PEN');
+  if (cbUsd) {
+    const bad = await get(`/api/oficina/planilla/${mesId}/asiento-preview?cuentaBancariaId=${cbUsd.id}`);
+    assert.equal(bad.status, 400, 'cuenta en moneda distinta de PEN deberia dar 400');
+  }
+  const cbInactiva = cuentas.find((c) => !c.activo);
+  if (cbInactiva) {
+    const bad = await get(`/api/oficina/planilla/${mesId}/asiento-preview?cuentaBancariaId=${cbInactiva.id}`);
+    assert.equal(bad.status, 400, 'cuenta inactiva deberia dar 400');
+  }
+  const badId = await get(`/api/oficina/planilla/${mesId}/asiento-preview?cuentaBancariaId=00000000-0000-0000-0000-000000000000`);
+  assert.equal(badId.status, 400, 'cuenta inexistente deberia dar 400');
+
+  // ── Caso 7 · preview == cerrar ──
+  const prevPago = await get(
+    `/api/oficina/planilla/${mesId}/asiento-preview?cuentaBancariaId=${cbOk.id}`,
+  ).then((x) => x.json());
+
+  // dejar la planilla en 'calculada' antes de cerrar
+  if (planilla.mes.estado === 'cerrada') {
+    const re = await send('POST', `/api/oficina/planilla/${mesId}/reabrir`);
+    assert.equal(re.status, 200, await re.text());
+  }
+
+  const cerrada = await send('POST', `/api/oficina/planilla/${mesId}/cerrar`, { cuentaBancariaId: cbOk.id });
+  const cerradaText = await cerrada.text();
+  assert.equal(cerrada.status, 200, cerradaText);
+  const cerradaBody = JSON.parse(cerradaText);
+  const asientoId = cerradaBody.asientoId as string;
+  assert.ok(cerradaBody.movimientoId, 'cerrar con cuenta bancaria debe devolver movimientoId');
+
+  const lineasPosteadas = await db
+    .select()
+    .from(schema.asientosLineas)
+    .where(eq(schema.asientosLineas.asientoId, asientoId));
+
+  const clave = (l: { cuenta: string; debe: unknown; haber: unknown; obraId?: unknown }) =>
+    `${l.cuenta}|${Number(l.debe).toFixed(2)}|${Number(l.haber).toFixed(2)}|${l.obraId ?? ''}`;
+  const setPrev = new Set(prevPago.lineas.map((l: any) => clave(l)));
+  for (const l of lineasPosteadas) {
+    assert.ok(setPrev.has(clave(l as any)), `la linea posteada ${clave(l as any)} no estaba en el preview`);
+  }
+  assert.equal(lineasPosteadas.length, prevPago.lineas.length, 'preview y asiento tienen distinto numero de lineas');
+
+  // ── Caso 8 · pago desde banco: 411 debe + 104x haber, y UN movimiento ──
+  const neto = Number(prevPago.totalNeto);
+  assert.ok(
+    lineasPosteadas.some((l) => l.cuenta === '411' && Math.abs(Number(l.debe) - neto) < 0.005),
+    'falta la linea 411 debe por el neto',
+  );
+  assert.ok(
+    lineasPosteadas.some((l) => l.cuenta === cbOk.cuentaContable && Math.abs(Number(l.haber) - neto) < 0.005),
+    'falta la linea 104x haber por el neto',
+  );
+
+  const movs = await db
+    .select()
+    .from(schema.movimientos)
+    .where(eq(schema.movimientos.planillaOficinaMesId, mesId));
+  assert.equal(movs.length, 1, `esperaba 1 movimiento de planilla, hay ${movs.length}`);
+  assert.equal(movs[0]!.tipoMovimiento, 'Egreso');
+  assert.equal(movs[0]!.proyectoId, null, 'el movimiento no lleva proyecto: el reparto vive en el asiento');
+  assert.equal(Math.abs(Number(movs[0]!.monto) - neto) < 0.005, true);
+
+  // ── Caso 9 · idempotencia: cerrar de nuevo no duplica ──
+  const otraVez = await send('POST', `/api/oficina/planilla/${mesId}/cerrar`, { cuentaBancariaId: cbOk.id });
+  assert.equal(otraVez.status, 400, 'ya cerrada → 400 (solo se cierra en estado calculada)');
+  const movs2 = await db.select().from(schema.movimientos).where(eq(schema.movimientos.planillaOficinaMesId, mesId));
+  assert.equal(movs2.length, 1, 'el reintento duplico el movimiento');
+
+  // ── Caso 10 · el pass de movimientos de /generar salta el movimiento de planilla ──
+  const gen = await send('POST', '/api/contabilidad/generar?dryRun=1', {
+    periodo: MES,
+  }).then((x) => x.json());
+  assert.ok(gen.detalle?.movSkip, `la respuesta de /generar no trae detalle.movSkip; gen=${JSON.stringify(gen)}`);
+  assert.ok(gen.detalle.movSkip.planillaOficina >= 1, 'el pass 5 no salto el movimiento de planilla');
+
+  // ── Caso 12 · guardarrail de reapertura: conciliado → 409, el movimiento sobrevive ──
+  const movId = movs[0]!.id;
+  const [extracto] = await db.select().from(schema.extractosBancarios).limit(1);
+  if (extracto) {
+    const [linea] = await db
+      .insert(schema.extractoLineas)
+      .values({
+        extractoId: extracto.id,
+        fecha: `${MES}-30`,
+        descripcion: 'test F2 conciliacion',
+        monto: String(-neto),
+        estado: 'conciliado',
+        movimientoId: movId,
+      })
+      .returning();
+
+    const bloqueado = await send('POST', `/api/oficina/planilla/${mesId}/reabrir`);
+    assert.equal(bloqueado.status, 409, `movimiento conciliado deberia dar 409, dio ${bloqueado.status}`);
+    const sobrevive = await db.select().from(schema.movimientos).where(eq(schema.movimientos.id, movId));
+    assert.equal(sobrevive.length, 1, 'el movimiento conciliado se borro');
+
+    await db.delete(schema.extractoLineas).where(eq(schema.extractoLineas.id, linea!.id));
+  } else {
+    console.log('AVISO: sin extractos bancarios en la DB; el caso 12 no se ejercio');
+  }
+
+  // ── Caso 9 (cont.) · reabrir + recerrar deja el mismo estado ──
+  const re2 = await send('POST', `/api/oficina/planilla/${mesId}/reabrir`);
+  assert.equal(re2.status, 200, await re2.clone().text());
+  const movsTrasReabrir = await db.select().from(schema.movimientos).where(eq(schema.movimientos.planillaOficinaMesId, mesId));
+  assert.equal(movsTrasReabrir.length, 0, 'reabrir debe borrar el movimiento no conciliado');
+
+  const re3 = await send('POST', `/api/oficina/planilla/${mesId}/cerrar`, { cuentaBancariaId: cbOk.id });
+  assert.equal(re3.status, 200, await re3.clone().text());
+  const movsFinal = await db.select().from(schema.movimientos).where(eq(schema.movimientos.planillaOficinaMesId, mesId));
+  assert.equal(movsFinal.length, 1, 'recerrar debe dejar exactamente 1 movimiento');
+
+  // cleanup: reabrir para dejar la planilla en estado calculada
+  await send('POST', `/api/oficina/planilla/${mesId}/reabrir`);
 
   server.close();
   console.log('planilla-f2 VERDE');

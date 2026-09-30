@@ -834,6 +834,7 @@ router.get('/planilla/:mesId/asiento-preview', async (req, res) => {
 // ─── POST /api/oficina/planilla/:mesId/cerrar ────────────────
 router.post('/planilla/:mesId/cerrar', requireOficinaEdit, async (req, res) => {
   const { mesId } = req.params;
+  const cuentaBancariaId = typeof req.body?.cuentaBancariaId === 'string' ? req.body.cuentaBancariaId : null;
 
   const [mesRow] = await db
     .select()
@@ -862,6 +863,15 @@ router.post('/planilla/:mesId/cerrar', requireOficinaEdit, async (req, res) => {
   // FIX 3: Guard against empty month (no detalle rows → crearAsiento would throw)
   if (detalleRows.length === 0) {
     return res.status(400).json({ error: 'La planilla no tiene detalle; calcula primero' });
+  }
+
+  // F2 · si Kelly eligio cuenta, validar ANTES de aplicar cuotas (un 400 tardio dejaria
+  // las cuotas aplicadas sin asiento).
+  let cuentaBanco: string | null = null;
+  if (cuentaBancariaId) {
+    const val = await validarCuentaBanco(cuentaBancariaId);
+    if ('error' in val) return res.status(400).json({ error: val.error });
+    cuentaBanco = val.cuentaContable;
   }
 
   // Compute last day of mes
@@ -936,11 +946,11 @@ router.post('/planilla/:mesId/cerrar', requireOficinaEdit, async (req, res) => {
     cargarReglas(mesRow.empresaId),
     cargarMapaConceptos(),
   ]);
-  const { lineas } = armarLineasCierre({
+  const { lineas, totalNeto } = armarLineasCierre({
     detalle: detalleRows,
     reglas,
     mapa: mapaConceptos,
-    cuentaBanco: null, // Task 5 lo reemplaza por la cuenta elegida
+    cuentaBanco,
   });
 
   // ── Step 4: Create accounting entry via WS1 engine (idempotent) ──
@@ -985,6 +995,44 @@ router.post('/planilla/:mesId/cerrar', requireOficinaEdit, async (req, res) => {
     })
     .where(eq(schema.planillaOficinaMes.id, mesId!))
     .returning();
+
+  // ── Step 5a: Movimiento de tesoreria del pago (F2 · idempotente por planillaOficinaMesId) ──
+  // proyectoId null a proposito: un movimiento tiene un solo proyecto y el costo puede estar
+  // repartido entre varias obras. La dimension obra vive en las lineas del asiento.
+  let movimientoId: string | null = null;
+  if (cuentaBanco && cuentaBancariaId && totalNeto >= 0.005) {
+    const [existenteMov] = await db
+      .select({ id: schema.movimientos.id })
+      .from(schema.movimientos)
+      .where(and(
+        eq(schema.movimientos.planillaOficinaMesId, mesId!),
+        eq(schema.movimientos.anulado, false),
+      ))
+      .limit(1);
+
+    if (existenteMov) {
+      movimientoId = existenteMov.id;
+    } else {
+      const [mov] = await db
+        .insert(schema.movimientos)
+        .values({
+          fecha,
+          tipoMovimiento: 'Egreso',
+          cuentaId: cuentaBancariaId,
+          moneda: 'PEN',
+          monto: String(totalNeto),
+          montoBase: String(totalNeto), // PEN = moneda base; tipoCambio queda null
+          descripcion: `Planilla oficina ${mesRow.mes}`,
+          subtipo: 'Planilla',
+          proyectoId: null,
+          planillaOficinaMesId: mesId!,
+          estado: 'Pagada',
+          userId: req.user!.id,
+        })
+        .returning({ id: schema.movimientos.id });
+      movimientoId = mov!.id;
+    }
+  }
 
   // ── Step 5b: Upsert renta5ta_mes ledger rows (idempotent) ──
   // remunComputable = totalBruto (= remuneraciónAfecta + gratificación + bonif. extraordinaria)
@@ -1052,7 +1100,7 @@ router.post('/planilla/:mesId/cerrar', requireOficinaEdit, async (req, res) => {
     }
   }
 
-  res.json({ mes: updatedMes, asientoId, boletasSubidas, boletasFallidas: boletaErrores.length });
+  res.json({ mes: updatedMes, asientoId, movimientoId, boletasSubidas, boletasFallidas: boletaErrores.length });
 });
 
 // ─── POST /api/oficina/planilla/:mesId/reabrir ───────────────
@@ -1078,6 +1126,31 @@ router.post('/planilla/:mesId/reabrir', requireOficinaEdit, async (req, res) => 
 
   if (await periodoCerrado(periodo)) {
     return res.status(423).json({ error: `Periodo contable ${periodo} cerrado; reabrelo primero` });
+  }
+
+  // F2 · el movimiento del pago se borra al reabrir, salvo que ya este conciliado:
+  // borrarlo desharıa en silencio una conciliacion cerrada (extracto_lineas.movimiento_id
+  // es ON DELETE SET NULL, asi que la linea del banco quedaria suelta sin aviso).
+  const movsPlanilla = await db
+    .select({ id: schema.movimientos.id })
+    .from(schema.movimientos)
+    .where(eq(schema.movimientos.planillaOficinaMesId, mesId!));
+
+  if (movsPlanilla.length > 0) {
+    const ids = movsPlanilla.map((m) => m.id);
+    const conciliadas = await db
+      .select({ id: schema.extractoLineas.id, movimientoId: schema.extractoLineas.movimientoId })
+      .from(schema.extractoLineas)
+      .where(and(
+        inArray(schema.extractoLineas.movimientoId, ids),
+        eq(schema.extractoLineas.estado, 'conciliado'),
+      ));
+    if (conciliadas.length > 0) {
+      return res.status(409).json({
+        error: 'El movimiento del pago de esta planilla esta conciliado con el extracto bancario; desconcialialo antes de reabrir',
+        lineasConciliadas: conciliadas.map((c) => c.id),
+      });
+    }
   }
 
   const result = await db.transaction(async (tx) => {
@@ -1133,6 +1206,11 @@ router.post('/planilla/:mesId/reabrir', requireOficinaEdit, async (req, res) => 
       await tx
         .delete(schema.asientos)
         .where(eq(schema.asientos.id, mesRow.asientoId));
+    }
+
+    // Borrar el movimiento del pago (ya se verifico que no esta conciliado)
+    if (movsPlanilla.length > 0) {
+      await tx.delete(schema.movimientos).where(inArray(schema.movimientos.id, movsPlanilla.map((m) => m.id)));
     }
 
     // Reset mes to calculada
