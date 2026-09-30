@@ -73,7 +73,21 @@ Lo que pidieron, textual, y qué se construyó con cada pedido:
 
 ### Módulo CONTABILIDAD (el cierre — lo opera Kelly)
 
-**Plan contable** — plan PCGE con divisionarias libres + segmento "Ruteo por tipo de gasto" (mapa editable tipo→cuenta; red de seguridad de 3 niveles: manual > sugerida por proveedor > ruteo).
+**Plan contable** — plan PCGE con divisionarias libres + segmento **"Ruteo por tipo de gasto"**.
+
+> **¿Para qué sirve el Ruteo? (uso para la contadora)** Es una tabla de configuración editable —
+> una fila por tipo de gasto (Materiales, Seguro, Combustible…) — con 4 columnas y 4 usos:
+>
+> | Columna | Uso |
+> |---|---|
+> | **Cuenta PCGE** | Red de seguridad de la cuenta, nivel 3 de 3. La cuenta de una compra se decide: 1º la que Kelly eligió a mano (**siempre manda** — su requisito), 2º la sugerida (última usada con ese proveedor), 3º recién la del ruteo. Lo que nadie revisó nunca cae en un hueco. |
+> | **Es gasto (sí/no)** | Gobierna el motor: un tipo marcado "no es gasto" (financiamiento, préstamo, CxC) **no se provisiona como compra** al generar el Diario — evita gasto fantasma en resultados. |
+> | **Es activo** | Marca los tipos que son activo fijo (33x, no resultado) — los 5 taladros del audio. |
+> | **Clase CD/GG** | Alimenta la clasificación de costos de obra (Costo Directo / GG obra / GG corporativo) → reporte de costos y Resultado de obra de Mario. Es la mecánica detrás del ejemplo de los EPPs de Kelly: mismo tipo de compra, clase distinta según el momento/destino. |
+>
+> En una frase: *no elige la cuenta por Kelly — atrapa lo que quedó sin decisión manual y le dice
+> al motor qué cosas ni siquiera son gasto.* Ella lo mantiene sola, sin tocar código.
+> Mejora futura anotada: contador de "compras del mes que cayeron al ruteo" para repasarlas antes del cierre.
 
 **Diario y mayor** — hub con 2 vistas (Diario · asientos / Mayor · por cuenta). Botón **Generar**: asienta todo lo devengado/cobrado del período que aún no tiene asiento (idempotente: regenerar no duplica). Banner de cobertura dice qué orígenes faltan.
 
@@ -133,6 +147,7 @@ Si algo no cuadra con su criterio contable, se anota y se ajusta — para eso es
 2. Factura F001-xxx, líneas con partida, código de detracción de su catálogo, destino DG.
 3. **Valida:** cuenta sugerida vs la suya (es manual), asiento generado (60x/40111/4212 con detracción segregada), la factura en CxP y en el 8.1.
 4. Libros → IGV del mes: el IGV aparece como **crédito diferido** (sin constancia).
+5. Extra: registrar otra compra SIN elegir cuenta → verificar que cae a la cuenta del **Ruteo por tipo de gasto** (Plan contable) y preguntarle si el mapa tipo→cuenta refleja su dinámica.
 
 ### CU-2 · Constancia de detracción
 1. Registrar N° de constancia y fecha de depósito sobre CU-1.
