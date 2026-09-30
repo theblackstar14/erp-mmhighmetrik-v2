@@ -371,6 +371,7 @@ export const api = {
       req<{ param: ParamLegalOficina }>(`/api/oficina/param-legal`, { method: 'PUT', body: JSON.stringify(data) }),
 
     // Config del motor v2: tasas AFP
+    listAfpTasas: () => req<{ tasas: AfpTasa[] }>(`/api/oficina/afp-tasas`),
     putAfpTasa: (afp: string, data: { pctAporte?: number; pctSeguro?: number; pctComisionFlujo?: number; pctComisionMixta?: number }) =>
       req<{ afp: AfpTasa }>(`/api/oficina/afp-tasas/${encodeURIComponent(afp)}`, { method: 'PUT', body: JSON.stringify(data) }),
 
@@ -2414,7 +2415,7 @@ export type PlanillaOficinaDetalle = {
   onp: string; afpAporte: string; afpSeguro: string; afpComision: string; imptoRenta5ta: string; retencionJudicial: string;
   adelantoCuota: string; otrosDescuentos: string; totalDescuento: string;
   essalud: string; essaludVida: string; totalAporte: string; netoPago: string; costoTotal: string;
-  cuentaContable: string | null; cuentaContableOrigen: string | null;
+  cuentaContable: string | null; cuentaContableOrigen: string | null; renta5taManual: boolean | null;
 };
 export type AdelantoOficina = {
   id: string; empleadoId: string; fecha: string; montoTotal: string; numCuotas: number;

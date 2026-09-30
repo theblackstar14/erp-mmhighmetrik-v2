@@ -1238,6 +1238,13 @@ router.put('/param-legal', requireOficinaEdit, async (req, res) => {
   res.json({ param: row });
 });
 
+// ─── GET /api/oficina/afp-tasas ──────────────────────────────
+// Lista todas las AFP con sus tasas actuales (para el panel de config editable).
+router.get('/afp-tasas', async (_req, res) => {
+  const tasas = await db.select().from(schema.afpTasas).orderBy(asc(schema.afpTasas.afp));
+  res.json({ tasas });
+});
+
 // ─── PUT /api/oficina/afp-tasas/:afp ─────────────────────────
 // Update AFP rates by AFP name (exact match, case-insensitive strip).
 router.put('/afp-tasas/:afp', requireOficinaEdit, async (req, res) => {
