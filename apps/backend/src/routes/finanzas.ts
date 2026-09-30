@@ -432,8 +432,18 @@ router.post('/movimientos/:id/anular', async (req, res) => {
     .set({ estado: 'pendiente', movimientoId: null, matchedPor: null, matchedEn: null, score: null, confianza: null })
     .where(inArray(schema.extractoLineas.movimientoId, movsAnulados))
     .returning({ id: schema.extractoLineas.id });
-  await audit(req, { action: 'anular', entityType: 'movimiento', entityId: mov!.id, before: { anulado: false, monto: prev.monto }, after: { anulado: true, aplicacionesAnuladas: devueltas, conciliacionesRevertidas: lineasRevertidas.length }, motivo });
-  res.json({ movimiento: mov });
+  // el asiento del movimiento anulado tiene que morir con él: si queda 'registrado', diario, mayor
+  // y 104x siguen sumando un movimiento muerto. No se toca el de un periodo ya cerrado.
+  const asientosAnulados = await db.update(schema.asientos)
+    .set({ status: 'anulado', updatedAt: new Date() })
+    .where(and(
+      inArray(schema.asientos.origenId, movsAnulados),
+      eq(schema.asientos.status, 'registrado'),
+      sql`${schema.asientos.cerradoMes} is null`,
+    ))
+    .returning({ id: schema.asientos.id });
+  await audit(req, { action: 'anular', entityType: 'movimiento', entityId: mov!.id, before: { anulado: false, monto: prev.monto }, after: { anulado: true, aplicacionesAnuladas: devueltas, conciliacionesRevertidas: lineasRevertidas.length, asientosAnulados: asientosAnulados.length }, motivo });
+  res.json({ movimiento: mov, asientosAnulados: asientosAnulados.length });
 });
 
 // ─── Inventario (Fact de Inventario) · FIN-3 ─────────────────

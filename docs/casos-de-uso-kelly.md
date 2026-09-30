@@ -314,26 +314,47 @@ Medido con `apps/backend/scripts/f1/audit-data-casos-uso.ts` (re-corrible antes 
 | Apartado | Data real | Qué falta |
 |---|---|---|
 | **Ventas** | 2 facturas sueltas (2025-01 y 2025-06) + 5 valorizaciones cobradas (3 facturadas, 2 con retención de garantía) | las 15 facturas reales E001-89..103 |
-| **Detracciones** | 2 documentos, S/16,707.00, ambos `pendiente` y **0 con constancia** | una con constancia para mostrar el crédito pasando de diferido a usable (CU-2) |
+| **Detracciones** | 3 documentos: 2 `pendiente` (S/16,707.00) + 1 **`depositada` con constancia** (S/716, sembrada) | más casos reales; con la sembrada CU-2 ya se puede mostrar el crédito pasando de diferido a usable |
 | **Cajas de obra** | 1 caja abierta, 1 obra | una caja con 2-3 gastos y un cierre con devolución (CU-9) |
 | **Rendiciones de oficina** | 1 aprobada, S/800 de anticipo, **0 ítems y 0 archivos** | ítems con boletas (deducible/no) para CU-9b |
 | **Bandeja CPE** | 3 borradores: 2 registrados (facturas de venta) + **1 pendiente que es justo una NC (07) de venta** | 3-4 XML de compra para la subida en masa (CU-1 vía bandeja) |
 
-### Rojo · el CU NO tiene data — hay que cargarla o el caso no se puede mostrar
+### Rojo → sembrado (2026-09-30) · `scripts/f1/seed-casos-uso.ts`
 
-| Falta | Bloquea | Nota |
+Los 6 huecos se sembraron **por los endpoints reales** (mismas validaciones que un registro de Kelly),
+todos en el período **2026-09** (abierto y casi vacío · no toca ningún mes ya verificado). Marcador:
+serie / nº de operación empiezan con `SEED`. Deshacer: el mismo script con `--limpiar`.
+
+| Hueco | Qué entró | Verificado |
 |---|---|---|
-| **TC USD del mes**: la tabla `tipo_cambio` solo tiene 2 filas (2026-09-28 y 29) | CU-13 y el campo 25 del 8.1 en las 24 compras USD | el export cae al TC más cercano anterior; sin TC del mes queda vacío |
-| **Provisiones 48**: 0 filas (no hay ninguna CxP con cuenta de control 4811) | CU-5 completo (provisión → llega factura → extorno) | crear 1 pago sin factura y luego vincularla |
-| **NC de compra**: 0 en 1,576 gastos | la mitad "compra" de CU-7 | registrar 1 NC contra una factura existente |
-| **Compra ligada a OC**: 0 gastos con `orden_compra_id` | CU-10 (3-way match) — hay OCs pero ninguna facturada | registrar 1 compra desde una OC aprobada |
-| **Aplicaciones de pago**: 1 sola, y está anulada | CU-4 (pago que jala facturas pendientes) | hacer 1 pago aplicando 2 CxP |
-| **Anotación en período posterior**: `periodo_contable` es NULL en las 1,576 compras (cae al mes de emisión) | el estado `'6'` del 8.1 (crédito fiscal usado tarde) | registrar 1 compra con período de anotación ≠ emisión |
+| **TC USD** | 23 filas `USD` 2025-09-25 → 2026-09-18, curva 3.720 → 3.780 | `tipo_cambio` 25 filas, rango 2025-09-25 .. 2026-09-29 |
+| **Provisiones 48** | 2 egresos contra `4811`: `SEED-PROV-01` S/4,500 **queda ABIERTA** (Kelly la extorna en vivo en CU-5) y `SEED-PROV-02` S/1,800 ya extornada con su factura `SEED2-0002` | 2 movimientos `4811` activos + 1 asiento `extorno_provision` (4212/4811) |
+| **NC de compra** | factura `SEED3-0003` S/5,900 (ZANE, PG0001, cuenta 6031) + NC `SEEDN-0001` S/1,180 con `docModifica` y motivo `06` | CxP en **`parcial` S/4,720** = 5,900 − 1,180 ✅ |
+| **Compra desde OC** | `OC-2025-0016` (no tenía líneas → se le sembraron 2: cemento + acero, neto S/15,166.10) facturada como `SEED4-0004` S/17,896 con detracción `030` + constancia `SEED-CONST-0001` del 2026-09-16 | 1 gasto con `orden_compra_id` + 1 detracción `depositada` S/716 **con constancia** |
+| **Pago aplicando 2 facturas** | `SEED5-0005` S/2,360 y `SEED5-0006` S/3,540 (TENORIO) pagadas con un solo egreso `SEED-PAGO-01` S/5,900 | 2 aplicaciones activas, ambas CxP `cancelado` |
+| **Anotación en período posterior** | `SEED6-0006` emitida 2026-08-20, anotada en 2026-09 | 1 gasto con `periodo_contable ≠` mes de emisión → ejercita el estado `'6'` del 8.1 |
+
+Período 2026-09 post-siembra: 7 compras S/34,092.00 · **debe = haber = S/126,146.50 (dif 0.00)**.
+
+> ⚠ Los TC llevan `fuente = 'SEMILLA_DEMO'`: son plausibles, **no** son los publicados por SUNAT.
+> Hay que reemplazarlos por los reales antes del cierre en paralelo.
+
+**Dos hallazgos que salieron de la siembra** (ambos ya corregidos):
+
+1. **Anular un movimiento no mataba su asiento** — quedaba en `registrado`, así que diario, mayor y
+   104x seguían sumando un movimiento muerto. `POST /movimientos/:id/anular` ahora anula también los
+   asientos de origen que no estén congelados por cierre, y lo reporta en el `audit_log`. Al aplicar
+   el fix aparecieron **3 asientos fantasma** en 2026-09 por S/24,300 (uno previo, de S/18,000) que se
+   anularon: el período pasó de S/150,446.50 a S/126,146.50. Check: `scripts/f1/test-anular-arrastra-asiento.ts`.
+2. **Las provisiones 48 no son filas de `documento_pendiente`** sino movimientos con `cuenta_contable`
+   `48xx`. La query vieja de la auditoría las buscaba por `cuenta_control` y por eso reportaba 0.
+   Corregido en `audit-data-casos-uso.ts` (también contaba `nc` con `ilike '%credito%'`, que no
+   matchea "Nota de Crédito", y agrupaba por `periodo_contable` crudo en vez del período efectivo).
 
 **Resumen honesto para la sesión:** conciliación, diario/mayor, libros PLE, compras, cierre y
-auxiliar están listos con data real. Ventas, detracción con constancia, provisión 48, NC, OC→factura
-y pago aplicado necesitan **6 registros de siembra** (~20 min) o se demuestran capturándolos EN VIVO
-con Kelly, que es probablemente mejor: así ella ve el flujo de alta, no solo el resultado.
+auxiliar están listos con data real; los 6 huecos ya tienen un caso sembrado cada uno. Aun así, varios
+conviene **capturarlos EN VIVO** con Kelly (la provisión abierta está a propósito): así ella ve el
+flujo de alta, no solo el resultado.
 
 Sigue pendiente de Kelly: las 15 facturas reales (bloqueadas por las NC de E001-101/102), un archivo
 SIRE real de importación, y el mes completo del cierre en paralelo (= reseed F4.2).

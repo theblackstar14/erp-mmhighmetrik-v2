@@ -17,13 +17,22 @@ const q = async (label: string, query: string) => {
 };
 
 const main = async () => {
-  await q('COMPRAS · gastos por periodo contable', `
-    select periodo_contable as periodo, count(*) n, sum(total)::numeric(14,2) total,
+  // el periodo efectivo es periodo_contable si viene, si no el mes de emisión (igual que contabilidad.ts)
+  await q('COMPRAS · gastos por periodo contable efectivo', `
+    select coalesce(periodo_contable, to_char(fecha,'YYYY-MM')) periodo, count(*) n, sum(total)::numeric(14,2) total,
            count(*) filter (where moneda <> 'PEN') usd,
-           count(*) filter (where tipo_comprobante ilike '%credito%') nc,
+           count(*) filter (where tipo_comprobante ilike '%nota de cr%') nc,
+           count(*) filter (where periodo_contable is not null and periodo_contable <> to_char(fecha,'YYYY-MM')) anot_posterior,
            count(*) filter (where cuenta_contable is not null) cta_manual,
            count(*) filter (where orden_compra_id is not null) con_oc
     from gastos group by 1 order by 1`);
+
+  // las provisiones 48 son movimientos con cuenta_contable 48xx (NO filas de documento_pendiente)
+  await q('PROVISIONES 48 · movimientos + extornos', `
+    select m.cuenta_contable, count(*) n, sum(m.monto)::numeric(14,2) monto,
+           count(*) filter (where m.anulado is true) anulados,
+           (select count(*) from asientos a where a.origen = 'extorno_provision') extornos
+    from movimientos m where m.cuenta_contable like '48%' group by 1 order by 1`);
 
   await q('COMPRAS · detracciones (detraccion_documento)', `
     select estado, count(*) n, sum(monto)::numeric(14,2) monto,
