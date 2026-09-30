@@ -356,7 +356,11 @@ export const api = {
     getPlanillaOficina: (mes: string) => req<{ mes: PlanillaOficinaMes | null; detalle: PlanillaOficinaDetalle[] }>(`/api/oficina/planilla?mes=${encodeURIComponent(mes)}`),
     crearPlanillaOficina: (mes: string) => req<{ mes: PlanillaOficinaMes }>(`/api/oficina/planilla`, { method: 'POST', body: JSON.stringify({ mes }) }),
     calcularPlanillaOficina: (mesId: string) => req<{ mes: PlanillaOficinaMes; detalle: PlanillaOficinaDetalle[] }>(`/api/oficina/planilla/${mesId}/calcular`, { method: 'POST' }),
-    cerrarPlanillaOficina: (mesId: string) => req<{ mes: PlanillaOficinaMes; asientoId: string }>(`/api/oficina/planilla/${mesId}/cerrar`, { method: 'POST' }),
+    cerrarPlanillaOficina: (mesId: string, cuentaBancariaId?: string | null) =>
+      req<{ mes: PlanillaOficinaMes; asientoId: string; movimientoId: string | null }>(
+        `/api/oficina/planilla/${mesId}/cerrar`,
+        { method: 'POST', body: JSON.stringify(cuentaBancariaId ? { cuentaBancariaId } : {}) },
+      ),
     reabrirPlanillaOficina: (mesId: string) => req<{ mes: PlanillaOficinaMes }>(`/api/oficina/planilla/${mesId}/reabrir`, { method: 'POST' }),
     editarDetalleOficina: (detalleId: string, data: Record<string, unknown>) => req<{ detalle: PlanillaOficinaDetalle }>(`/api/oficina/planilla-detalle/${detalleId}`, { method: 'PATCH', body: JSON.stringify(data) }),
     listAdelantosOficina: (empleadoId: string) => req<{ adelantos: AdelantoOficina[] }>(`/api/oficina/adelantos?empleadoId=${empleadoId}`),
@@ -374,6 +378,24 @@ export const api = {
     listAfpTasas: () => req<{ tasas: AfpTasa[] }>(`/api/oficina/afp-tasas`),
     putAfpTasa: (afp: string, data: { pctAporte?: number; pctSeguro?: number; pctComisionFlujo?: number; pctComisionMixta?: number }) =>
       req<{ afp: AfpTasa }>(`/api/oficina/afp-tasas/${encodeURIComponent(afp)}`, { method: 'PUT', body: JSON.stringify(data) }),
+
+    // F2 · destino del costo, mapa de cuentas y vista previa del asiento
+    getDistribucionOficina: () => req<DistribucionResponse>('/api/oficina/planilla/distribucion'),
+    putDistribucionOficina: (empleadoId: string | null, filas: Array<{ obraId: string; pct: number }>) =>
+      req<{ empleadoId: string | null; filas: Array<{ obraId: string; pct: number }>; resto: number }>(
+        '/api/oficina/planilla/distribucion',
+        { method: 'PUT', body: JSON.stringify({ empleadoId, filas }) },
+      ),
+    getConceptoCuentaOficina: () => req<{ conceptos: ConceptoCuenta[] }>('/api/oficina/planilla/concepto-cuenta'),
+    putConceptoCuentaOficina: (concepto: string, cuenta: string) =>
+      req<{ conceptoCuenta: { concepto: string; cuenta: string } }>(
+        `/api/oficina/planilla/concepto-cuenta/${encodeURIComponent(concepto)}`,
+        { method: 'PUT', body: JSON.stringify({ cuenta }) },
+      ),
+    getAsientoPreviewOficina: (mesId: string, cuentaBancariaId?: string | null) =>
+      req<AsientoPreview>(
+        `/api/oficina/planilla/${mesId}/asiento-preview${cuentaBancariaId ? `?cuentaBancariaId=${encodeURIComponent(cuentaBancariaId)}` : ''}`,
+      ),
 
     // Config del motor v2: baseline renta 5ta por empleado/año
     getRenta5taBaseline: (empleadoId: string, anio: number) =>
@@ -2432,4 +2454,34 @@ export type Renta5taBaseline = {
   id: string; empleadoId: string; anio: number;
   acumuladoImportado: string; retencionesImportadas: string;
   importadoPor: string | null; importadoEn: string | null;
+};
+export type DistribucionFila = { obraId: string; obraCodigo: string; obraNombre: string; pct: number };
+export type DistribucionResponse = {
+  global: DistribucionFila[];
+  porEmpleado: Array<{ empleadoId: string; empleadoNombre: string | null; filas: DistribucionFila[] }>;
+};
+export type ConceptoCuenta = {
+  concepto: string;
+  label: string;
+  lado: 'debe' | 'haber';
+  reparte: boolean;
+  cuenta: string;
+  cuentaDefault: string;
+  cuentaDescripcion: string | null;
+};
+export type AsientoPreviewLinea = {
+  cuenta: string;
+  descripcion: string;
+  debe: number;
+  haber: number;
+  obraId: string | null;
+  obraCodigo: string | null;
+  obraNombre: string | null;
+  clase: 'CD' | 'GG_OBRA' | 'GG_CORP' | null;
+};
+export type AsientoPreview = {
+  lineas: AsientoPreviewLinea[];
+  totales: { debe: number; haber: number };
+  cuadra: boolean;
+  totalNeto: number;
 };

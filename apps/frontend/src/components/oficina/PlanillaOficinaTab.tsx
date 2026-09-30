@@ -67,6 +67,7 @@ export function PlanillaOficinaTab() {
   const [mes, setMes] = useState(() => new Date().toISOString().slice(0, 7));
   const [subtab, setSubtab] = useState<'planilla' | 'config'>('planilla');
   const [modal, setModal] = useState<ModalState>(null);
+  const [cerrarOpen, setCerrarOpen] = useState(false);
   const [asientoMsg, setAsientoMsg] = useState<string | null>(null);
   const [errMsg, setErrMsg] = useState<string | null>(null);
 
@@ -92,18 +93,21 @@ export function PlanillaOficinaTab() {
   });
 
   const cerrarMut = useMutation({
-    mutationFn: (id: string) => api.oficina.cerrarPlanillaOficina(id),
+    mutationFn: ({ id, cuentaBancariaId }: { id: string; cuentaBancariaId: string | null }) =>
+      api.oficina.cerrarPlanillaOficina(id, cuentaBancariaId),
     onSuccess: (res) => {
       setErrMsg(null);
-      setAsientoMsg(`Asiento generado: ${res.asientoId}`);
+      setCerrarOpen(false);
+      setAsientoMsg(
+        res.movimientoId
+          ? `Asiento generado: ${res.asientoId} · egreso registrado en tesorería`
+          : `Asiento generado: ${res.asientoId} · el neto quedó como pasivo en 411`,
+      );
       invalidate();
     },
     onError: (e: Error) => {
-      if (e instanceof ApiError && e.status === 423) {
-        setErrMsg(`Periodo cerrado: ${e.message}`);
-      } else {
-        setErrMsg(e.message);
-      }
+      if (e instanceof ApiError && e.status === 423) setErrMsg(`Periodo cerrado: ${e.message}`);
+      else setErrMsg(e.message);
     },
   });
 
@@ -111,11 +115,9 @@ export function PlanillaOficinaTab() {
     mutationFn: (id: string) => api.oficina.reabrirPlanillaOficina(id),
     onSuccess: () => { setErrMsg(null); setAsientoMsg(null); invalidate(); },
     onError: (e: Error) => {
-      if (e instanceof ApiError && e.status === 423) {
-        setErrMsg(`Periodo cerrado: ${e.message}`);
-      } else {
-        setErrMsg(e.message);
-      }
+      if (e instanceof ApiError && e.status === 423) setErrMsg(`Periodo cerrado: ${e.message}`);
+      else if (e instanceof ApiError && e.status === 409) setErrMsg(`No se puede reabrir: ${e.message}`);
+      else setErrMsg(e.message);
     },
   });
 
@@ -170,9 +172,9 @@ export function PlanillaOficinaTab() {
           </button>
         )}
         {planilla && estado === 'calculada' && (
-          <button disabled={cerrarMut.isPending} onClick={() => cerrarMut.mutate(planilla.id)}
+          <button disabled={cerrarMut.isPending} onClick={() => setCerrarOpen(true)}
             className="inline-flex h-9 items-center rounded-md bg-emerald-600 px-3.5 text-[12.5px] font-medium text-white disabled:opacity-50">
-            {cerrarMut.isPending ? 'Cerrando…' : 'Cerrar mes'}
+            Cerrar mes
           </button>
         )}
         {!planilla && !isLoading && (
@@ -255,6 +257,15 @@ export function PlanillaOficinaTab() {
       {subtab === 'config' && canEdit && <ConfigMotorPanel />}
 
       {/* Modals */}
+      {cerrarOpen && planilla && (
+        <CerrarMesDialog
+          mesId={planilla.id}
+          mes={mes}
+          pending={cerrarMut.isPending}
+          onClose={() => setCerrarOpen(false)}
+          onConfirm={(cuentaBancariaId) => cerrarMut.mutate({ id: planilla.id, cuentaBancariaId })}
+        />
+      )}
       {modal?.kind === 'boleta' && (
         <BoletaOficina detalle={modal.det} mes={mes} razonSocial={empresaRazonSocial} ruc={empresaRuc} direccion={empresaDireccion} onClose={() => setModal(null)} />
       )}
@@ -299,6 +310,8 @@ function ConfigMotorPanel() {
   const [openParams, setOpenParams] = useState(false);
   const [openAfp, setOpenAfp] = useState(false);
   const [openBaseline, setOpenBaseline] = useState(false);
+  const [openDist, setOpenDist] = useState(false);
+  const [openCuentas, setOpenCuentas] = useState(false);
 
   return (
     <div className="mt-6 space-y-2 rounded-xl border border-line bg-bg-elev p-4">
@@ -320,6 +333,18 @@ function ConfigMotorPanel() {
       <div className="space-y-1">
         <SectionHeader title="Import renta 5.ª categoría (baseline por empleado/año)" open={openBaseline} onToggle={() => setOpenBaseline((v) => !v)} />
         {openBaseline && <Renta5taBaselineSection qc={qc} />}
+      </div>
+
+      {/* Section 4: Destino del costo */}
+      <div className="space-y-1">
+        <SectionHeader title="Destino del costo (reparto por obra)" open={openDist} onToggle={() => setOpenDist((v) => !v)} />
+        {openDist && <DistribucionSection qc={qc} />}
+      </div>
+
+      {/* Section 5: Cuentas por concepto */}
+      <div className="space-y-1">
+        <SectionHeader title="Cuentas por concepto del asiento" open={openCuentas} onToggle={() => setOpenCuentas((v) => !v)} />
+        {openCuentas && <ConceptoCuentaSection qc={qc} />}
       </div>
     </div>
   );
@@ -578,6 +603,295 @@ function Renta5taBaselineSection({ qc }: { qc: ReturnType<typeof useQueryClient>
         <p className="text-[11.5px] text-ink-4">Sin empleados administrativos registrados.</p>
       )}
     </div>
+  );
+}
+
+// ─── DistribucionSection · destino del costo por obra ─────────
+// Selector Global | Por empleado. La fila "Oficina" es calculada (100 - suma), no editable:
+// es el resto, no un dato. Guardar reemplaza el scope completo (el backend borra + inserta).
+function DistribucionSection({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
+  const [scope, setScope] = useState<'global' | 'empleado'>('global');
+  const [empleadoId, setEmpleadoId] = useState<string>('');
+  const [err, setErr] = useState<string | null>(null);
+  const [okMsg, setOkMsg] = useState<string | null>(null);
+
+  const { data: dist } = useQuery({ queryKey: ['oficina-distribucion'], queryFn: () => api.oficina.getDistribucionOficina() });
+  const { data: proyectosData } = useQuery({ queryKey: ['proyectos'], queryFn: () => api.proyectos.list() });
+  const { data: empleadosData } = useQuery({ queryKey: ['empleados', 'admin'], queryFn: () => api.planilla.listEmpleados('admin') });
+
+  const obras = proyectosData?.proyectos ?? [];
+  const administrativos = (empleadosData?.empleados ?? []).filter((e) => e.tipoPlanilla === 'admin');
+
+  const guardadas = scope === 'global'
+    ? dist?.global ?? []
+    : dist?.porEmpleado.find((p) => p.empleadoId === empleadoId)?.filas ?? [];
+  const [draft, setDraft] = useState<Record<string, number>>({});
+  const filas = Object.keys(draft).length > 0
+    ? draft
+    : Object.fromEntries(guardadas.map((f) => [f.obraId, f.pct]));
+
+  const suma = Math.round(Object.values(filas).reduce((s, v) => s + Number(v || 0), 0) * 100) / 100;
+  const resto = Math.round((100 - suma) * 100) / 100;
+  const hereda = scope === 'empleado' && !!empleadoId && guardadas.length === 0;
+
+  const guardarMut = useMutation({
+    mutationFn: () =>
+      api.oficina.putDistribucionOficina(
+        scope === 'global' ? null : empleadoId,
+        Object.entries(filas).filter(([, pct]) => Number(pct) > 0).map(([obraId, pct]) => ({ obraId, pct: Number(pct) })),
+      ),
+    onSuccess: () => {
+      setErr(null);
+      setOkMsg('Distribución guardada');
+      setDraft({});
+      qc.invalidateQueries({ queryKey: ['oficina-distribucion'] });
+    },
+    onError: (e: Error) => { setOkMsg(null); setErr(e.message); },
+  });
+
+  return (
+    <div className="space-y-3 rounded-md border border-line p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="inline-flex rounded-md border border-line p-0.5">
+          {(['global', 'empleado'] as const).map((s) => (
+            <button key={s} type="button"
+              onClick={() => { setScope(s); setDraft({}); setErr(null); setOkMsg(null); }}
+              className={cn('rounded px-2.5 py-1 text-[11.5px] font-medium',
+                scope === s ? 'bg-primary text-primary-foreground' : 'text-ink-3 hover:text-ink-2')}>
+              {s === 'global' ? 'Global' : 'Por empleado'}
+            </button>
+          ))}
+        </div>
+        {scope === 'empleado' && (
+          <select value={empleadoId}
+            onChange={(e) => { setEmpleadoId(e.target.value); setDraft({}); setErr(null); setOkMsg(null); }}
+            className="h-8 rounded-md border border-line bg-bg-elev px-2 text-[11.5px]">
+            <option value="">Elige un trabajador…</option>
+            {administrativos.map((e) => <option key={e.id} value={e.id}>{e.nombre}</option>)}
+          </select>
+        )}
+      </div>
+
+      {scope === 'empleado' && !empleadoId ? (
+        <p className="text-[11.5px] text-ink-4">Elige un trabajador para definir su distribución propia.</p>
+      ) : (
+        <>
+          {hereda && (
+            <p className="text-[11.5px] text-ink-4">
+              Sin reglas propias: hereda el global ({dist?.global.map((f) => `${f.obraCodigo} ${f.pct}%`).join(' · ') || '100% oficina'}).
+              Al guardar aquí, el global deja de aplicarle.
+            </p>
+          )}
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-line">
+                <th className="px-2 py-1.5 text-left font-mono text-[10px] uppercase tracking-wider text-ink-4">Obra</th>
+                <th className="px-2 py-1.5 text-right font-mono text-[10px] uppercase tracking-wider text-ink-4">%</th>
+              </tr>
+            </thead>
+            <tbody>
+              {obras.map((o) => (
+                <tr key={o.id} className="border-b border-line/60">
+                  <td className="px-2 py-1.5 text-[11.5px]">{o.codigo} · {o.nombre}</td>
+                  <td className="px-2 py-1">
+                    <input type="number" step="0.01" min="0" max="100"
+                      value={filas[o.id] ?? ''}
+                      onChange={(e) => {
+                        const v = e.target.value === '' ? 0 : Number(e.target.value);
+                        setDraft({ ...filas, [o.id]: Number.isFinite(v) ? v : 0 });
+                      }}
+                      className="h-7 w-24 rounded-md border border-line bg-bg-elev px-2 text-right font-mono text-[11.5px] tabular-nums" />
+                  </td>
+                </tr>
+              ))}
+              <tr className="bg-bg-sunken">
+                <td className="px-2 py-1.5 text-[11.5px] font-medium text-ink-2">Oficina (gasto general corporativo)</td>
+                <td className="px-2 py-1.5 text-right font-mono text-[11.5px] font-semibold tabular-nums">
+                  {resto.toFixed(2)}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+
+          {resto < 0 && <p className="text-[11.5px] text-rose-600">La suma es {suma.toFixed(2)}: no puede pasar de 100.</p>}
+          {err && <p className="text-[11.5px] text-rose-600">{err}</p>}
+          {okMsg && <p className="text-[11.5px] text-emerald-600">{okMsg}</p>}
+
+          <button type="button" disabled={resto < 0 || guardarMut.isPending}
+            onClick={() => guardarMut.mutate()}
+            className="inline-flex h-8 items-center rounded-md bg-primary px-3 text-[11.5px] font-medium text-primary-foreground disabled:opacity-50">
+            {guardarMut.isPending ? 'Guardando…' : 'Guardar distribución'}
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─── ConceptoCuentaSection · cuentas por concepto ─────────────
+// Conjunto de conceptos cerrado (lo define el backend). Se edita la cuenta, no la lista.
+// Misma mecánica que EditNum: guarda al salir del campo si cambió.
+function ConceptoCuentaSection({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
+  const [err, setErr] = useState<string | null>(null);
+  const { data } = useQuery({ queryKey: ['oficina-concepto-cuenta'], queryFn: () => api.oficina.getConceptoCuentaOficina() });
+
+  const guardarMut = useMutation({
+    mutationFn: ({ concepto, cuenta }: { concepto: string; cuenta: string }) =>
+      api.oficina.putConceptoCuentaOficina(concepto, cuenta),
+    onSuccess: () => { setErr(null); qc.invalidateQueries({ queryKey: ['oficina-concepto-cuenta'] }); },
+    onError: (e: Error) => setErr(e.message),
+  });
+
+  return (
+    <div className="space-y-2 rounded-md border border-line p-3">
+      <table className="w-full">
+        <thead>
+          <tr className="border-b border-line">
+            {['Concepto', 'Lado', 'Obra', 'Cuenta', 'Descripción'].map((h) => (
+              <th key={h} className="px-2 py-1.5 text-left font-mono text-[10px] uppercase tracking-wider text-ink-4">{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {(data?.conceptos ?? []).map((c) => (
+            <tr key={c.concepto} className="border-b border-line/60">
+              <td className="px-2 py-1.5 text-[11.5px]">{c.label}</td>
+              <td className="px-2 py-1.5 text-[11.5px] text-ink-3">{c.lado === 'debe' ? 'Debe' : 'Haber'}</td>
+              <td className="px-2 py-1.5 text-[11.5px] text-ink-3">{c.reparte ? 'se reparte' : 'agregado'}</td>
+              <td className="px-2 py-1">
+                <input type="text" defaultValue={c.cuenta} key={c.cuenta}
+                  onBlur={(e) => {
+                    const v = e.target.value.trim();
+                    if (v && v !== c.cuenta) guardarMut.mutate({ concepto: c.concepto, cuenta: v });
+                  }}
+                  className="h-7 w-24 rounded-md border border-line bg-bg-elev px-2 font-mono text-[11.5px] tabular-nums" />
+              </td>
+              <td className="px-2 py-1.5 text-[11.5px] text-ink-4">{c.cuentaDescripcion ?? '—'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {err && <p className="text-[11.5px] text-rose-600">{err}</p>}
+      <p className="text-[11.5px] text-ink-4">
+        La cuenta del sueldo definida por trabajador en la planilla manda sobre esta.
+      </p>
+    </div>
+  );
+}
+
+// ─── CerrarMesDialog · cuenta bancaria + asiento antes de firmar ──
+// Kelly ve el asiento ANTES de cerrar: es el momento en que su criterio importa.
+function CerrarMesDialog({ mesId, mes, onClose, onConfirm, pending }: {
+  mesId: string;
+  mes: string;
+  onClose: () => void;
+  onConfirm: (cuentaBancariaId: string | null) => void;
+  pending: boolean;
+}) {
+  const [cuentaId, setCuentaId] = useState<string>('');
+
+  const { data: cuentasData } = useQuery({ queryKey: ['cuentas-bancarias'], queryFn: () => api.finanzas.listCuentas() });
+  const cuentas = (cuentasData?.cuentas ?? []).filter((c) => c.activo && c.moneda === 'PEN' && !!c.cuentaContable);
+
+  const { data: preview, isLoading, error } = useQuery({
+    queryKey: ['oficina-asiento-preview', mesId, cuentaId],
+    queryFn: () => api.oficina.getAsientoPreviewOficina(mesId, cuentaId || null),
+  });
+
+  const porObra = new Map<string, { codigo: string; monto: number }>();
+  for (const l of preview?.lineas ?? []) {
+    if (!l.obraId || Number(l.debe) <= 0) continue;
+    const prev = porObra.get(l.obraId);
+    porObra.set(l.obraId, { codigo: l.obraCodigo ?? l.obraId, monto: (prev?.monto ?? 0) + Number(l.debe) });
+  }
+  const oficina = (preview?.lineas ?? [])
+    .filter((l) => !l.obraId && Number(l.debe) > 0 && l.cuenta.startsWith('6'))
+    .reduce((s, l) => s + Number(l.debe), 0);
+
+  return (
+    <Modal title={`Cerrar planilla de ${mes}`} onClose={onClose}>
+      <div className="space-y-4">
+        <label className="flex flex-col gap-1">
+          <span className="font-mono text-[10px] uppercase tracking-wider text-ink-4">Pagar el neto desde</span>
+          <select value={cuentaId} onChange={(e) => setCuentaId(e.target.value)}
+            className="h-8 rounded-md border border-line bg-bg-elev px-2 text-[11.5px]">
+            <option value="">Dejar como pasivo en 411 (pagar después)</option>
+            {cuentas.map((c) => (
+              <option key={c.id} value={c.id}>{c.banco ?? ''} {c.codigo} — {c.descripcion ?? ''}</option>
+            ))}
+          </select>
+        </label>
+
+        <div>
+          <div className="mb-1.5 font-mono text-[10px] uppercase tracking-wider text-ink-4">Reparto del costo</div>
+          <div className="space-y-0.5 text-[11.5px]">
+            {[...porObra.values()].map((o) => (
+              <div key={o.codigo} className="flex justify-between">
+                <span>{o.codigo}</span><span className="font-mono tabular-nums">{fmtPEN(o.monto)}</span>
+              </div>
+            ))}
+            {oficina > 0 && (
+              <div className="flex justify-between text-ink-3">
+                <span>Oficina (gasto general corporativo)</span>
+                <span className="font-mono tabular-nums">{fmtPEN(oficina)}</span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div>
+          <div className="mb-1.5 font-mono text-[10px] uppercase tracking-wider text-ink-4">Asiento que se va a postear</div>
+          {isLoading && <p className="text-[11.5px] text-ink-4">Cargando…</p>}
+          {error && <p className="text-[11.5px] text-rose-600">{(error as Error).message}</p>}
+          {preview && (
+            <div className="overflow-x-auto rounded-md border border-line">
+              <table className="w-full min-w-[520px]">
+                <thead>
+                  <tr className="border-b border-line bg-bg-sunken">
+                    {['Cuenta', 'Descripción', 'Obra', 'Clase', 'Debe', 'Haber'].map((h, i) => (
+                      <th key={h} className={cn('px-2 py-1.5 font-mono text-[10px] uppercase tracking-wider text-ink-4', i >= 4 ? 'text-right' : 'text-left')}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {preview.lineas.map((l, i) => (
+                    <tr key={i} className="border-b border-line/60">
+                      <td className="px-2 py-1 font-mono text-[11px] tabular-nums">{l.cuenta}</td>
+                      <td className="px-2 py-1 text-[11px]">{l.descripcion}</td>
+                      <td className="px-2 py-1 text-[11px] text-ink-3">{l.obraCodigo ?? '—'}</td>
+                      <td className="px-2 py-1 text-[11px] text-ink-3">{l.clase ?? '—'}</td>
+                      <td className="px-2 py-1 text-right font-mono text-[11px] tabular-nums">{Number(l.debe) > 0 ? fmtPEN(Number(l.debe)) : ''}</td>
+                      <td className="px-2 py-1 text-right font-mono text-[11px] tabular-nums">{Number(l.haber) > 0 ? fmtPEN(Number(l.haber)) : ''}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr className="border-t-2 border-line bg-bg-sunken">
+                    <td colSpan={4} className="px-2 py-1.5 text-[11px] font-semibold text-ink-3">
+                      {preview.cuadra ? 'Cuadra' : 'NO cuadra'}
+                    </td>
+                    <td className="px-2 py-1.5 text-right font-mono text-[11px] font-bold tabular-nums">{fmtPEN(preview.totales.debe)}</td>
+                    <td className="px-2 py-1.5 text-right font-mono text-[11px] font-bold tabular-nums">{fmtPEN(preview.totales.haber)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          )}
+        </div>
+
+        <div className="flex justify-end gap-2">
+          <button type="button" onClick={onClose}
+            className="inline-flex h-9 items-center rounded-md border border-line px-3.5 text-[12.5px] font-medium text-ink-2 hover:bg-bg-sunken">
+            Cancelar
+          </button>
+          <button type="button" disabled={pending || !preview?.cuadra}
+            onClick={() => onConfirm(cuentaId || null)}
+            className="inline-flex h-9 items-center rounded-md bg-emerald-600 px-3.5 text-[12.5px] font-medium text-white disabled:opacity-50">
+            {pending ? 'Cerrando…' : 'Confirmar cierre'}
+          </button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 
