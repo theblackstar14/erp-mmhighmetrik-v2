@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X, ChevronDown, ChevronRight } from 'lucide-react';
 import { type PlanillaOficinaDetalle, type ParamLegalOficina, type Renta5taBaseline, type Empleado, ApiError, api } from '@/lib/api.js';
@@ -24,6 +24,12 @@ type ModalState =
 
 // Simple Modal wrapper
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [onClose]);
+
   return createPortal(
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 animate-backdropIn"
@@ -645,6 +651,7 @@ function DistribucionSection({ qc }: { qc: ReturnType<typeof useQueryClient> }) 
       setOkMsg('Distribución guardada');
       setDraft({});
       qc.invalidateQueries({ queryKey: ['oficina-distribucion'] });
+      qc.invalidateQueries({ queryKey: ['oficina-asiento-preview'] });
     },
     onError: (e: Error) => { setOkMsg(null); setErr(e.message); },
   });
@@ -738,7 +745,7 @@ function ConceptoCuentaSection({ qc }: { qc: ReturnType<typeof useQueryClient> }
   const guardarMut = useMutation({
     mutationFn: ({ concepto, cuenta }: { concepto: string; cuenta: string }) =>
       api.oficina.putConceptoCuentaOficina(concepto, cuenta),
-    onSuccess: () => { setErr(null); qc.invalidateQueries({ queryKey: ['oficina-concepto-cuenta'] }); },
+    onSuccess: () => { setErr(null); qc.invalidateQueries({ queryKey: ['oficina-concepto-cuenta'] }); qc.invalidateQueries({ queryKey: ['oficina-asiento-preview'] }); },
     onError: (e: Error) => setErr(e.message),
   });
 
@@ -747,7 +754,7 @@ function ConceptoCuentaSection({ qc }: { qc: ReturnType<typeof useQueryClient> }
       <table className="w-full">
         <thead>
           <tr className="border-b border-line">
-            {['Concepto', 'Lado', 'Obra', 'Cuenta', 'Descripción'].map((h) => (
+            {['Concepto', 'Lado', 'Reparte por obra', 'Cuenta', 'Descripción'].map((h) => (
               <th key={h} className="px-2 py-1.5 text-left font-mono text-[10px] uppercase tracking-wider text-ink-4">{h}</th>
             ))}
           </tr>
@@ -793,7 +800,7 @@ function CerrarMesDialog({ mesId, mes, onClose, onConfirm, pending }: {
   const { data: cuentasData } = useQuery({ queryKey: ['cuentas-bancarias'], queryFn: () => api.finanzas.listCuentas() });
   const cuentas = (cuentasData?.cuentas ?? []).filter((c) => c.activo && c.moneda === 'PEN' && !!c.cuentaContable);
 
-  const { data: preview, isLoading, error } = useQuery({
+  const { data: preview, isLoading, isFetching, error } = useQuery({
     queryKey: ['oficina-asiento-preview', mesId, cuentaId],
     queryFn: () => api.oficina.getAsientoPreviewOficina(mesId, cuentaId || null),
   });
@@ -884,7 +891,7 @@ function CerrarMesDialog({ mesId, mes, onClose, onConfirm, pending }: {
             className="inline-flex h-9 items-center rounded-md border border-line px-3.5 text-[12.5px] font-medium text-ink-2 hover:bg-bg-sunken">
             Cancelar
           </button>
-          <button type="button" disabled={pending || !preview?.cuadra}
+          <button type="button" disabled={pending || isFetching || !preview?.cuadra}
             onClick={() => onConfirm(cuentaId || null)}
             className="inline-flex h-9 items-center rounded-md bg-emerald-600 px-3.5 text-[12.5px] font-medium text-white disabled:opacity-50">
             {pending ? 'Cerrando…' : 'Confirmar cierre'}
