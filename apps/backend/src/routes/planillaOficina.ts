@@ -9,8 +9,9 @@ import { resolverParamLegal, cargarTasasAfp } from '../lib/paramLegalOficina.js'
 import { getYtd, upsertLedgerMes } from '../lib/renta5taYtd.js';
 import { requireAuth } from '../middleware/auth.js';
 import { resolverEmpresa } from '../lib/permisos.js';
-import { cargarDerivarCtx } from '../lib/clasificacion.js';
+import { cargarDerivarCtx, derivarClaseCore } from '../lib/clasificacion.js';
 import { crearAsiento, type LineaIn } from './contabilidad.js';
+import { armarLineasCierre, cargarMapaConceptos, cargarReglas } from '../lib/planillaOficinaAsiento.js';
 import { periodoCerrado } from '../lib/periodos.js';
 import { registrarDocumento, docsDetalle } from '../lib/documentoAdjunto.js';
 import { generarBoletaPdf } from '../lib/boletaOficinaPdf.js';
@@ -57,6 +58,33 @@ async function getConfig() {
   let [cfg] = await db.select().from(schema.configPlanilla).limit(1);
   if (!cfg) [cfg] = await db.insert(schema.configPlanilla).values({ id: 'singleton' }).returning();
   return cfg;
+}
+
+// ─── validarCuentaBanco ───────────────────────────────────────
+// La cuenta debe existir, estar activa, ser PEN (el asiento se postea en moneda base)
+// y tener su 104x configurada y activa en el plan.
+async function validarCuentaBanco(
+  cuentaBancariaId: string,
+): Promise<{ cuentaContable: string } | { error: string }> {
+  const [cb] = await db
+    .select()
+    .from(schema.cuentasBancarias)
+    .where(eq(schema.cuentasBancarias.id, cuentaBancariaId))
+    .limit(1);
+  if (!cb) return { error: 'Cuenta bancaria no encontrada' };
+  if (!cb.activo) return { error: `Cuenta bancaria '${cb.codigo}' está inactiva` };
+  if (cb.moneda !== 'PEN') return { error: `Cuenta bancaria '${cb.codigo}' es ${cb.moneda}; la planilla se paga en PEN` };
+  if (!cb.cuentaContable) return { error: `Cuenta bancaria '${cb.codigo}' sin cuenta contable 104x configurada` };
+
+  const [pc] = await db
+    .select({ activa: schema.planContable.activa })
+    .from(schema.planContable)
+    .where(eq(schema.planContable.codigo, cb.cuentaContable))
+    .limit(1);
+  if (!pc) return { error: `Cuenta contable ${cb.cuentaContable} no existe en el plan` };
+  if (pc.activa === false) return { error: `Cuenta contable ${cb.cuentaContable} está inactiva` };
+
+  return { cuentaContable: cb.cuentaContable };
 }
 
 function cfgToDto(cfg: Awaited<ReturnType<typeof getConfig>>) {
@@ -742,6 +770,67 @@ router.get('/adelantos', async (req, res) => {
   res.json({ adelantos });
 });
 
+// ─── GET /api/oficina/planilla/:mesId/asiento-preview ────────
+// Mismas líneas que posteará `cerrar` (misma función), con la clase derivada por línea.
+// Query opcional ?cuentaBancariaId= para ver también las dos líneas del pago.
+router.get('/planilla/:mesId/asiento-preview', async (req, res) => {
+  const { mesId } = req.params;
+  const cuentaBancariaId = (req.query.cuentaBancariaId as string | undefined) ?? null;
+
+  const [mesRow] = await db
+    .select()
+    .from(schema.planillaOficinaMes)
+    .where(eq(schema.planillaOficinaMes.id, mesId!))
+    .limit(1);
+  if (!mesRow) return res.status(404).json({ error: 'Planilla mes no encontrada' });
+
+  const detalle = await db
+    .select()
+    .from(schema.planillaOficinaDetalle)
+    .where(eq(schema.planillaOficinaDetalle.planillaMesId, mesId!));
+  if (detalle.length === 0) return res.status(400).json({ error: 'La planilla no tiene detalle; calcula primero' });
+
+  let cuentaBanco: string | null = null;
+  if (cuentaBancariaId) {
+    const val = await validarCuentaBanco(cuentaBancariaId);
+    if ('error' in val) return res.status(400).json({ error: val.error });
+    cuentaBanco = val.cuentaContable;
+  }
+
+  const [reglas, mapa, derivarCtx] = await Promise.all([
+    cargarReglas(mesRow.empresaId),
+    cargarMapaConceptos(),
+    cargarDerivarCtx(),
+  ]);
+
+  const { lineas, totalNeto } = armarLineasCierre({ detalle, reglas, mapa, cuentaBanco });
+
+  const obrasRows = await db
+    .select({ id: schema.proyectos.id, codigo: schema.proyectos.codigo, nombre: schema.proyectos.nombre })
+    .from(schema.proyectos);
+  const obraPorId = new Map(obrasRows.map((o) => [o.id, o]));
+
+  const out = lineas.map((l) => ({
+    cuenta: l.cuenta,
+    descripcion: l.descripcion,
+    debe: l.debe,
+    haber: l.haber,
+    obraId: l.obraId ?? null,
+    obraCodigo: l.obraId ? obraPorId.get(l.obraId)?.codigo ?? null : null,
+    obraNombre: l.obraId ? obraPorId.get(l.obraId)?.nombre ?? null : null,
+    clase: derivarClaseCore(
+      derivarCtx.clasificablePorCuenta.get(l.cuenta) ?? false,
+      l.obraId,
+      derivarCtx.claseObraPorCuenta.get(l.cuenta),
+    ),
+  }));
+
+  const debe = Math.round(out.reduce((s, l) => s + Number(l.debe), 0) * 100) / 100;
+  const haber = Math.round(out.reduce((s, l) => s + Number(l.haber), 0) * 100) / 100;
+
+  res.json({ lineas: out, totales: { debe, haber }, cuadra: Math.abs(debe - haber) < 0.005, totalNeto });
+});
+
 // ─── POST /api/oficina/planilla/:mesId/cerrar ────────────────
 router.post('/planilla/:mesId/cerrar', requireOficinaEdit, async (req, res) => {
   const { mesId } = req.params;
@@ -842,132 +931,17 @@ router.post('/planilla/:mesId/cerrar', requireOficinaEdit, async (req, res) => {
     }
   });
 
-  // ── Step 3: Build accounting lines ──
-  // Debit sueldos grouped by cuentaContable (default '621')
-  const suelDoGroupMap = new Map<string, { total: number; hasManual: boolean }>();
-  let totalEssalud = 0;
-  let totalAfp = 0;
-  let totalOnp = 0;
-  let totalRenta5ta = 0;
-  let totalOtros = 0;
-  let totalNeto = 0;
-
-  for (const det of detalleRows) {
-    const cuenta = det.cuentaContable ?? '621';
-    const hasManual = !!det.cuentaContable;
-    const bruto = Math.round(Number(det.totalBruto ?? 0) * 100) / 100;
-    const prev = suelDoGroupMap.get(cuenta);
-    if (prev) {
-      prev.total = Math.round((prev.total + bruto) * 100) / 100;
-      if (hasManual) prev.hasManual = true;
-    } else {
-      suelDoGroupMap.set(cuenta, { total: bruto, hasManual });
-    }
-
-    totalEssalud = Math.round((totalEssalud + Number(det.essalud ?? 0)) * 100) / 100;
-    totalAfp = Math.round((totalAfp + Number(det.afpAporte ?? 0) + Number(det.afpSeguro ?? 0) + Number(det.afpComision ?? 0)) * 100) / 100;
-    totalOnp = Math.round((totalOnp + Number(det.onp ?? 0)) * 100) / 100;
-    totalRenta5ta = Math.round((totalRenta5ta + Number(det.imptoRenta5ta ?? 0)) * 100) / 100;
-    totalOtros = Math.round((totalOtros + Number(det.retencionJudicial ?? 0) + Number(det.otrosDescuentos ?? 0) + Number(det.adelantoCuota ?? 0)) * 100) / 100;
-    totalNeto = Math.round((totalNeto + Number(det.netoPago ?? 0)) * 100) / 100;
-  }
-
-  const lineas: LineaIn[] = [];
-
-  // Debits: sueldos per account group
-  for (const [cuenta, grp] of suelDoGroupMap) {
-    if (grp.total < 0.005) continue;
-    lineas.push({
-      cuenta,
-      descripcion: 'Sueldos y salarios',
-      debe: grp.total,
-      haber: 0,
-      cuentaContable: cuenta,
-      obraId: null,
-      cuentaOrigen: grp.hasManual ? 'USUARIO' : 'AUTOMATICO',
-    });
-  }
-
-  // Debit EsSalud empleador
-  if (totalEssalud >= 0.005) {
-    lineas.push({
-      cuenta: '6271',
-      descripcion: 'EsSalud empleador',
-      debe: totalEssalud,
-      haber: 0,
-      cuentaContable: '6271',
-      obraId: null,
-      cuentaOrigen: 'AUTOMATICO',
-    });
-  }
-
-  // Credits
-  if (totalEssalud >= 0.005) {
-    lineas.push({
-      cuenta: '4031',
-      descripcion: 'EsSalud por pagar',
-      debe: 0,
-      haber: totalEssalud,
-      cuentaContable: '4031',
-      obraId: null,
-      cuentaOrigen: 'AUTOMATICO',
-    });
-  }
-  if (totalAfp >= 0.005) {
-    lineas.push({
-      cuenta: '407',
-      descripcion: 'AFP por pagar',
-      debe: 0,
-      haber: totalAfp,
-      cuentaContable: '407',
-      obraId: null,
-      cuentaOrigen: 'AUTOMATICO',
-    });
-  }
-  if (totalOnp >= 0.005) {
-    lineas.push({
-      cuenta: '4032',
-      descripcion: 'ONP por pagar',
-      debe: 0,
-      haber: totalOnp,
-      cuentaContable: '4032',
-      obraId: null,
-      cuentaOrigen: 'AUTOMATICO',
-    });
-  }
-  if (totalRenta5ta >= 0.005) {
-    lineas.push({
-      cuenta: '40173',
-      descripcion: 'Renta 5ta por pagar',
-      debe: 0,
-      haber: totalRenta5ta,
-      cuentaContable: '40173',
-      obraId: null,
-      cuentaOrigen: 'AUTOMATICO',
-    });
-  }
-  if (totalOtros >= 0.005) {
-    lineas.push({
-      cuenta: '469',
-      descripcion: 'Otros por pagar (judicial + descuentos + adelanto)',
-      debe: 0,
-      haber: totalOtros,
-      cuentaContable: '469',
-      obraId: null,
-      cuentaOrigen: 'AUTOMATICO',
-    });
-  }
-  if (totalNeto >= 0.005) {
-    lineas.push({
-      cuenta: '411',
-      descripcion: 'Neto por pagar',
-      debe: 0,
-      haber: totalNeto,
-      cuentaContable: '411',
-      obraId: null,
-      cuentaOrigen: 'AUTOMATICO',
-    });
-  }
+  // ── Step 3: Build accounting lines (F2 · misma función que asiento-preview) ──
+  const [reglas, mapaConceptos] = await Promise.all([
+    cargarReglas(mesRow.empresaId),
+    cargarMapaConceptos(),
+  ]);
+  const { lineas } = armarLineasCierre({
+    detalle: detalleRows,
+    reglas,
+    mapa: mapaConceptos,
+    cuentaBanco: null, // Task 5 lo reemplaza por la cuenta elegida
+  });
 
   // ── Step 4: Create accounting entry via WS1 engine (idempotent) ──
   // If a previous cerrar call created the asiento but the mes update failed, reuse it
