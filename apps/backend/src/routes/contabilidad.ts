@@ -585,7 +585,7 @@ async function calcCobertura(periodo: string) {
   const [ventasList, adelantosList, movsList] = await Promise.all([
     db.select({ id: schema.ventas.id }).from(schema.ventas).where(and(gte(schema.ventas.fechaEmision, desde), lte(schema.ventas.fechaEmision, hasta), dsql`${schema.ventas.total} > 0`)),
     db.select({ id: schema.adelantos.id, fechaPago: schema.adelantos.fechaPago }).from(schema.adelantos).where(inArray(schema.adelantos.estado, ['pagado', 'amortizado'])),
-    db.select({ id: schema.movimientos.id, fecha: schema.movimientos.fecha, cuentaId: schema.movimientos.cuentaId, tipoMovimiento: schema.movimientos.tipoMovimiento, transferenciaId: schema.movimientos.transferenciaId })
+    db.select({ id: schema.movimientos.id, fecha: schema.movimientos.fecha, cuentaId: schema.movimientos.cuentaId, tipoMovimiento: schema.movimientos.tipoMovimiento, transferenciaId: schema.movimientos.transferenciaId, planillaOficinaMesId: schema.movimientos.planillaOficinaMesId })
       .from(schema.movimientos).where(and(gte(schema.movimientos.fecha, desde), lte(schema.movimientos.fecha, hasta), ne(schema.movimientos.anulado, true))),
   ]);
   const ventasPend = ventasList.filter((v) => !yaSet.has(`venta:${v.id}`)).length;
@@ -593,6 +593,7 @@ async function calcCobertura(periodo: string) {
   const movimientosPend = movsList.filter((m) =>
     movOwnsCaja(String(m.fecha).slice(0, 10), cfg.cutover) && m.cuentaId
     && !(m.transferenciaId && m.tipoMovimiento !== 'Egreso') // espejo de transferencia no asienta
+    && !m.planillaOficinaMesId // F2 · la planilla de oficina ya acredito el 104x en su propio asiento
     && !yaSet.has(`movimiento:${m.id}`)).length;
 
   const total = gastosPend + pagosPend + valosPend + cobrosPend + planillasPend + ventasPend + adelantosPend + movimientosPend;

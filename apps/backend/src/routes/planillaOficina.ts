@@ -996,7 +996,9 @@ router.post('/planilla/:mesId/cerrar', requireOficinaEdit, async (req, res) => {
     .where(eq(schema.planillaOficinaMes.id, mesId!))
     .returning();
 
-  // ── Step 5a: Movimiento de tesoreria del pago (F2 · idempotente por planillaOficinaMesId) ──
+  // ── Step 5a: Movimiento de tesoreria del pago (F2) ──
+  // Protección: estado !== 'calculada' retorna 400 (state-machine guard); SELECT-then-INSERT es secundario
+  // con filtro anulado = false. No hay unique index en planilla_oficina_mes_id; movimiento anulado no bloquea nuevo.
   // proyectoId null a proposito: un movimiento tiene un solo proyecto y el costo puede estar
   // repartido entre varias obras. La dimension obra vive en las lineas del asiento.
   let movimientoId: string | null = null;
@@ -1147,7 +1149,7 @@ router.post('/planilla/:mesId/reabrir', requireOficinaEdit, async (req, res) => 
       ));
     if (conciliadas.length > 0) {
       return res.status(409).json({
-        error: 'El movimiento del pago de esta planilla esta conciliado con el extracto bancario; desconcialialo antes de reabrir',
+        error: 'El movimiento del pago de esta planilla esta conciliado con el extracto bancario; desconcilialo antes de reabrir',
         lineasConciliadas: conciliadas.map((c) => c.id),
       });
     }
