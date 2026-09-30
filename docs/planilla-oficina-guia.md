@@ -112,10 +112,57 @@ Mensaje de cierre de la demo: **el sistema no reemplaza a la contadora; le quita
 
 ---
 
-## 7. Checklist de puesta en marcha (VPS)
+## 7. Destino del costo y pago (F2)
+
+### 7.1 Reparto del costo por obras
+
+Al cerrar el mes el sistema distribuye el gasto de planilla entre las obras activas y la oficina corporativa. El reparto se configura en "Configuracion del motor", sección "Distribución por obra".
+
+Existen dos scopes de reglas:
+
+- **Global** (empleado = todos): se define qué porcentaje del costo de cada empleado va a cada obra.
+- **Por empleado**: se puede sobreescribir el global para un empleado específico. Cuando un empleado tiene reglas propias, su scope reemplaza por completo al global; no se mezclan ni se promedian.
+
+El porcentaje que no se asigna a ninguna obra (hasta completar el 100%) queda como gasto corporativo sin dimensión de obra. En el asiento contable esas líneas llevan la clase `GG_CORP`; las que tienen obra llevan `GG_OBRA`.
+
+**Regla invariable:** la planilla administrativa es siempre gasto general (`GG`). Nunca se clasifica como costo directo (`CD`), independientemente de la obra asignada. Los obreros de obra siguen en cuentas `621`/`6271` con clase `CD_OBRA`; los administrativos van a `6211`/`62711` con clase `GG_OBRA` o `GG_CORP` según tengan obra o no.
+
+### 7.2 Cuentas del gasto administrativo
+
+| Concepto | Cuenta administrativa | Cuenta obreros |
+|----------|----------------------|----------------|
+| Sueldos | `6211` | `621` |
+| EsSalud empleador | `62711` | `6271` |
+
+Ambas cuentas administrativas están mapeadas a la clase `GG_OBRA`, de modo que:
+
+- Con obra asignada la línea queda en `GG_OBRA`.
+- Sin obra (porcentaje que va a la oficina) la línea queda en `GG_CORP`.
+
+El mapa completo de concepto a cuenta es editable en Configuracion del motor, opcion "Cuentas por concepto". Los ocho conceptos configurables son: `sueldos`, `essalud_empleador`, `essalud_por_pagar`, `afp_por_pagar`, `onp_por_pagar`, `renta5ta_por_pagar`, `otros_por_pagar` y `neto_por_pagar`. Cambiar la cuenta de un concepto afecta solo a ese concepto; el resto queda intacto.
+
+### 7.3 Pago desde cuenta bancaria al cerrar
+
+Al cerrar el mes se puede indicar una cuenta bancaria en soles (PEN). Cuando se hace:
+
+1. El asiento incluye dos patas adicionales: `411 Debe` (remuneraciones por pagar) y la cuenta contable de la caja o banco `104x Haber`, ambas por el importe neto a pagar.
+2. Se crea un egreso en tesorería vinculado al mes de planilla (`planilla_oficina_mes_id`). El egreso aparece en el módulo de Movimientos como cualquier otro pago.
+
+Si no se selecciona cuenta bancaria, el neto queda pendiente en la cuenta `411` y no nace ningún movimiento de tesorería.
+
+La vista previa del asiento (boton "Vista previa del asiento") refleja exactamente las líneas que se van a postear. La UI muestra el botón de confirmación solo cuando el asiento cuadra (suma debe = suma haber).
+
+### 7.4 Reapertura del mes
+
+Reabrir un mes cerrado borra el asiento y, si existía un egreso de tesorería asociado, también lo borra. Excepcion: si ese egreso ya fue conciliado con un extracto bancario, la reapertura devuelve `409 Conflict` y no modifica nada. En ese caso el usuario debe desconciliar primero la línea del extracto antes de reabrir.
+
+---
+
+## 8. Checklist de puesta en marcha (VPS)
 
 - [ ] Correr la migración de esquema v2 contra la base de producción.
 - [ ] Sembrar las tasas AFP y los parámetros legales con vigencia (RMV 1,130 y 1,300).
 - [ ] Revisar el tipo de comisión AFP de cada trabajador (flujo/saldo).
 - [ ] Kelly importa el baseline de renta de 5ta del año en curso.
+- [ ] Configurar las reglas de distribución por obra (global y por empleado si aplica).
 - [ ] Calcular el mes de prueba y cuadrar contra la última planilla real antes de operar.
