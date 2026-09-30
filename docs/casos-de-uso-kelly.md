@@ -51,10 +51,81 @@ Lo que pidieron, textual, y qué se construyó con cada pedido:
 
 **Compras** — 3 subtabs:
 - *Registro*: la lista de compras del período. Flujo de alta (botón Registrar movimiento → Compra): RUC → autocompleta razón social (maestro → historial → API SUNAT, alta silenciosa del proveedor nuevo) → opcionalmente elegir OC (precarga líneas y compara OC vs factura) → comprobante (factura/RH; la boleta se registra pero NO va al 8.1) → líneas con partida y cuenta por línea → detracción por código + retención tipada → destino del crédito (DG/DGNG/DNG) → período de anotación si difiere del mes → CxP nace pendiente o pagada. Duplicado RUC+serie+número → rechazo 409.
-- *Bandeja CPE*: Kelly sube XML en masa; cada uno queda como borrador clasificado (factura=compra, boleta=gasto, NC=vincula, duplicado=rechaza) para confirmar con 1 revisión.
+- *Bandeja CPE*: Kelly sube XML en masa; cada uno queda como borrador clasificado (factura=compra, boleta=gasto, NC=vincula, duplicado=rechaza) para confirmar con 1 revisión. Detalle abajo.
 - *Provisiones 48*: pagos sin factura esperando comprobante; al llegar, se vincula y el sistema extorna la 4811.
 
+> **¿Para qué sirve la Bandeja CPE? (uso para la contadora)** Es el buzón de comprobantes
+> electrónicos: Kelly arrastra los XML (hasta 50 por tanda, 2 MB c/u) que bajó del buzón SOL o que
+> le mandó el proveedor, y el sistema los lee y los deja pre-armados. Responde literalmente a su
+> pregunta del audio: *"¿me has cargado todos los comprobantes acá para registrar?"*.
+>
+> **Por qué existe (el problema que mata):** tipear una factura a mano son ~15 campos, y cada uno
+> es una oportunidad de error que después SUNAT cruza contra el XML del emisor (RUC, razón social,
+> serie, número, fecha, moneda, base, IGV, total, código y monto de detracción). El XML ES el
+> documento legal; tipearlo de nuevo es copiar a mano algo que ya viene en formato máquina.
+> La bandeja invierte el trabajo: el sistema pone los datos duros y Kelly solo pone lo que ningún
+> XML puede saber — **cuenta contable y destino (obra/oficina)**, que es exactamente donde ella
+> quiere decidir.
+>
+> **Qué hace el lector (`leerCpe`, UBL 2.1):** identifica el tipo por la raíz del XML
+> (`Invoice`=01/03, `CreditNote`=07, `DebitNote`=08), extrae emisor/cliente/serie/número/fecha/
+> moneda/líneas/totales, y saca la **detracción declarada en el propio XML** (código + monto).
+>
+> **4 controles automáticos antes de que el XML entre a la bandeja:**
+>
+> | Control | Qué hace |
+> |---|---|
+> | **Compra o venta (rol)** | Compara los RUC del XML con el RUC de la empresa activa: cliente=nosotros → compra; emisor=nosotros → venta. Si no aparece ninguno → **rechazo `EMPRESA_AJENA`** (el XML es de otra empresa, no se cuela). |
+> | **Clasificación** | factura (01) → borrador de compra · boleta (03) → gasto (**no entra al 8.1/RCE**, su regla) · NC (07) → se vincula al documento que modifica · ND (08) → nota de débito. |
+> | **Duplicado** | dos niveles: (a) `hash` del XML único → subir el mismo archivo 2 veces = `duplicado_xml`; (b) contra el Registro de compras por RUC+serie+número → `ya_registrada`. Ninguno de los dos entra. |
+> | **Detracción validada** | busca el código en la tabla de 48 tasas vigentes a la fecha de emisión, recalcula el monto y lo **compara contra lo declarado en el XML**. Si el código no está vigente, o falta el TC de la fecha en compras en moneda extranjera, lo dice con nombre propio. |
+>
+> **Flujo:** subir XML → bandeja (estado `pendiente`, contador en la pestaña) → por cada uno
+> **Completar** (elegir cuenta contable + destino; el resto ya viene) o **Descartar con motivo**.
+> Al completar, el alta real la hace el mismo endpoint de siempre (`POST /gastos` o `POST /ventas`)
+> — la bandeja no es una vía paralela de registro, solo el pre-llenado — y el borrador queda
+> `registrado` y ligado al gasto/venta creado. Nada se escribe en el Registro sin que Kelly
+> confirme: la bandeja es una **sala de espera con trazabilidad**, no un importador ciego.
+>
+> El Resumen tiene una tarjeta de acción ("N XML en la bandeja CPE · falta asignarles cuenta y
+> destino") que salta directo acá, para que no se olviden borradores colgados.
+
 **Ventas** — valorizaciones facturadas (capturan serie/número del comprobante electrónico real al facturar) + ventas standalone (01/03/07/08). NC referencia al comprobante que modifica. Retención IGV 3% si el cliente es agente. Todo alimenta 14.1/RVIE.
+
+> **Cancelar/reducir un documento por Nota de Crédito (07)** — el ERP distingue dos cosas que
+> suelen confundirse: la **NC**, que es tributaria y va a los libros, y la **anulación**, que es
+> interna y borra un error del ERP. No son intercambiables.
+>
+> **1 · NC de VENTA (nosotros emitimos).** Registrar la NC exige la factura que modifica
+> (serie+número): sin eso, rechazo 400. El sistema busca la **CxC abierta** de esa factura (mismo
+> cliente) y si no existe devuelve 404 — no se puede aplicar una NC contra algo que no está en el
+> libro. Si existe, aplica sobre esa CxC `min(total de la NC, saldo pendiente)` — o sea, una NC
+> total deja la factura en 0 (cancelada) y una parcial solo baja el saldo; nunca deja saldo
+> negativo. La NC **no genera CxC propia** ni detracción.
+> *Asiento (invertido respecto de la venta):* 7041 (o la cuenta manual) al **debe** por la base,
+> 40111 al **debe** por el IGV (reversa del débito fiscal), 1212 al **haber** por el total.
+> *En el 14.1/RVIE:* la NC se guarda con total positivo pero **entra al registro con signo −1**
+> (base, IGV y total negativos, como exige SUNAT) y los campos 27-30 llevan tipo/serie/número del
+> comprobante modificado.
+>
+> **2 · NC de COMPRA (el proveedor nos la emite).** Misma exigencia: debe indicar la factura que
+> modifica, y debe existir la **CxP** de ese proveedor con ese serie+número (404 si no). Aplica
+> contra esa CxP y baja lo que debemos.
+> *Asiento (invertido respecto de la compra):* 4212 al **debe** por el total (deja de ser deuda),
+> la cuenta de gasto al **haber** (el costo se va), 40111 al **haber** (se devuelve el crédito
+> fiscal que se había tomado). Esto fue un fix explícito (F3.5): antes la NC de compra se asentaba
+> como una compra normal y **duplicaba el gasto**.
+> La NC de compra tampoco genera detracción ni liga OC.
+>
+> **3 · Lo que NO es una NC: la anulación.** Si el documento nunca debió existir (se tipeó mal, se
+> registró dos veces), no se emite NC: se **anula formalmente**. El movimiento/asiento no se borra
+> nunca — queda marcado como anulado con usuario, fecha y motivo obligatorio, con su contra-asiento
+> y su entrada en el `audit_log`. Criterio práctico para Kelly: *si SUNAT ya vio el comprobante
+> (está declarado/aceptado) → NC. Si el error es solo del ERP → anulación.*
+>
+> **Gap anotado:** en el 14.1 el campo "tipo de CP que se modifica" se emite fijo `01` (factura).
+> Si Kelly emite NC sobre boletas (03) hay que leerlo del documento original — pendiente chico,
+> preguntárselo en la sesión (CU-7).
 
 **Caja y bancos** — 4 subtabs:
 - *Libro por cuenta*: el libro de cada cuenta (bancos, BN detracciones, cajas) con N° de operación.
@@ -169,9 +240,12 @@ Si algo no cuadra con su criterio contable, se anota y se ajusta — para eso es
 1. Facturar una valo capturando serie/número reales.
 2. **Valida:** 14.1/RVIE con el comprobante real.
 
-### CU-7 · Nota de crédito de venta
-1. NC (07) referenciando la factura.
-2. **Valida:** resta en el registro; campos 28-30 del 14.1 con el comprobante modificado.
+### CU-7 · Cancelación por Nota de Crédito (07) — venta y compra
+1. **NC de venta:** emitir NC (07) referenciando la factura → verificar que baja el saldo de la CxC (total = cancela, parcial = reduce) y que el asiento sale invertido (7041 y 40111 al debe, 1212 al haber).
+2. **NC de compra:** registrar una NC del proveedor contra una factura existente → verificar que baja la CxP y que el gasto y el crédito fiscal se **reversan** (no que se duplique el gasto — ese era el bug F3.5).
+3. Intentar una NC **sin** indicar el documento que modifica → rechazo 400. Sobre una factura que no está en el libro → 404.
+4. **Valida:** la NC entra al 14.1 con signo negativo y los campos 27-30 con el comprobante modificado.
+5. **Preguntarle:** ¿emite NC sobre **boletas** (03)? Hoy el 14.1 pone fijo `01` en el campo "tipo de CP que se modifica". ¿Y cuándo prefiere **anular** (error solo del ERP) en vez de emitir NC (SUNAT ya lo vio)?
 
 ### CU-8 · Conciliación bancaria (el plato fuerte)
 1. Importar el EECC de enero (PDF BCP real) eligiendo la cuenta.
@@ -216,19 +290,53 @@ Si algo no cuadra con su criterio contable, se anota y se ajusta — para eso es
 
 ---
 
-## 5 · Data para los casos de uso
+## 5 · Data para los casos de uso — auditoría de `erp_mmh_test` (2026-09-30)
 
-Ya cargada en `erp_mmh_test`:
-- **EECC_Ene2026.pdf** (BCP 194-9927833-0-39, real): 215 líneas, S/1.23M; enero quedó 86% conciliado (184/215) en las pruebas — sirve tal cual para CU-8.
-- **EECC_Abr2026**: segundo extracto (202 filas) para probar re-import y dedup.
-- Compras de enero (206 en el 8.1) y asientos del período (1,139 líneas de diario que cuadran debe=haber).
-- OCs reales (p.ej. OC-2026-0026) para CU-10.
-- Proyectos con presupuesto CD/GG (PG0001) para saldo de obra y prorrateo.
+Medido con `apps/backend/scripts/f1/audit-data-casos-uso.ts` (re-corrible antes de la sesión).
 
-Falta cargar (antes o durante la sesión):
-- Las **15 facturas de ventas reales** (E001-89..103 del Excel VENTAS MM) — bloqueadas por las NC de E001-101/102 (pedir serie/número/monto a Kelly). Sin ellas, CU-6/7 se hacen con comprobante de prueba.
-- **TC USD del mes** en la tabla de tipo de cambio (para CU-13 y el 8.1).
-- El mes real completo del cierre en paralelo = reseed F4.2.
+### Verde · el CU se puede hacer con data real, sin tocar nada
+
+| Apartado | Data |
+|---|---|
+| **Contabilidad · Diario y mayor** | 3,610 asientos registrados en 11 períodos (2025-09 → 2026-09). **Debe = Haber exacto (dif 0.00) en los 11**. Enero 2026: S/1,378,927.05; febrero: S/1,560,089.32. |
+| **Contabilidad · Plan contable / Ruteo** | 1,814 cuentas PCGE, 33 filas de ruteo tipo→cuenta, 14 filas de mapa cuenta→clase. |
+| **Contabilidad · Libros y SIRE** | los 6 TXT salen con data real (enero: 1,139 líneas de diario, 206 compras). |
+| **Finanzas · Compras (Registro)** | 1,576 compras, S/1,740,277.43, **todas con cuenta contable asignada**. 24 en USD. |
+| **Finanzas · Caja y bancos** | 2,421 movimientos en 10 meses (egresos + ingresos por mes). |
+| **Finanzas · Conciliación** ⭐ | 2 extractos reales: **Ene2026 BCP** 215 líneas (184 conciliadas / 31 sueltas) y **Abr2026** 202 líneas (166 / 36). Es el CU más sólido. |
+| **Finanzas · Reportes / Auxiliar** | 5 CxC abiertas (1212, S/191,498.30) + 4 CxP abiertas (4212, S/35,000.00) → el aging tiene con qué. |
+| **Contabilidad · Cierre del mes** | 2026-01 a 2026-09 **abiertos** (se puede cerrar en vivo); 2025-02 cerrado y 2025-04 reabierto ya sirven para mostrar el freeze 423 y la reapertura auditada. |
+| **Logística · OC** | 60 OCs (15 aprobadas, 15 emitidas, 15 entregadas, 15 por aprobar) para el selector del 3-way. |
+| **Catálogos** | 48 tasas de detracción, 226 filas de catálogos SUNAT, 5 proyectos (PG0001 en liquidación con presupuesto CD/GG). |
+
+### Ámbar · hay data pero es mínima — el CU se hace, se ve pobre
+
+| Apartado | Data real | Qué falta |
+|---|---|---|
+| **Ventas** | 2 facturas sueltas (2025-01 y 2025-06) + 5 valorizaciones cobradas (3 facturadas, 2 con retención de garantía) | las 15 facturas reales E001-89..103 |
+| **Detracciones** | 2 documentos, S/16,707.00, ambos `pendiente` y **0 con constancia** | una con constancia para mostrar el crédito pasando de diferido a usable (CU-2) |
+| **Cajas de obra** | 1 caja abierta, 1 obra | una caja con 2-3 gastos y un cierre con devolución (CU-9) |
+| **Rendiciones de oficina** | 1 aprobada, S/800 de anticipo, **0 ítems y 0 archivos** | ítems con boletas (deducible/no) para CU-9b |
+| **Bandeja CPE** | 3 borradores: 2 registrados (facturas de venta) + **1 pendiente que es justo una NC (07) de venta** | 3-4 XML de compra para la subida en masa (CU-1 vía bandeja) |
+
+### Rojo · el CU NO tiene data — hay que cargarla o el caso no se puede mostrar
+
+| Falta | Bloquea | Nota |
+|---|---|---|
+| **TC USD del mes**: la tabla `tipo_cambio` solo tiene 2 filas (2026-09-28 y 29) | CU-13 y el campo 25 del 8.1 en las 24 compras USD | el export cae al TC más cercano anterior; sin TC del mes queda vacío |
+| **Provisiones 48**: 0 filas (no hay ninguna CxP con cuenta de control 4811) | CU-5 completo (provisión → llega factura → extorno) | crear 1 pago sin factura y luego vincularla |
+| **NC de compra**: 0 en 1,576 gastos | la mitad "compra" de CU-7 | registrar 1 NC contra una factura existente |
+| **Compra ligada a OC**: 0 gastos con `orden_compra_id` | CU-10 (3-way match) — hay OCs pero ninguna facturada | registrar 1 compra desde una OC aprobada |
+| **Aplicaciones de pago**: 1 sola, y está anulada | CU-4 (pago que jala facturas pendientes) | hacer 1 pago aplicando 2 CxP |
+| **Anotación en período posterior**: `periodo_contable` es NULL en las 1,576 compras (cae al mes de emisión) | el estado `'6'` del 8.1 (crédito fiscal usado tarde) | registrar 1 compra con período de anotación ≠ emisión |
+
+**Resumen honesto para la sesión:** conciliación, diario/mayor, libros PLE, compras, cierre y
+auxiliar están listos con data real. Ventas, detracción con constancia, provisión 48, NC, OC→factura
+y pago aplicado necesitan **6 registros de siembra** (~20 min) o se demuestran capturándolos EN VIVO
+con Kelly, que es probablemente mejor: así ella ve el flujo de alta, no solo el resultado.
+
+Sigue pendiente de Kelly: las 15 facturas reales (bloqueadas por las NC de E001-101/102), un archivo
+SIRE real de importación, y el mes completo del cierre en paralelo (= reseed F4.2).
 
 ---
 
@@ -243,6 +351,7 @@ Un contador revisó los TXT exportados y marcó errores. Estado de cada uno:
 | CUO/correlativo del 8.1 (`1`/`M1`) no cruzaba con el Diario (`AS-202601-0001`/`M0001`) | ✅ Corregido: 8.1/14.1/RCE/RVIE usan el correlativo del asiento de centralización como CUO y todos los libros derivan el M-correlativo con la misma regla. Verificado: 206/206 compras de enero cruzan. |
 | Entidades HTML en glosas (`4 &quot ROJO`) | ✅ Corregido: se decodifican al generar el TXT. |
 | Basura de puntuación en glosas | ✅ Sanitización (control chars, pipes, saltos de línea, espacios dobles) en la única puerta de salida del TXT. |
+| 14.1 campo 27 "tipo de CP que se modifica" fijo en `01` | ⏳ Pendiente chico: leerlo del documento original (importa solo si emite NC sobre boletas) — confirmar con Kelly en CU-7. |
 | Planilla asentada 659 directo contra 10411 (sin pasar por pasivo clase 4) | ⏳ **PENDIENTE (acordado no arreglar hoy)**: la dinámica PCGE sugiere provisionar el gasto por la 41x antes de la salida de bancos. Es un cambio del motor de asientos de planilla — programar junto con el rediseño contable / preguntar a Kelly su dinámica exacta de planillas en la sesión (CU-11). |
 
 ---
