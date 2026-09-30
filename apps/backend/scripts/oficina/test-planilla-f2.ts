@@ -115,6 +115,73 @@ const MES = '2026-07'; // periodo abierto
     console.log('AVISO: solo hay una empresa en la DB; el caso de fuga entre empresas no se ejerció');
   }
 
+  // ── Caso 1 · resolución por scope, vista desde el endpoint ──
+  const detEmp = await db
+    .select({ id: schema.planillaOficinaDetalle.empleadoId })
+    .from(schema.planillaOficinaDetalle)
+    .where(eq(schema.planillaOficinaDetalle.planillaMesId, mesId))
+    .limit(1);
+  const empId = detEmp[0]!.id;
+
+  r = await send('PUT', '/api/oficina/planilla/distribucion', {
+    empleadoId: empId,
+    filas: [{ obraId: obraB.id, pct: 100 }],
+  });
+  assert.equal(r.status, 200, await r.text());
+
+  const dist = await get('/api/oficina/planilla/distribucion').then((x) => x.json());
+  assert.equal(dist.global.length, 1);
+  assert.equal(dist.global[0].obraId, obraA.id);
+  assert.ok(dist.global[0].obraCodigo, 'falta obraCodigo en el global');
+  const mio = dist.porEmpleado.find((p: any) => p.empleadoId === empId);
+  assert.ok(mio, 'el empleado con reglas propias no aparece en porEmpleado');
+  assert.equal(mio.filas.length, 1);
+  assert.equal(mio.filas[0].obraId, obraB.id);
+  assert.ok(mio.empleadoNombre, 'falta empleadoNombre');
+
+  // ── Casos 2/3 · el empleado con regla propia manda; el resto hereda el global y deja resto en oficina ──
+  const prevMix = await get(`/api/oficina/planilla/${mesId}/asiento-preview`).then((x) => x.json());
+  assert.ok(prevMix.lineas.some((l: any) => l.obraId === obraB.id), 'falta la obra del empleado propio');
+  assert.ok(prevMix.lineas.some((l: any) => l.obraId === obraA.id), 'falta la obra del global');
+  assert.ok(
+    prevMix.lineas.some((l: any) => !l.obraId && Number(l.debe) > 0 && l.cuenta.startsWith('6')),
+    'el 40% restante debería quedar en oficina (obraId null)',
+  );
+
+  // ── Caso 11 · validaciones ──
+  const casos: Array<[unknown, string]> = [
+    [{ empleadoId: null, filas: [{ obraId: obraA.id, pct: 60 }, { obraId: obraB.id, pct: 50 }] }, 'Σ > 100'],
+    [{ empleadoId: null, filas: [{ obraId: obraA.id, pct: 0 }] }, 'pct = 0'],
+    [{ empleadoId: null, filas: [{ obraId: obraA.id, pct: -5 }] }, 'pct negativo'],
+    [{ empleadoId: null, filas: [{ obraId: obraA.id, pct: 'abc' }] }, 'pct no numérico'],
+    [{ empleadoId: null, filas: [{ obraId: obraA.id }] }, 'pct ausente'],
+    [{ empleadoId: null, filas: [{ obraId: '00000000-0000-0000-0000-000000000000', pct: 10 }] }, 'obra inexistente'],
+    [{ empleadoId: null, filas: [{ obraId: obraA.id, pct: 10 }, { obraId: obraA.id, pct: 20 }] }, 'obra repetida'],
+    [{ empleadoId: null }, 'filas ausente'],
+  ];
+  for (const [body, que] of casos) {
+    const bad = await send('PUT', '/api/oficina/planilla/distribucion', body);
+    assert.equal(bad.status, 400, `${que} debería dar 400, dio ${bad.status}`);
+  }
+
+  // concepto fuera del conjunto cerrado / cuenta inexistente → 400
+  assert.equal((await send('PUT', '/api/oficina/planilla/concepto-cuenta/inventado', { cuenta: '6211' })).status, 400);
+  assert.equal((await send('PUT', '/api/oficina/planilla/concepto-cuenta/sueldos', { cuenta: '999999' })).status, 400);
+  assert.equal((await send('PUT', '/api/oficina/planilla/concepto-cuenta/sueldos', {})).status, 400);
+
+  // el global sigue intacto tras los rechazos: el PUT reemplaza el scope entero o nada
+  const distTras = await get('/api/oficina/planilla/distribucion').then((x) => x.json());
+  assert.equal(distTras.global.length, 1);
+  assert.equal(Number(distTras.global[0].pct), 60);
+
+  // mapa de conceptos: los 8, todos con cuenta y label
+  const mapaRes = await get('/api/oficina/planilla/concepto-cuenta').then((x) => x.json());
+  assert.equal(mapaRes.conceptos.length, 8);
+  for (const c of mapaRes.conceptos) assert.ok(c.cuenta && c.label, `concepto ${c.concepto} incompleto`);
+
+  // limpiar las reglas del empleado para no ensuciar corridas siguientes
+  await send('PUT', '/api/oficina/planilla/distribucion', { empleadoId: empId, filas: [] });
+
   server.close();
   console.log('planilla-f2 VERDE');
 })().catch((e) => {

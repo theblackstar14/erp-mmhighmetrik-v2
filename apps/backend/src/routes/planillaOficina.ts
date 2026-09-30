@@ -11,7 +11,7 @@ import { requireAuth } from '../middleware/auth.js';
 import { resolverEmpresa } from '../lib/permisos.js';
 import { cargarDerivarCtx, derivarClaseCore } from '../lib/clasificacion.js';
 import { crearAsiento, type LineaIn } from './contabilidad.js';
-import { armarLineasCierre, cargarMapaConceptos, cargarReglas } from '../lib/planillaOficinaAsiento.js';
+import { armarLineasCierre, cargarMapaConceptos, cargarReglas, CONCEPTOS, CONCEPTOS_SET } from '../lib/planillaOficinaAsiento.js';
 import { periodoCerrado } from '../lib/periodos.js';
 import { registrarDocumento, docsDetalle } from '../lib/documentoAdjunto.js';
 import { generarBoletaPdf } from '../lib/boletaOficinaPdf.js';
@@ -1151,6 +1151,174 @@ router.post('/planilla/:mesId/reabrir', requireOficinaEdit, async (req, res) => 
   });
 
   res.json(result);
+});
+
+// ─── GET /api/oficina/planilla/distribucion ──────────────────
+// Reglas de la empresa activa: scope global + scopes por empleado, con nombres legibles.
+router.get('/planilla/distribucion', async (req, res) => {
+  const empresaId = await empresaIdDe(req);
+
+  const rows = await db
+    .select({
+      empleadoId: schema.planillaOficinaDistribucion.empleadoId,
+      obraId: schema.planillaOficinaDistribucion.obraId,
+      pct: schema.planillaOficinaDistribucion.pct,
+      obraCodigo: schema.proyectos.codigo,
+      obraNombre: schema.proyectos.nombre,
+      empleadoNombre: schema.empleados.nombre,
+    })
+    .from(schema.planillaOficinaDistribucion)
+    .innerJoin(schema.proyectos, eq(schema.planillaOficinaDistribucion.obraId, schema.proyectos.id))
+    .leftJoin(schema.empleados, eq(schema.planillaOficinaDistribucion.empleadoId, schema.empleados.id))
+    .where(eq(schema.planillaOficinaDistribucion.empresaId, empresaId));
+
+  type Fila = { obraId: string; obraCodigo: string; obraNombre: string; pct: number };
+  const global: Fila[] = rows
+    .filter((r) => r.empleadoId === null)
+    .map((r) => ({ obraId: r.obraId, obraCodigo: r.obraCodigo, obraNombre: r.obraNombre, pct: Number(r.pct) }))
+    .sort((a, b) => a.obraCodigo.localeCompare(b.obraCodigo));
+
+  const porEmpleadoMap = new Map<string, { empleadoId: string; empleadoNombre: string | null; filas: Fila[] }>();
+  for (const r of rows) {
+    if (!r.empleadoId) continue;
+    const entry = porEmpleadoMap.get(r.empleadoId) ?? {
+      empleadoId: r.empleadoId,
+      empleadoNombre: r.empleadoNombre,
+      filas: [],
+    };
+    entry.filas.push({ obraId: r.obraId, obraCodigo: r.obraCodigo, obraNombre: r.obraNombre, pct: Number(r.pct) });
+    porEmpleadoMap.set(r.empleadoId, entry);
+  }
+
+  res.json({ global, porEmpleado: [...porEmpleadoMap.values()] });
+});
+
+// ─── PUT /api/oficina/planilla/distribucion ──────────────────
+// Reemplaza el SCOPE COMPLETO (borra + inserta en una transacción). empleadoId null = global.
+// Reemplazar en vez de parchear hace la operación idempotente y deja imposible un
+// estado intermedio con Σ > 100. filas: [] borra el scope (vuelve a heredar el global).
+router.put('/planilla/distribucion', requireOficinaEdit, async (req, res) => {
+  const empresaId = await empresaIdDe(req);
+  const b = req.body as { empleadoId?: unknown; filas?: unknown };
+
+  const empleadoId = b.empleadoId === null || b.empleadoId === undefined ? null : String(b.empleadoId);
+  if (!Array.isArray(b.filas)) return res.status(400).json({ error: 'Campo filas requerido (array)' });
+
+  const filas: Array<{ obraId: string; pct: number }> = [];
+  const vistas = new Set<string>();
+  let suma = 0;
+
+  for (const f of b.filas as Array<Record<string, unknown>>) {
+    const obraId = f?.obraId === undefined || f?.obraId === null ? '' : String(f.obraId);
+    if (!obraId) return res.status(400).json({ error: 'Cada fila requiere obraId' });
+    if (vistas.has(obraId)) return res.status(400).json({ error: `Obra repetida: ${obraId}` });
+    vistas.add(obraId);
+
+    // Number(undefined) y Number('abc') son NaN: rechazar ANTES de tocar la columna decimal.
+    if (f.pct === undefined || f.pct === null || !Number.isFinite(Number(f.pct))) {
+      return res.status(400).json({ error: `Campo pct requerido y numérico (obra ${obraId})` });
+    }
+    const pct = Math.round(Number(f.pct) * 100) / 100;
+    if (pct <= 0) return res.status(400).json({ error: `pct debe ser mayor que 0 (obra ${obraId})` });
+    if (pct > 100) return res.status(400).json({ error: `pct no puede pasar de 100 (obra ${obraId})` });
+
+    suma = Math.round((suma + pct) * 100) / 100;
+    filas.push({ obraId, pct });
+  }
+
+  if (suma > 100) return res.status(400).json({ error: `La suma de porcentajes es ${suma}; no puede pasar de 100` });
+
+  if (empleadoId) {
+    const [emp] = await db
+      .select({ id: schema.empleados.id })
+      .from(schema.empleados)
+      .where(eq(schema.empleados.id, empleadoId))
+      .limit(1);
+    if (!emp) return res.status(400).json({ error: 'Empleado no encontrado' });
+  }
+
+  if (filas.length > 0) {
+    const obrasOk = await db
+      .select({ id: schema.proyectos.id })
+      .from(schema.proyectos)
+      .where(inArray(schema.proyectos.id, filas.map((f) => f.obraId)));
+    const set = new Set(obrasOk.map((o) => o.id));
+    const faltante = filas.find((f) => !set.has(f.obraId));
+    if (faltante) return res.status(400).json({ error: `Obra no encontrada: ${faltante.obraId}` });
+  }
+
+  await db.transaction(async (tx) => {
+    await tx.delete(schema.planillaOficinaDistribucion).where(and(
+      eq(schema.planillaOficinaDistribucion.empresaId, empresaId),
+      empleadoId
+        ? eq(schema.planillaOficinaDistribucion.empleadoId, empleadoId)
+        : sql`${schema.planillaOficinaDistribucion.empleadoId} IS NULL`,
+    ));
+    if (filas.length > 0) {
+      await tx.insert(schema.planillaOficinaDistribucion).values(
+        filas.map((f) => ({ empresaId, empleadoId, obraId: f.obraId, pct: String(f.pct) })),
+      );
+    }
+  });
+
+  res.json({ empleadoId, filas, resto: Math.round((100 - suma) * 100) / 100 });
+});
+
+// ─── GET /api/oficina/planilla/concepto-cuenta ───────────────
+// Conjunto CERRADO de conceptos con la cuenta vigente y su descripción del plan.
+router.get('/planilla/concepto-cuenta', async (_req, res) => {
+  const rows = await db.select().from(schema.planillaOficinaConceptoCuenta);
+  const porConcepto = new Map(rows.map((r) => [r.concepto, r.cuenta]));
+
+  const plan = await db
+    .select({ codigo: schema.planContable.codigo, descripcion: schema.planContable.descripcion })
+    .from(schema.planContable);
+  const desc = new Map(plan.map((p) => [p.codigo, p.descripcion]));
+
+  const conceptos = CONCEPTOS.map((c) => {
+    const cuenta = porConcepto.get(c.concepto) ?? c.cuentaDefault;
+    return {
+      concepto: c.concepto,
+      label: c.label,
+      lado: c.lado,
+      reparte: c.reparte,
+      cuenta,
+      cuentaDefault: c.cuentaDefault,
+      cuentaDescripcion: desc.get(cuenta) ?? null,
+    };
+  });
+
+  res.json({ conceptos });
+});
+
+// ─── PUT /api/oficina/planilla/concepto-cuenta/:concepto ─────
+router.put('/planilla/concepto-cuenta/:concepto', requireOficinaEdit, async (req, res) => {
+  const concepto = decodeURIComponent(req.params.concepto ?? '').trim();
+  if (!CONCEPTOS_SET.has(concepto)) {
+    return res.status(400).json({ error: `Concepto '${concepto}' no existe; el conjunto es cerrado` });
+  }
+
+  const cuenta = typeof req.body?.cuenta === 'string' ? req.body.cuenta.trim() : '';
+  if (!cuenta) return res.status(400).json({ error: 'Campo cuenta requerido' });
+
+  const [pc] = await db
+    .select({ codigo: schema.planContable.codigo, activa: schema.planContable.activa })
+    .from(schema.planContable)
+    .where(eq(schema.planContable.codigo, cuenta))
+    .limit(1);
+  if (!pc) return res.status(400).json({ error: `Cuenta ${cuenta} no existe en el plan contable` });
+  if (pc.activa === false) return res.status(400).json({ error: `Cuenta ${cuenta} está inactiva` });
+
+  const [row] = await db
+    .insert(schema.planillaOficinaConceptoCuenta)
+    .values({ concepto, cuenta })
+    .onConflictDoUpdate({
+      target: schema.planillaOficinaConceptoCuenta.concepto,
+      set: { cuenta, actualizadoEn: new Date() },
+    })
+    .returning();
+
+  res.json({ conceptoCuenta: row });
 });
 
 // ─── GET /api/oficina/param-legal ────────────────────────────
