@@ -945,6 +945,9 @@ export const movimientos = pgTable(
     // H3.1 · TC histórico · monedaBase = PEN. tipoCambio snapshot (nunca recalcular). montoBase = monto*tc.
     tipoCambio: decimal('tipo_cambio', { precision: 10, scale: 4 }), // null/1 = PEN
     montoBase: decimal('monto_base', { precision: 14, scale: 2 }), // monto convertido a PEN (para sumas/shadow)
+    // F2 · si el movimiento nace del cierre de una planilla de oficina. Da idempotencia
+    // y hace que el pass 5 de /generar lo salte (el asiento de planilla ya acreditó el 104x).
+    planillaOficinaMesId: uuid('planilla_oficina_mes_id').references(() => planillaOficinaMes.id, { onDelete: 'set null' }),
     createdAt: timestamp('created_at').notNull().defaultNow(),
   },
   (t) => ({
@@ -1482,6 +1485,37 @@ export const planillaOficinaDetalle = pgTable(
   }),
 );
 export type PlanillaOficinaDetalle = typeof planillaOficinaDetalle.$inferSelect;
+
+// ─── F2 · distribución del costo de planilla oficina por obra ──
+// empleado_id null = regla GLOBAL (default para quien no tiene reglas propias).
+// Σ pct ≤ 100 por scope; el resto va a oficina (obra_id null → GG_CORP).
+// El UNIQUE (empresa_id, empleado_id, obra_id) NULLS NOT DISTINCT vive en
+// packages/db/src/alter-planilla-oficina-f2.ts (Drizzle no expresa NULLS NOT DISTINCT).
+export const planillaOficinaDistribucion = pgTable(
+  'planilla_oficina_distribucion',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    empresaId: integer('empresa_id').notNull().references(() => empresas.id),
+    empleadoId: uuid('empleado_id').references(() => empleados.id, { onDelete: 'cascade' }),
+    obraId: uuid('obra_id').notNull().references(() => proyectos.id, { onDelete: 'cascade' }),
+    pct: decimal('pct', { precision: 5, scale: 2 }).notNull(),
+    actualizadoEn: timestamp('actualizado_en').notNull().defaultNow(),
+  },
+  (t) => ({
+    empresaIdx: index('pod_dist_empresa_idx').on(t.empresaId),
+  }),
+);
+export type PlanillaOficinaDistribucion = typeof planillaOficinaDistribucion.$inferSelect;
+
+// ─── F2 · mapa concepto→cuenta del asiento de planilla oficina ──
+// Conjunto de conceptos CERRADO (lo define el código, ver CONCEPTOS en
+// apps/backend/src/lib/planillaOficinaAsiento.ts). Kelly edita la cuenta, no la lista.
+export const planillaOficinaConceptoCuenta = pgTable('planilla_oficina_concepto_cuenta', {
+  concepto: varchar('concepto', { length: 40 }).primaryKey(),
+  cuenta: varchar('cuenta', { length: 10 }).notNull().references(() => planContable.codigo),
+  actualizadoEn: timestamp('actualizado_en').notNull().defaultNow(),
+});
+export type PlanillaOficinaConceptoCuenta = typeof planillaOficinaConceptoCuenta.$inferSelect;
 
 export const adelantoOficina = pgTable(
   'adelanto_oficina',
