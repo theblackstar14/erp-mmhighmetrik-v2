@@ -3,6 +3,7 @@ import { and, asc, desc, eq, gt, inArray, ne, sql } from 'drizzle-orm';
 import type { NextFunction, Request, Response } from 'express';
 import { Router } from 'express';
 import multer from 'multer';
+import { audit } from '../lib/audit.js';
 import { calcularDetalleOficina } from '../lib/planillaOficinaCalc.js';
 import { calcularRta5ta } from '../lib/rta5taCalc.js';
 import { resolverParamLegal, cargarTasasAfp } from '../lib/paramLegalOficina.js';
@@ -211,6 +212,7 @@ router.post('/planilla/:mesId/calcular', requireOficinaEdit, async (req, res) =>
     .limit(1);
 
   if (!mesRow) return res.status(404).json({ error: 'Planilla mes no encontrada' });
+  if (mesRow.empresaId !== await empresaIdDe(req)) return res.status(404).json({ error: 'Planilla mes no encontrada' });
   if (!['borrador', 'calculada'].includes(mesRow.estado)) {
     return res.status(422).json({ error: `No se puede calcular en estado '${mesRow.estado}'` });
   }
@@ -783,6 +785,7 @@ router.get('/planilla/:mesId/asiento-preview', async (req, res) => {
     .where(eq(schema.planillaOficinaMes.id, mesId!))
     .limit(1);
   if (!mesRow) return res.status(404).json({ error: 'Planilla mes no encontrada' });
+  if (mesRow.empresaId !== await empresaIdDe(req)) return res.status(404).json({ error: 'Planilla mes no encontrada' });
 
   const detalle = await db
     .select()
@@ -843,6 +846,7 @@ router.post('/planilla/:mesId/cerrar', requireOficinaEdit, async (req, res) => {
     .limit(1);
 
   if (!mesRow) return res.status(404).json({ error: 'Planilla mes no encontrada' });
+  if (mesRow.empresaId !== await empresaIdDe(req)) return res.status(404).json({ error: 'Planilla mes no encontrada' });
   if (mesRow.estado !== 'calculada') {
     return res.status(400).json({ error: `Solo se puede cerrar en estado 'calculada'; estado actual: '${mesRow.estado}'` });
   }
@@ -941,6 +945,15 @@ router.post('/planilla/:mesId/cerrar', requireOficinaEdit, async (req, res) => {
     }
   });
 
+  // m1 · rechazar si algún empleado tiene neto negativo antes de construir el asiento
+  const netoNegativo = detalleRows.find((d) => Number(d.netoPago ?? 0) < 0);
+  if (netoNegativo) {
+    return res.status(400).json({
+      error: `El empleado ${netoNegativo.nombre ?? netoNegativo.empleadoId} tiene neto negativo (${Number(netoNegativo.netoPago).toFixed(2)}); corrige los descuentos antes de cerrar`,
+      empleadoId: netoNegativo.empleadoId,
+    });
+  }
+
   // ── Step 3: Build accounting lines (F2 · misma función que asiento-preview) ──
   const [reglas, mapaConceptos] = await Promise.all([
     cargarReglas(mesRow.empresaId),
@@ -968,6 +981,23 @@ router.post('/planilla/:mesId/cerrar', requireOficinaEdit, async (req, res) => {
 
   let asientoId: string;
   if (existente) {
+    // M3 · verificar que el asiento existente coincide con la decision de pago de esta llamada.
+    // "Pago de planilla · banco" identifica la pata de la cuenta bancaria (104x haber).
+    const pagoLineas = await db.select({ n: sql<number>`count(*)::int` })
+      .from(schema.asientosLineas)
+      .where(and(
+        eq(schema.asientosLineas.asientoId, existente.id),
+        cuentaBanco
+          ? eq(schema.asientosLineas.cuenta, cuentaBanco)
+          : eq(schema.asientosLineas.descripcion, 'Pago de planilla · banco'),
+      ));
+    const tienePago = Number(pagoLineas[0]?.n ?? 0) > 0;
+    if (!!cuentaBanco !== tienePago) {
+      return res.status(409).json({
+        error: 'Existe un asiento previo de esta planilla con otra decisión de pago; reabre el mes antes de cerrar con una cuenta distinta',
+        asientoId: existente.id,
+      });
+    }
     // Reuse existing asiento — no duplicate created on retry
     asientoId = existente.id;
   } else {
@@ -1116,6 +1146,7 @@ router.post('/planilla/:mesId/reabrir', requireOficinaEdit, async (req, res) => 
     .limit(1);
 
   if (!mesRow) return res.status(404).json({ error: 'Planilla mes no encontrada' });
+  if (mesRow.empresaId !== await empresaIdDe(req)) return res.status(404).json({ error: 'Planilla mes no encontrada' });
   if (mesRow.estado !== 'cerrada') {
     return res.status(400).json({ error: `Solo se puede reabrir en estado 'cerrada'; estado actual: '${mesRow.estado}'` });
   }
@@ -1130,27 +1161,31 @@ router.post('/planilla/:mesId/reabrir', requireOficinaEdit, async (req, res) => 
     return res.status(423).json({ error: `Periodo contable ${periodo} cerrado; reabrelo primero` });
   }
 
-  // F2 · el movimiento del pago se borra al reabrir, salvo que ya este conciliado:
+  // F2 · el movimiento del pago se borra al reabrir, salvo que aun este ligado al extracto:
   // borrarlo desharıa en silencio una conciliacion cerrada (extracto_lineas.movimiento_id
   // es ON DELETE SET NULL, asi que la linea del banco quedaria suelta sin aviso).
+  // Solo se borran movimientos vivos (anulado = false); los anulados son historia de auditoria.
   const movsPlanilla = await db
     .select({ id: schema.movimientos.id })
     .from(schema.movimientos)
-    .where(eq(schema.movimientos.planillaOficinaMesId, mesId!));
+    .where(and(
+      eq(schema.movimientos.planillaOficinaMesId, mesId!),
+      eq(schema.movimientos.anulado, false),
+    ));
 
   if (movsPlanilla.length > 0) {
     const ids = movsPlanilla.map((m) => m.id);
-    const conciliadas = await db
-      .select({ id: schema.extractoLineas.id, movimientoId: schema.extractoLineas.movimientoId })
+    const ligadas = await db
+      .select({ id: schema.extractoLineas.id, estado: schema.extractoLineas.estado })
       .from(schema.extractoLineas)
       .where(and(
         inArray(schema.extractoLineas.movimientoId, ids),
-        eq(schema.extractoLineas.estado, 'conciliado'),
+        inArray(schema.extractoLineas.estado, ['conciliado', 'diferencia']),
       ));
-    if (conciliadas.length > 0) {
+    if (ligadas.length > 0) {
       return res.status(409).json({
-        error: 'El movimiento del pago de esta planilla esta conciliado con el extracto bancario; desconcilialo antes de reabrir',
-        lineasConciliadas: conciliadas.map((c) => c.id),
+        error: 'El movimiento del pago de esta planilla esta conciliado o en diferencia con el extracto bancario; desconcilialo antes de reabrir',
+        lineasLigadas: ligadas,
       });
     }
   }
@@ -1229,6 +1264,16 @@ router.post('/planilla/:mesId/reabrir', requireOficinaEdit, async (req, res) => 
 
     return { mes: updatedMes };
   });
+
+  // Audit the hard-delete of the live movimiento (M2 · H1.3 compliancy)
+  for (const mov of movsPlanilla) {
+    await audit(req, {
+      action: 'hard_delete',
+      entityType: 'movimiento',
+      entityId: mov.id,
+      motivo: 'reapertura de planilla oficina ' + mesRow.mes,
+    });
+  }
 
   res.json(result);
 });
@@ -1341,6 +1386,8 @@ router.put('/planilla/distribucion', requireOficinaEdit, async (req, res) => {
     }
   });
 
+  await audit(req, { action: 'update_config', entityType: 'planilla_oficina_distribucion', entityId: empleadoId ?? 'global', after: { empresaId, empleadoId, filas } });
+
   res.json({ empleadoId, filas, resto: Math.round((100 - suma) * 100) / 100 });
 });
 
@@ -1397,6 +1444,8 @@ router.put('/planilla/concepto-cuenta/:concepto', requireOficinaEdit, async (req
       set: { cuenta, actualizadoEn: new Date() },
     })
     .returning();
+
+  await audit(req, { action: 'update_config', entityType: 'planilla_oficina_concepto_cuenta', entityId: concepto, after: { concepto, cuenta } });
 
   res.json({ conceptoCuenta: row });
 });

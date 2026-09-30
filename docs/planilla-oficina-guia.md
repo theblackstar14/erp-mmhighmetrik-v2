@@ -150,7 +150,7 @@ Al cerrar el mes se puede indicar una cuenta bancaria en soles (PEN). Cuando se 
 
 Si no se selecciona cuenta bancaria, el neto queda pendiente en la cuenta `411` y no nace ningún movimiento de tesorería.
 
-La vista previa del asiento (boton "Vista previa del asiento") refleja exactamente las líneas que se van a postear. La UI muestra el botón de confirmación solo cuando el asiento cuadra (suma debe = suma haber).
+La vista previa del asiento se renderiza automáticamente al abrir el diálogo de cierre; no hay un botón separado para solicitarla. Refleja exactamente las líneas que se van a postear. La UI muestra el botón de confirmación solo cuando el asiento cuadra (suma debe = suma haber).
 
 ### 7.4 Reapertura del mes
 

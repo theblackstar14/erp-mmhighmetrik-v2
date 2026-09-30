@@ -120,7 +120,7 @@ export function armarLineasCierre({ detalle, reglas, mapa, cuentaBanco }: ArmarL
 
   // Haber · pasivos agregados, SIN dimensión obra (la deuda con la AFP no es de una obra)
   const haber = (concepto: string, monto: number) => {
-    if (monto < MIN) return;
+    if (Math.abs(monto) < MIN) return;
     const cuenta = cta(concepto);
     lineas.push({
       cuenta,

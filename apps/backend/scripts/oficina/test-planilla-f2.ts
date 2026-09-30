@@ -12,6 +12,7 @@ import { authMiddleware } from '../../src/middleware/auth.js';
 import planillaOficinaRoutes from '../../src/routes/planillaOficina.js';
 import contabilidadRoutes from '../../src/routes/contabilidad.js';
 import { lucia } from '../../src/auth.js';
+import { resolverDistribucion, repartir, round2 } from '../../src/lib/planillaOficinaDistribucion.js';
 
 const USER = 'af36a9b1-3b8e-4471-99d0-d08cf271187d'; // admin
 const MES = '2026-07'; // periodo abierto
@@ -332,8 +333,55 @@ const MES = '2026-07'; // periodo abierto
   const movsFinal = await db.select().from(schema.movimientos).where(eq(schema.movimientos.planillaOficinaMesId, mesId));
   assert.equal(movsFinal.length, 1, 'recerrar debe dejar exactamente 1 movimiento');
 
-  // cleanup: reabrir para dejar la planilla en estado calculada
-  await send('POST', `/api/oficina/planilla/${mesId}/reabrir`);
+  // ── Caso 13 (M1) · estado 'diferencia' en extracto también bloquea la reapertura ──
+  // La planilla debe estar cerrada para este caso. movsFinal[0] es el movimiento vivo.
+  const movsFinalId = movsFinal[0]!.id;
+  const [extractoParaDif] = await db.select().from(schema.extractosBancarios).limit(1);
+  if (extractoParaDif) {
+    const [lineaDif] = await db
+      .insert(schema.extractoLineas)
+      .values({
+        extractoId: extractoParaDif.id,
+        fecha: `${MES}-30`,
+        descripcion: 'test F2 M1 diferencia',
+        monto: String(-neto),
+        estado: 'diferencia',
+        movimientoId: movsFinalId,
+      })
+      .returning();
+
+    const bloqueadoDif = await send('POST', `/api/oficina/planilla/${mesId}/reabrir`);
+    assert.equal(bloqueadoDif.status, 409, `estado 'diferencia' debería bloquear reapertura con 409, dio ${bloqueadoDif.status}`);
+    const bloqueadoBody = await bloqueadoDif.json() as { lineasLigadas?: Array<{ id: string; estado: string }> };
+    assert.ok(Array.isArray(bloqueadoBody.lineasLigadas) && bloqueadoBody.lineasLigadas.length > 0, 'falta lineasLigadas en el 409');
+    assert.ok(bloqueadoBody.lineasLigadas!.some((l) => l.id === lineaDif!.id), 'lineasLigadas no incluye la linea de diferencia');
+    assert.ok(bloqueadoBody.lineasLigadas!.some((l) => l.estado === 'diferencia'), 'lineasLigadas debe incluir el estado de la linea');
+
+    // limpiar la linea y verificar que reabrir ahora da 200
+    await db.delete(schema.extractoLineas).where(eq(schema.extractoLineas.id, lineaDif!.id));
+    const desbloqueado = await send('POST', `/api/oficina/planilla/${mesId}/reabrir`);
+    assert.equal(desbloqueado.status, 200, `tras eliminar la linea diferencia, reabrir debería dar 200, dio ${desbloqueado.status}`);
+  } else {
+    console.log('AVISO: sin extractos bancarios en la DB; el caso 13 no se ejercio');
+    // Si no hay extractos, reabrir para dejar la planilla en estado calculada
+    await send('POST', `/api/oficina/planilla/${mesId}/reabrir`);
+  }
+
+  // ── Caso 14 (puro JS) · resolverDistribucion con Σ > 100: el reparto suma igual al total ──
+  // No necesita DB: verifica que repartir no pierde ni crea céntimos aunque las reglas sumen > 100.
+  {
+    const reglasSobreHundred = [
+      { empleadoId: null, obraId: 'obra-a', pct: 60 },
+      { empleadoId: null, obraId: 'obra-b', pct: 40.01 },
+    ];
+    const slices = resolverDistribucion('emp-x', reglasSobreHundred);
+    // Con Σ = 100.01, el resto = -0.01 < 0, por lo que la oficina no se añade.
+    // La última obra absorbe el ajuste para que Σ porciones == total.
+    const totalPrueba = 1234.56;
+    const porciones = repartir(totalPrueba, slices);
+    const sumaP = round2(porciones.reduce((s, p) => s + p.monto, 0));
+    assert.equal(sumaP, totalPrueba, `Σ porciones (${sumaP}) ≠ total (${totalPrueba}) con Σpct > 100`);
+  }
 
   server.close();
   console.log('planilla-f2 VERDE');

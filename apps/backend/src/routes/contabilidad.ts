@@ -2030,7 +2030,7 @@ async function computeDryRun(periodo: string, cutover: string) {
     .where(and(eq(schema.asientos.periodo, periodo), inArray(schema.asientos.origen, [...LEGACY_CAJA_ORIGENES]), gte(schema.asientos.fecha, cutover), dsql`${schema.asientos.status} != 'anulado'`));
   // movimientos que tomarían ownership (fecha >= cutover · misma regla que /generar)
   const movs = await db.select().from(schema.movimientos).where(and(lte(schema.movimientos.fecha, fechaFin), ne(schema.movimientos.anulado, true)));
-  const movPostCutover = movs.filter((m) => movOwnsCaja(String(m.fecha).slice(0, 10), cutover));
+  const movPostCutover = movs.filter((m) => movOwnsCaja(String(m.fecha).slice(0, 10), cutover) && !m.planillaOficinaMesId);
   const movConCuenta = movPostCutover.filter((m) => m.cuentaId);
   const huerfanos = shadow.realDiffs.filter((d) => d.tipo === 'falta_movimiento');
   const conflictos = shadow.realDiffs.filter((d) => d.tipo === 'cuenta_mal_inferida');

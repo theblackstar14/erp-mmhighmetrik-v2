@@ -411,6 +411,12 @@ router.post('/movimientos/:id/anular', async (req, res) => {
   if (!prev) return res.status(404).json({ error: 'Movimiento no encontrado' });
   if (prev.anulado) return res.status(400).json({ error: 'Movimiento ya anulado' });
   if (prev.lockedAt) return res.status(423).json({ error: 'Movimiento congelado por cierre de periodo · reabrir el periodo primero' }); // H2.1
+  if (prev.planillaOficinaMesId) {
+    return res.status(409).json({
+      error: 'Este movimiento es el pago de una planilla de oficina cerrada; reabre la planilla (POST /oficina/planilla/<id>/reabrir) para deshacer el pago',
+      planillaOficinaMesId: prev.planillaOficinaMesId,
+    });
+  }
   if (await bloqueoPeriodo(String(prev.fecha), res)) return; // no anular en periodo cerrado
   const [mov] = await db.update(schema.movimientos)
     .set({ anulado: true, anuladoPor: req.user!.id, anuladoEn: new Date(), anuladoMotivo: motivo })
