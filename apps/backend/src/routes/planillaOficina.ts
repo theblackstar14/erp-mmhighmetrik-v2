@@ -1179,6 +1179,161 @@ router.post('/planilla/:mesId/reabrir', requireOficinaEdit, async (req, res) => 
   res.json(result);
 });
 
+// ─── GET /api/oficina/param-legal ────────────────────────────
+// Returns all versioned legal param rows ordered by fechaVigencia desc.
+router.get('/param-legal', async (_req, res) => {
+  const rows = await db
+    .select()
+    .from(schema.paramLegalOficina)
+    .orderBy(desc(schema.paramLegalOficina.fechaVigencia));
+  res.json({ params: rows });
+});
+
+// ─── PUT /api/oficina/param-legal ────────────────────────────
+// Upsert one row by fechaVigencia (ISO date string YYYY-MM-DD).
+router.put('/param-legal', requireOficinaEdit, async (req, res) => {
+  const b = req.body as Record<string, unknown>;
+  const { fechaVigencia, rmv, uit, topeRma, pctEssalud, pctOnp, pctAfpAporte, pctAsigFamiliar } = b;
+
+  if (!fechaVigencia || typeof fechaVigencia !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(fechaVigencia)) {
+    return res.status(400).json({ error: 'fechaVigencia requerida (YYYY-MM-DD)' });
+  }
+  const numFields: [string, unknown][] = [
+    ['rmv', rmv], ['uit', uit], ['topeRma', topeRma],
+    ['pctEssalud', pctEssalud], ['pctOnp', pctOnp],
+    ['pctAfpAporte', pctAfpAporte], ['pctAsigFamiliar', pctAsigFamiliar],
+  ];
+  for (const [field, val] of numFields) {
+    if (val !== undefined && !Number.isFinite(Number(val))) {
+      return res.status(400).json({ error: `Campo '${field}' debe ser un número finito` });
+    }
+  }
+
+  const values = {
+    fechaVigencia,
+    rmv: String(Number(rmv)),
+    uit: String(Number(uit)),
+    topeRma: String(Number(topeRma)),
+    pctEssalud: String(Number(pctEssalud)),
+    pctOnp: String(Number(pctOnp)),
+    pctAfpAporte: String(Number(pctAfpAporte)),
+    pctAsigFamiliar: String(Number(pctAsigFamiliar)),
+  };
+
+  const [row] = await db
+    .insert(schema.paramLegalOficina)
+    .values(values)
+    .onConflictDoUpdate({
+      target: schema.paramLegalOficina.fechaVigencia,
+      set: {
+        rmv: values.rmv, uit: values.uit, topeRma: values.topeRma,
+        pctEssalud: values.pctEssalud, pctOnp: values.pctOnp,
+        pctAfpAporte: values.pctAfpAporte, pctAsigFamiliar: values.pctAsigFamiliar,
+      },
+    })
+    .returning();
+
+  res.json({ param: row });
+});
+
+// ─── PUT /api/oficina/afp-tasas/:afp ─────────────────────────
+// Update AFP rates by AFP name (exact match, case-insensitive strip).
+router.put('/afp-tasas/:afp', requireOficinaEdit, async (req, res) => {
+  const afpName = decodeURIComponent(req.params.afp ?? '').trim();
+  if (!afpName) return res.status(400).json({ error: 'Nombre de AFP requerido' });
+
+  const b = req.body as Record<string, unknown>;
+  const numFields: [string, unknown][] = [
+    ['pctAporte', b.pctAporte], ['pctSeguro', b.pctSeguro],
+    ['pctComisionFlujo', b.pctComisionFlujo], ['pctComisionMixta', b.pctComisionMixta],
+  ];
+  for (const [field, val] of numFields) {
+    if (val !== undefined && !Number.isFinite(Number(val))) {
+      return res.status(400).json({ error: `Campo '${field}' debe ser un número finito` });
+    }
+  }
+
+  // Verify the AFP exists
+  const rows = await db.select().from(schema.afpTasas);
+  const match = rows.find((r) => r.afp.trim().toUpperCase() === afpName.toUpperCase());
+  if (!match) return res.status(404).json({ error: `AFP '${afpName}' no encontrada` });
+
+  const set: Record<string, string> = {};
+  if (b.pctAporte !== undefined)       set.pctAporte       = String(frac(b.pctAporte));
+  if (b.pctSeguro !== undefined)       set.pctSeguro       = String(frac(b.pctSeguro));
+  if (b.pctComisionFlujo !== undefined) set.pctComisionFlujo = String(frac(b.pctComisionFlujo));
+  if (b.pctComisionMixta !== undefined) set.pctComisionMixta = String(frac(b.pctComisionMixta));
+
+  const [updated] = await db
+    .update(schema.afpTasas)
+    .set(set)
+    .where(eq(schema.afpTasas.id, match.id))
+    .returning();
+
+  res.json({ afp: updated });
+});
+
+// ─── GET /api/oficina/renta5ta-baseline ──────────────────────
+// Query: ?empleadoId=&anio=
+router.get('/renta5ta-baseline', async (req, res) => {
+  const { empleadoId, anio } = req.query as { empleadoId?: string; anio?: string };
+  if (!empleadoId) return res.status(400).json({ error: 'Parámetro empleadoId requerido' });
+  if (!anio || !Number.isFinite(Number(anio))) return res.status(400).json({ error: 'Parámetro anio requerido' });
+
+  const [row] = await db
+    .select()
+    .from(schema.renta5taBaseline)
+    .where(and(
+      eq(schema.renta5taBaseline.empleadoId, empleadoId),
+      eq(schema.renta5taBaseline.anio, Number(anio)),
+    ))
+    .limit(1);
+
+  res.json({ baseline: row ?? null });
+});
+
+// ─── PUT /api/oficina/renta5ta-baseline ──────────────────────
+// Upsert acumuladoImportado + retencionesImportadas for one employee/year.
+// Query: ?empleadoId=&anio=
+router.put('/renta5ta-baseline', requireOficinaEdit, async (req, res) => {
+  const { empleadoId, anio } = req.query as { empleadoId?: string; anio?: string };
+  if (!empleadoId) return res.status(400).json({ error: 'Parámetro empleadoId requerido' });
+  if (!anio || !Number.isFinite(Number(anio))) return res.status(400).json({ error: 'Parámetro anio requerido' });
+
+  const b = req.body as Record<string, unknown>;
+  const { acumuladoImportado, retencionesImportadas } = b;
+
+  if (acumuladoImportado === undefined || !Number.isFinite(Number(acumuladoImportado))) {
+    return res.status(400).json({ error: 'acumuladoImportado requerido (número)' });
+  }
+  if (retencionesImportadas === undefined || !Number.isFinite(Number(retencionesImportadas))) {
+    return res.status(400).json({ error: 'retencionesImportadas requerido (número)' });
+  }
+
+  const [row] = await db
+    .insert(schema.renta5taBaseline)
+    .values({
+      empleadoId,
+      anio: Number(anio),
+      acumuladoImportado: String(Number(acumuladoImportado)),
+      retencionesImportadas: String(Number(retencionesImportadas)),
+      importadoPor: req.user?.id,
+      importadoEn: new Date(),
+    })
+    .onConflictDoUpdate({
+      target: [schema.renta5taBaseline.empleadoId, schema.renta5taBaseline.anio],
+      set: {
+        acumuladoImportado: String(Number(acumuladoImportado)),
+        retencionesImportadas: String(Number(retencionesImportadas)),
+        importadoPor: req.user?.id,
+        importadoEn: new Date(),
+      },
+    })
+    .returning();
+
+  res.json({ baseline: row });
+});
+
 // ─── POST /api/oficina/documentos/upload ─────────────────────
 // Multipart: field 'file' + body fields entidadTipo, entidadId, docTipo.
 // For planilla_oficina_detalle entities, derives subPath from mes+dni.

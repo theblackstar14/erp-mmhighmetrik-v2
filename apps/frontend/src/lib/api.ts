@@ -364,6 +364,22 @@ export const api = {
     docsDetalleOficina: (detalleId: string) => req<{ boleta: boolean; comprobante: boolean }>(`/api/oficina/planilla-detalle/${detalleId}/docs`),
     getConfigOficina: () => req<ConfigOficina>(`/api/oficina/config-planilla`),
     putConfigOficina: (data: Partial<ConfigOficina>) => req<ConfigOficina>(`/api/oficina/config-planilla`, { method: 'PUT', body: JSON.stringify(data) }),
+
+    // Config del motor v2: params legales por vigencia
+    listParamLegal: () => req<{ params: ParamLegalOficina[] }>(`/api/oficina/param-legal`),
+    upsertParamLegal: (data: Omit<ParamLegalOficina, 'id'>) =>
+      req<{ param: ParamLegalOficina }>(`/api/oficina/param-legal`, { method: 'PUT', body: JSON.stringify(data) }),
+
+    // Config del motor v2: tasas AFP
+    putAfpTasa: (afp: string, data: { pctAporte?: number; pctSeguro?: number; pctComisionFlujo?: number; pctComisionMixta?: number }) =>
+      req<{ afp: AfpTasa }>(`/api/oficina/afp-tasas/${encodeURIComponent(afp)}`, { method: 'PUT', body: JSON.stringify(data) }),
+
+    // Config del motor v2: baseline renta 5ta por empleado/año
+    getRenta5taBaseline: (empleadoId: string, anio: number) =>
+      req<{ baseline: Renta5taBaseline | null }>(`/api/oficina/renta5ta-baseline?empleadoId=${encodeURIComponent(empleadoId)}&anio=${anio}`),
+    upsertRenta5taBaseline: (empleadoId: string, anio: number, data: { acumuladoImportado: number; retencionesImportadas: number }) =>
+      req<{ baseline: Renta5taBaseline }>(`/api/oficina/renta5ta-baseline?empleadoId=${encodeURIComponent(empleadoId)}&anio=${anio}`, { method: 'PUT', body: JSON.stringify(data) }),
+
     subirDocumentoOficina: async (form: FormData): Promise<{ ok: boolean; nasPath: string }> => {
       const res = await fetch(`${API_BASE}/api/oficina/documentos/upload`, { method: 'POST', credentials: 'include', body: form });
       if (!res.ok) { const b = await res.json().catch(() => ({})); throw new ApiError(res.status, b.error ?? res.statusText, b); }
@@ -2342,7 +2358,7 @@ export type PlanillaDashboard = {
   dmActivos: number;
   semana: { mes: string | null; fechaInicio: string; fechaFin: string } | null;
 };
-export type AfpTasa = { id: string; afp: string; pctAporte: string; pctComision: string; pctSeguro: string };
+export type AfpTasa = { id: string; afp: string; pctAporte: string; pctComision: string; pctSeguro: string; pctComisionFlujo: string; pctComisionMixta: string };
 export type ConfigPlanilla = { id: string; uit: string; pctEsSalud: string; pctOnp: string; pctSencico: string; pctConafovicer: string; pctSctrSalud: string; pctSctrPension: string; pctBonifAltura: string; pctBonifAgua: string; asignEscolarJornales: string };
 export type Asistencia = { id: string; empleadoId: string; semanaId: string | null; proyectoId: string | null; fecha: string; tipo: string };
 export type PlanillaSemana = { id: string; proyectoId: string | null; fechaInicio: string; fechaFin: string; mes: string | null; estado: string };
@@ -2406,4 +2422,13 @@ export type AdelantoOficina = {
 };
 export type ConfigOficina = {
   pctEssalud: number; pctOnp: number; pctAfpAporte: number; rmv: number; uit: number; topeSeguroAfp: number; horasMesBase: number;
+};
+export type ParamLegalOficina = {
+  id: string; fechaVigencia: string; rmv: string; uit: string; topeRma: string;
+  pctEssalud: string; pctOnp: string; pctAfpAporte: string; pctAsigFamiliar: string;
+};
+export type Renta5taBaseline = {
+  id: string; empleadoId: string; anio: number;
+  acumuladoImportado: string; retencionesImportadas: string;
+  importadoPor: string | null; importadoEn: string | null;
 };
