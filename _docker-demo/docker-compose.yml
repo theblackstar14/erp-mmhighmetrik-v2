@@ -29,8 +29,13 @@ services:
     env_file: .env            # ← copia aquí tu .env (trae GEMINI/ANTHROPIC/NAS keys)
     environment:              # estas mandan sobre el .env (DB apunta al contenedor)
       DATABASE_URL: postgresql://erp:erp@db:5432/erp_mmh_test
-      CORS_ORIGIN: http://localhost:${APP_PORT:-3001}
+      # PUBLIC_ORIGIN = como llega el navegador. En una PC local queda el default; para el VPS se
+      # exporta antes del `up` (ej. PUBLIC_ORIGIN=http://144.126.150.128:3001).
+      CORS_ORIGIN: ${PUBLIC_ORIGIN:-http://localhost:3001}
       NODE_ENV: production
+      # Sin HTTPS el navegador DESCARTA la cookie `secure` y el login rebota sin mensaje. Servido
+      # por IP → 0. Con dominio y certificado, subirlo a 1.
+      COOKIE_SECURE: "${COOKIE_SECURE:-0}"
       SERVE_STATIC: "1"
       FRONTEND_DIST: /app/apps/frontend/dist
       PORT: "3001"

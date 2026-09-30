@@ -29,6 +29,11 @@ const envSchema = z.object({
   MPXJ_LIB_PATH: z.string().optional(),
   JAVA_BIN: z.string().default('java'),
   CORS_ORIGIN: z.string().default('http://localhost:5173'),
+  // La cookie de sesión va `secure` en producción, y el navegador la descarta si la conexión no es
+  // HTTPS: el login responde 200 y la app rebota al login sin decir por qué. Para una demo servida
+  // por IP sin certificado hay que poder bajarla A PROPÓSITO. Default = el de siempre (secure en
+  // producción); solo un COOKIE_SECURE=0 explícito la apaga.
+  COOKIE_SECURE: z.enum(['0', '1']).optional(),
 });
 
 export const env = envSchema.parse(process.env);
