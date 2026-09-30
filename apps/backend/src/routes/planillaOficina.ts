@@ -12,7 +12,7 @@ import { requireAuth } from '../middleware/auth.js';
 import { resolverEmpresa } from '../lib/permisos.js';
 import { cargarDerivarCtx, derivarClaseCore } from '../lib/clasificacion.js';
 import { crearAsiento, type LineaIn } from './contabilidad.js';
-import { armarLineasCierre, cargarMapaConceptos, cargarReglas, CONCEPTOS, CONCEPTOS_SET } from '../lib/planillaOficinaAsiento.js';
+import { armarLineasCierre, cargarMapaConceptos, cargarReglas, CONCEPTOS, CONCEPTOS_SET, DESC_PAGO_BANCO } from '../lib/planillaOficinaAsiento.js';
 import { periodoCerrado } from '../lib/periodos.js';
 import { registrarDocumento, docsDetalle } from '../lib/documentoAdjunto.js';
 import { generarBoletaPdf } from '../lib/boletaOficinaPdf.js';
@@ -982,14 +982,14 @@ router.post('/planilla/:mesId/cerrar', requireOficinaEdit, async (req, res) => {
   let asientoId: string;
   if (existente) {
     // M3 · verificar que el asiento existente coincide con la decision de pago de esta llamada.
-    // "Pago de planilla · banco" identifica la pata de la cuenta bancaria (104x haber).
+    // DESC_PAGO_BANCO identifica la pata de la cuenta bancaria (104x haber).
     const pagoLineas = await db.select({ n: sql<number>`count(*)::int` })
       .from(schema.asientosLineas)
       .where(and(
         eq(schema.asientosLineas.asientoId, existente.id),
         cuentaBanco
           ? eq(schema.asientosLineas.cuenta, cuentaBanco)
-          : eq(schema.asientosLineas.descripcion, 'Pago de planilla · banco'),
+          : eq(schema.asientosLineas.descripcion, DESC_PAGO_BANCO),
       ));
     const tienePago = Number(pagoLineas[0]?.n ?? 0) > 0;
     if (!!cuentaBanco !== tienePago) {

@@ -29,6 +29,10 @@ export const CONCEPTOS_SET = new Set<string>(CONCEPTOS.map((c) => c.concepto));
 // Umbral de emisión: por debajo de medio céntimo la línea no existe.
 const MIN = 0.005;
 
+// Descripción de la pata bancaria del pago. `cerrar` la consulta para saber si un
+// asiento ya existente se cerró pagando o sin pagar: dato, no cadena decorativa.
+export const DESC_PAGO_BANCO = 'Pago de planilla · banco';
+
 export type DetalleCierre = {
   empleadoId: string;
   cuentaContable: string | null;
@@ -140,6 +144,7 @@ export function armarLineasCierre({ detalle, reglas, mapa, cuentaBanco }: ArmarL
   haber('neto_por_pagar', totNeto);
 
   // Pago (opción A): el 411 queda escrito en los dos lados — se lee qué se devengó y qué se pagó.
+  // DESC_PAGO_BANCO identifica la pata bancaria; cerrar la usa para detectar un asiento ya pagado.
   // Si totNeto < MIN no hay nada que pagar: ni líneas de pago ni movimiento.
   if (cuentaBanco && totNeto >= MIN) {
     const c411 = cta('neto_por_pagar');
@@ -148,7 +153,7 @@ export function armarLineasCierre({ detalle, reglas, mapa, cuentaBanco }: ArmarL
       cuentaContable: c411, obraId: null, cuentaOrigen: 'AUTOMATICO',
     });
     lineas.push({
-      cuenta: cuentaBanco, descripcion: 'Pago de planilla · banco', debe: 0, haber: totNeto,
+      cuenta: cuentaBanco, descripcion: DESC_PAGO_BANCO, debe: 0, haber: totNeto,
       cuentaContable: cuentaBanco, obraId: null, cuentaOrigen: 'AUTOMATICO',
     });
   }
