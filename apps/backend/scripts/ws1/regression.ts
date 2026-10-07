@@ -164,6 +164,9 @@ function ok(msg: string) { console.log(`  ✓ ${msg}`); }
     step('N↔M aplicaciones + saldo derivado (ORM write, rolled-back)');
     const SENTINEL = new Error('__rollback__');
     let residuo = -1;
+    // Baseline: la tabla ya no es exclusiva de WS1 (hoy la llenan movimientos y notas de
+    // crédito), así que "residuo" es lo que SUMÓ esta prueba, no el total de la tabla.
+    const [{ dn: aplicAntes }] = await db.select({ dn: dsql<number>`count(*)::int` }).from(schema.aplicacionDocumento);
     try {
       await db.transaction(async (tx) => {
         const docs = await tx.select().from(schema.documentoPendiente).where(eq(schema.documentoPendiente.empresaId, MG_ID)).limit(2);
@@ -193,7 +196,7 @@ function ok(msg: string) { console.log(`  ✓ ${msg}`); }
       });
     } catch (e) { if (e !== SENTINEL) throw e; }
     [{ dn: residuo }] = await db.select({ dn: dsql<number>`count(*)::int` }).from(schema.aplicacionDocumento) as any;
-    assert.equal(Number(residuo), 0, 'la prueba N↔M no debe dejar residuo (rolled-back)');
+    assert.equal(Number(residuo), Number(aplicAntes), `la prueba N↔M no debe dejar residuo (rolled-back): ${aplicAntes} → ${residuo}`);
     assert.equal(await aperturaCount(), 1, 'apertura MG intacta tras la prueba');
     ok('cero residuo · saldo_pendiente es derivable, no fuente primaria');
 
