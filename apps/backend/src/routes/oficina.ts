@@ -273,7 +273,8 @@ router.get('/oficina/asistencia/config', async (_req, res) => {
   res.json(await getEstadoZlink());
 });
 
-// Vincular/actualizar credenciales del lector (token del portal Zlink).
+// Ajuste de config del lector (baseUrl/companyId; token manual como escape hatch).
+// El login normal es por credenciales de env (ZLINK_USER/ZLINK_PASS) — ver zlinkAsistencia.
 router.put('/oficina/asistencia/config', gate, async (req, res) => {
   const b = req.body as { baseUrl?: string; companyId?: string; accessToken?: string; refreshToken?: string; expiresIn?: number };
   res.json(await setConfigZlink(b));
