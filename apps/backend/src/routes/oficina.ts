@@ -281,9 +281,12 @@ router.put('/oficina/asistencia/config', gate, async (req, res) => {
 });
 
 // Sincronizar ahora (manual). El cron 09:30/10:00 llama al mismo servicio.
-router.post('/oficina/asistencia/sync', gate, async (_req, res) => {
+// ?desde=YYYY-MM-DD fuerza el inicio de la ventana (backfill de un lector atrasado).
+router.post('/oficina/asistencia/sync', gate, async (req, res) => {
+  const d = String(req.query.desde ?? '');
+  if (d && !/^\d{4}-\d{2}-\d{2}$/.test(d)) return res.status(400).json({ error: 'desde debe ser YYYY-MM-DD' });
   try {
-    const r = await syncAsistencia();
+    const r = await syncAsistencia(d ? new Date(d + 'T00:00:00') : undefined);
     res.json(r);
   } catch (e) {
     if (e instanceof ZlinkError) return res.status(409).json({ error: e.message });

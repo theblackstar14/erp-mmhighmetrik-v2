@@ -25,7 +25,10 @@ export type ZlinkTxn = {
   source?: number;
 };
 
-export class ZlinkError extends Error {}
+export class ZlinkError extends Error {
+  /** true = el rechazo fue de autenticación (401/403) y conviene reintentar con sesión limpia. */
+  constructor(message: string, readonly autenticacion = false) { super(message); }
+}
 
 // Cifrado de contraseña exacto al del portal (ver cabecera). stdlib, sin CryptoJS.
 const ZLINK_PW_SALT = 'ZlkLgInSeCetKKrEy:';
@@ -71,6 +74,39 @@ async function guardarTokens(j: { access_token?: string; refresh_token?: string;
   return j.access_token;
 }
 
+// El token del login NO trae empresa: /dcc/* responde 401 "Unauthorized, Please switch company
+// first." (el status solo dice 401, el motivo está en el cuerpo). El portal resuelve con
+// GET /sso/user/companies + PUT /sso/user/switchCompany, que devuelve un par de tokens NUEVO
+// ya con la empresa adentro — ese es el único que sirve para pedir datos.
+// El companyId se descubre una vez y queda en zlink_config.company_id.
+async function switchCompany(cfg: schema.ZlinkConfig, token: string): Promise<string> {
+  const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Source: 'pc', 'Accept-Language': 'en-US' };
+  let companyId = cfg.companyId;
+
+  if (!companyId) {
+    const r = await fetch(`${apiBase(cfg)}/v1.0/zlink/customer/sso/user/companies`, { headers });
+    const j = (await r.json().catch(() => ({}))) as { data?: { joinCompanies?: { id: string; name: string }[] } };
+    const lista = j.data?.joinCompanies ?? [];
+    if (lista.length === 0) throw new ZlinkError('El usuario de Zlink no pertenece a ninguna empresa');
+    // Con varias empresas elegir la primera sería decidir en silencio de qué empresa son las
+    // marcaciones. Se avisa y se fija a mano en zlink_config.company_id.
+    if (lista.length > 1) console.warn(`[zlink] ${lista.length} empresas disponibles · uso "${lista[0]!.name}" · fijá zlink_config.company_id para elegir otra`);
+    companyId = lista[0]!.id;
+    await db.update(schema.zlinkConfig).set({ companyId }).where(eq(schema.zlinkConfig.id, 'singleton'));
+  }
+
+  const resp = await fetch(`${apiBase(cfg)}/v1.0/zlink/customer/sso/user/switchCompany`, {
+    method: 'PUT',
+    headers,
+    body: JSON.stringify({ companyId, fromType: 'PC' }),
+  });
+  const j = (await resp.json().catch(() => ({}))) as { code?: string; message?: string; data?: { access_token?: string; refresh_token?: string; expires_in?: number } };
+  if (!resp.ok || !j.data?.access_token) {
+    throw new ZlinkError(`switchCompany falló (${resp.status}${j.code ? ' ' + j.code : ''})${j.message ? ': ' + j.message : ''}`);
+  }
+  return guardarTokens(j.data);
+}
+
 // Login con usuario+contraseña (env). La contraseña viaja cifrada igual que el portal.
 async function login(cfg: schema.ZlinkConfig): Promise<string> {
   const userName = process.env.ZLINK_USER;
@@ -87,7 +123,8 @@ async function login(cfg: schema.ZlinkConfig): Promise<string> {
   if (!resp.ok || !j.data?.access_token) {
     throw new ZlinkError(`Login Zlink falló (${resp.status}${j.code ? ' ' + j.code : ''})${j.message ? ': ' + j.message : ''}`);
   }
-  return guardarTokens(j.data);
+  // El token del login no se guarda: solo sirve para pedir el de la empresa.
+  return switchCompany(cfg, j.data.access_token);
 }
 
 async function refrescarToken(cfg: schema.ZlinkConfig): Promise<string | null> {
@@ -140,7 +177,12 @@ export async function fetchTransactions(cfg: schema.ZlinkConfig, token: string, 
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Source: 'pc', 'Accept-Language': 'en-US' },
       body: JSON.stringify(body),
     });
-    if (resp.status === 401 || resp.status === 403) throw new ZlinkError('Zlink rechazó el token (401/403) · revisa credenciales');
+    if (resp.status === 401 || resp.status === 403) {
+      // El motivo real viene en el cuerpo, no en el status: un token sin empresa da el mismo
+      // 401 que uno vencido, y sin el texto se diagnostica como "credenciales mal" por horas.
+      const detalle = (await resp.text().catch(() => '')).replace(/<[^>]+>/g, '').trim().slice(0, 160);
+      throw new ZlinkError(`Zlink rechazó el token (${resp.status})${detalle ? ': ' + detalle : ''}`, true);
+    }
     if (!resp.ok) throw new ZlinkError(`Zlink respondió ${resp.status}`);
     const j = (await resp.json()) as { code?: string; data?: { totalCount?: number; list?: ZlinkRawTxn[] } };
     const list = j.data?.list ?? [];
@@ -169,7 +211,10 @@ function indexarEmpleados(empleados: { id: string; numDoc: string | null }[]) {
 export type SyncResult = { traidas: number; nuevas: number; sinMatch: number; desde: string; hasta: string };
 
 // Sincroniza: token → fetch desde la última marcación (−2 días de solape) → dedupe → match → insert.
-export async function syncAsistencia(): Promise<SyncResult> {
+// `desdeOverride` fuerza el inicio de la ventana: la automática mira 30 días atrás en frío, y si el
+// lector estuvo meses sin sincronizar eso devuelve 0 y parece una falla. El dedupe por zlink_id hace
+// que repescar un rango ya traído sea gratis, así que re-correr con una fecha vieja es seguro.
+export async function syncAsistencia(desdeOverride?: Date): Promise<SyncResult> {
   const cfg = await getConfig();
   const token = await tokenValido(cfg);
 
@@ -177,9 +222,22 @@ export async function syncAsistencia(): Promise<SyncResult> {
   const [ultima] = await db.select({ punch: schema.asistenciaMarcacion.punchTime })
     .from(schema.asistenciaMarcacion).orderBy(desc(schema.asistenciaMarcacion.punchTime)).limit(1);
   const hasta = new Date();
-  const desde = ultima?.punch ? new Date(ultima.punch.getTime() - 2 * 86400_000) : new Date(Date.now() - 30 * 86400_000);
+  const desde = desdeOverride
+    ?? (ultima?.punch ? new Date(ultima.punch.getTime() - 2 * 86400_000) : new Date(Date.now() - 30 * 86400_000));
 
-  const txns = await fetchTransactions(cfg, token, desde, hasta);
+  // Un token cacheado puede estar vigente por expiry y aun así no servir (p.ej. quedó guardado
+  // antes de que existiera el switchCompany, o la empresa cambió). Un 401 se reintenta UNA vez
+  // con sesión limpia: sin esto el cron quedaría pegado hasta que alguien vacíe la tabla a mano.
+  let txns: ZlinkTxn[];
+  try {
+    txns = await fetchTransactions(cfg, token, desde, hasta);
+  } catch (e) {
+    if (!(e instanceof ZlinkError) || !e.autenticacion) throw e;
+    console.warn(`[zlink] ${e.message} · reintento con sesión limpia`);
+    await db.update(schema.zlinkConfig).set({ accessToken: null, refreshToken: null, tokenExpiry: null })
+      .where(eq(schema.zlinkConfig.id, 'singleton'));
+    txns = await fetchTransactions(cfg, await login(cfg), desde, hasta);
+  }
   const result = await persistir(txns, ymd(desde), ymd(hasta));
 
   await db.update(schema.zlinkConfig).set({
