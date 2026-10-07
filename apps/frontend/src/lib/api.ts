@@ -315,10 +315,11 @@ export const api = {
 
   // Planilla · construcción civil (FIN-4)
   planilla: {
-    listEmpleados: (tipo?: string, proyecto?: string) => {
+    listEmpleados: (tipo?: string, proyecto?: string, incluirInactivos?: boolean) => {
       const qs = new URLSearchParams();
       if (tipo) qs.set('tipo', tipo);
       if (proyecto) qs.set('proyecto', proyecto);
+      if (incluirInactivos) qs.set('incluirInactivos', '1');
       return req<{ empleados: Empleado[] }>(`/api/empleados${qs.toString() ? `?${qs}` : ''}`);
     },
     createEmpleado: (data: EmpleadoInput) => req<{ empleado: Empleado }>('/api/empleados', { method: 'POST', body: JSON.stringify(data) }),
@@ -414,6 +415,9 @@ export const api = {
     setAsistenciaConfig: (data: { baseUrl?: string; companyId?: string; accessToken?: string; refreshToken?: string; expiresIn?: number }) => req<ZlinkEstado>('/api/oficina/asistencia/config', { method: 'PUT', body: JSON.stringify(data) }),
     listMarcaciones: (desde: string, hasta: string) => req<{ marcaciones: Marcacion[] }>(`/api/oficina/asistencia?desde=${desde}&hasta=${hasta}`),
     syncAsistencia: () => req<SyncAsistenciaResult>('/api/oficina/asistencia/sync', { method: 'POST' }),
+    pendientesAsistencia: () => req<{ pendientes: PinPendiente[] }>('/api/oficina/asistencia/pendientes'),
+    vincularPin: (employeeCode: string, empleadoId: string) =>
+      req<{ ok: true; adoptadas: number; empleado: string }>('/api/oficina/asistencia/vincular', { method: 'POST', body: JSON.stringify({ employeeCode, empleadoId }) }),
   },
 
   // Documentos · NAS Synology por proyecto
@@ -2362,13 +2366,14 @@ export type Empleado = {
   fechaIngreso: string | null; categoria: string | null; tieneHijos: boolean; numHijos: number;
   aplicaMovilidad: boolean; bonifAltura: boolean; bonifAgua: boolean; proyectoId: string | null;
   sctrVigencia: string | null; banco: string | null; numCuenta: string | null; tipoPlanilla: string; activo: boolean;
+  zlinkPin: string | null; // PIN del lector cuando no es el DNI
 };
 export type EmpleadoInput = {
   nombre: string; tipoDoc?: string; numDoc?: string | null; sistemaPension?: string | null;
   cuspp?: string | null; fechaIngreso?: string | null; categoria?: string | null;
   tieneHijos?: boolean; numHijos?: number; aplicaMovilidad?: boolean; bonifAltura?: boolean; bonifAgua?: boolean;
   proyectoId?: string | null; sctrVigencia?: string | null; banco?: string | null;
-  numCuenta?: string | null; tipoPlanilla?: 'obrero' | 'admin';
+  numCuenta?: string | null; tipoPlanilla?: 'obrero' | 'admin'; zlinkPin?: string | null;
 };
 export type ParamPlanilla = { id: string; categoria: string; jornalBase: string; movilidad: string | null; pctBuc: string | null; pctDominical: string | null; pctCompVac: string | null; pctCts: string | null; pctGratif: string | null; pctHe60: string | null; pctHe100: string | null };
 export type PlanillaDashboard = {
@@ -2419,6 +2424,8 @@ export type RendicionItemInput = { tipoComprobante: 'factura' | 'boleta' | 'rh' 
 export type Marcacion = { id: string; zlinkId: string; employeeCode: string; empleadoId: string | null; nombre: string | null; punchTime: string; deviceSn: string | null; terminalAlias: string | null; createdAt: string };
 export type ZlinkEstado = { configurado: boolean; baseUrl: string; companyId: string | null; tokenExpiry: string | null; lastSyncAt: string | null; lastSyncMsg: string | null };
 export type SyncAsistenciaResult = { traidas: number; nuevas: number; sinMatch: number; desde: string; hasta: string };
+// PIN que marcó pero no cruza con ningún empleado (el lector no siempre usa el DNI como PIN).
+export type PinPendiente = { employeeCode: string; nombre: string | null; marcas: number; desde: string; hasta: string };
 
 // ─── Oficina · planilla administrativa ───────────────────────────
 export type PlanillaOficinaMes = {

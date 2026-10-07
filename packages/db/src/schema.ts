@@ -1189,6 +1189,10 @@ export const empleados = pgTable('empleados', {
   afpComisionTipo: varchar('afp_comision_tipo', { length: 8 }).notNull().default('saldo'),
   // v2 · practicante bajo modalidad formativa (no aporta pensión ni EsSalud)
   modalidadFormativa: boolean('modalidad_formativa').notNull().default(false),
+  // PIN con el que el lector biométrico identifica a esta persona. Normalmente es el DNI
+  // y queda null, pero hay fotochecks de 6 dígitos que no son ningún documento: en ese caso
+  // acá se declara y gana sobre num_doc al matchear marcaciones (ver zlinkAsistencia).
+  zlinkPin: varchar('zlink_pin', { length: 30 }).unique(),
   createdAt: timestamp('created_at').notNull().defaultNow(),
 });
 export type Empleado = typeof empleados.$inferSelect;

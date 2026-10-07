@@ -260,8 +260,8 @@ function TrabForm({ proyectoId, empleado, onClose, onSaved }: { proyectoId: stri
   const afps = ['S.N.P.', ...(afpQ.data?.tasas.map((t) => t.afp) ?? [])];
   const [f, setF] = useState<EmpleadoInput>(
     empleado
-      ? { nombre: empleado.nombre, numDoc: empleado.numDoc, categoria: empleado.categoria, sistemaPension: empleado.sistemaPension, aplicaMovilidad: empleado.aplicaMovilidad, bonifAltura: empleado.bonifAltura, bonifAgua: empleado.bonifAgua, numHijos: empleado.numHijos, fechaIngreso: empleado.fechaIngreso, sctrVigencia: empleado.sctrVigencia, tipoPlanilla: 'obrero', proyectoId }
-      : { nombre: '', numDoc: '', categoria: 'Operario', sistemaPension: 'S.N.P.', aplicaMovilidad: false, bonifAltura: false, bonifAgua: false, numHijos: 0, fechaIngreso: '', sctrVigencia: '', tipoPlanilla: 'obrero', proyectoId },
+      ? { nombre: empleado.nombre, numDoc: empleado.numDoc, categoria: empleado.categoria, sistemaPension: empleado.sistemaPension, aplicaMovilidad: empleado.aplicaMovilidad, bonifAltura: empleado.bonifAltura, bonifAgua: empleado.bonifAgua, numHijos: empleado.numHijos, fechaIngreso: empleado.fechaIngreso, sctrVigencia: empleado.sctrVigencia, zlinkPin: empleado.zlinkPin, tipoPlanilla: 'obrero', proyectoId }
+      : { nombre: '', numDoc: '', categoria: 'Operario', sistemaPension: 'S.N.P.', aplicaMovilidad: false, bonifAltura: false, bonifAgua: false, numHijos: 0, fechaIngreso: '', sctrVigencia: '', zlinkPin: '', tipoPlanilla: 'obrero', proyectoId },
   );
   const save = useMutation({ mutationFn: () => (empleado ? api.planilla.updateEmpleado(empleado.id, f) : api.planilla.createEmpleado(f)), onSuccess: onSaved });
   const set = (p: Partial<EmpleadoInput>) => setF((s) => ({ ...s, ...p }));
@@ -280,6 +280,8 @@ function TrabForm({ proyectoId, empleado, onClose, onSaved }: { proyectoId: stri
           <Lbl t="N° hijos (escolar)"><input type="number" min={0} className={cn(inputCls, 'w-full')} value={f.numHijos ?? 0} onChange={(e) => set({ numHijos: Number(e.target.value) })} /></Lbl>
           <Lbl t="Fecha ingreso"><input type="date" className={cn(inputCls, 'w-full')} value={f.fechaIngreso ?? ''} onChange={(e) => set({ fechaIngreso: e.target.value })} /></Lbl>
           <Lbl t="SCTR vigencia hasta"><input type="date" className={cn(inputCls, 'w-full')} value={f.sctrVigencia ?? ''} onChange={(e) => set({ sctrVigencia: e.target.value })} /></Lbl>
+          {/* Solo hace falta cuando el lector le dio un fotocheck que no es su DNI. Vacío = usa el DNI. */}
+          <Lbl span2 t="PIN lector de huellas (si no es el DNI)"><input maxLength={30} placeholder="vacío = usa el DNI" className={cn(inputCls, 'w-full')} value={f.zlinkPin ?? ''} onChange={(e) => set({ zlinkPin: e.target.value.trim() })} /></Lbl>
           <div className="col-span-2 flex flex-wrap gap-3 pt-1 text-[11.5px] text-ink-2">
             <label className="flex items-center gap-1.5"><input type="checkbox" checked={f.aplicaMovilidad} onChange={(e) => set({ aplicaMovilidad: e.target.checked })} /> Movilidad</label>
             <label className="flex items-center gap-1.5"><input type="checkbox" checked={f.bonifAltura} onChange={(e) => set({ bonifAltura: e.target.checked })} /> Bonif. altura</label>

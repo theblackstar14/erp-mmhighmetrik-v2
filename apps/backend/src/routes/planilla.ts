@@ -3,6 +3,7 @@ import { and, asc, desc, eq, isNull } from 'drizzle-orm';
 import { Router } from 'express';
 import { z } from 'zod';
 import { calcularPlanilla } from '../lib/planillaCalc.js';
+import { revincularPin } from '../lib/zlinkAsistencia.js';
 import { requireAuth } from '../middleware/auth.js';
 
 const router = Router();
@@ -46,19 +47,42 @@ const empSchema = z.object({
   sueldoBaseMensual: z.number().optional().nullable(),
   asignacionFamiliar: z.boolean().optional(),
   fechaCese: z.string().optional().nullable(),
+  // PIN del lector biométrico cuando no es el DNI (fotochecks de 6 dígitos).
+  zlinkPin: z.string().max(30).optional().nullable(),
 });
+
+// El PIN es único: avisar en claro es mejor que dejar salir un 23505. Devuelve el mensaje
+// de error si está tomado por otro, o null si se puede usar.
+async function pinTomado(pin: string, empleadoId?: string): Promise<string | null> {
+  const [otro] = await db.select({ id: schema.empleados.id, nombre: schema.empleados.nombre })
+    .from(schema.empleados).where(eq(schema.empleados.zlinkPin, pin)).limit(1);
+  return otro && otro.id !== empleadoId ? `El PIN ${pin} ya está asignado a ${otro.nombre}` : null;
+}
+
+// Marcaciones que el lector ya había subido antes de que esta persona existiera (o antes de
+// que se declarara su PIN) quedan con empleado_id null para siempre si nadie las adopta.
+// Mismo criterio de match que el sync: el PIN pisa al num_doc.
+async function adoptarMarcaciones(emp: { id: string; zlinkPin: string | null; numDoc: string | null }): Promise<number> {
+  const code = emp.zlinkPin?.trim() || emp.numDoc?.trim();
+  return code ? revincularPin(code, emp.id) : 0;
+}
 router.post('/empleados', async (req, res) => {
   const parse = empSchema.safeParse(req.body);
   if (!parse.success) return res.status(400).json({ error: parse.error.flatten() });
   const d = parse.data;
+  const pin = d.zlinkPin?.trim() || null;
+  if (pin) { const err = await pinTomado(pin); if (err) return res.status(409).json({ error: err }); }
   const [emp] = await db.insert(schema.empleados).values({
     ...d,
     fechaIngreso: d.fechaIngreso || null,
     sctrVigencia: d.sctrVigencia || null,
     fechaCese: d.fechaCese || null,
+    zlinkPin: pin,
     sueldoBaseMensual: d.sueldoBaseMensual != null ? String(d.sueldoBaseMensual) : null,
   }).returning();
-  res.json({ empleado: emp });
+  // Alta de alguien que ya venía marcando (el caso típico: el lector lo conocía, el ERP no).
+  const adoptadas = emp ? await adoptarMarcaciones(emp) : 0;
+  res.json({ empleado: emp, marcacionesAdoptadas: adoptadas });
 });
 router.put('/empleados/:id', async (req, res) => {
   const parse = empSchema.partial().safeParse(req.body);
@@ -66,13 +90,22 @@ router.put('/empleados/:id', async (req, res) => {
   const data = { ...parse.data };
   // fechas vacías → null (columna date no acepta '')
   for (const k of ['fechaIngreso', 'sctrVigencia', 'fechaCese'] as const) if (data[k] === '') data[k] = null;
+  // PIN vacío → null: el índice único no tolera dos '' (y '' no es un PIN).
+  if ('zlinkPin' in data) {
+    data.zlinkPin = data.zlinkPin?.trim() || null;
+    if (data.zlinkPin) {
+      const err = await pinTomado(data.zlinkPin, req.params.id!);
+      if (err) return res.status(409).json({ error: err });
+    }
+  }
   // decimal column requiere string
   if ('sueldoBaseMensual' in data) {
     (data as Record<string, unknown>).sueldoBaseMensual = data.sueldoBaseMensual != null ? String(data.sueldoBaseMensual) : null;
   }
   const [emp] = await db.update(schema.empleados).set(data).where(eq(schema.empleados.id, req.params.id!)).returning();
   if (!emp) return res.status(404).json({ error: 'Empleado no encontrado' });
-  res.json({ empleado: emp });
+  const adoptadas = 'zlinkPin' in data ? await adoptarMarcaciones(emp) : 0;
+  res.json({ empleado: emp, marcacionesAdoptadas: adoptadas });
 });
 // Soft-delete: desactiva (activo=false) para no romper el historial de planilla/asistencia
 // que referencia al empleado. No es hard-delete: preserva boletas, marcaciones y asientos.

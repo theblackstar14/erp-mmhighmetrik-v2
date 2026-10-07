@@ -7,7 +7,8 @@
       "Bash(npx --yes claude-mem install)",
       "Bash(claude plugin *)",
       "Read(//c/Users/gabri/.claude/plugins/marketplaces/**)",
-      "Read(//c/Users/gabri/.claude/plugins/marketplaces/thedotmack/.claude-plugin/**)"
+      "Read(//c/Users/gabri/.claude/plugins/marketplaces/thedotmack/.claude-plugin/**)",
+      "Bash(node -e \"const fs=require\\('fs'\\);const p='apps/frontend/src/pages/FinanzasPage.tsx';const l=fs.readFileSync\\(p,'utf8'\\).split\\('\\\\n'\\);const out=l.slice\\(0,2239\\).concat\\(l.slice\\(2829\\)\\);fs.writeFileSync\\(p,out.join\\('\\\\n'\\)\\);console.log\\(l.length,'->',out.length\\);\")"
     ]
   },
   "hooks": {

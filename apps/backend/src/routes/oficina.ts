@@ -6,7 +6,8 @@ import { requireAuth } from '../middleware/auth.js';
 import { requireAdminOContab } from '../lib/permisos.js';
 import { periodoCerradoDeFecha } from '../lib/periodos.js';
 import { resolverClase } from '../lib/clasificacion.js';
-import { syncAsistencia, listarMarcaciones, getEstadoZlink, setConfigZlink, ZlinkError } from '../lib/zlinkAsistencia.js';
+import { syncAsistencia, listarMarcaciones, getEstadoZlink, setConfigZlink, ZlinkError, pendientesVinculacion, revincularPin } from '../lib/zlinkAsistencia.js';
+import { audit } from '../lib/audit.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -293,6 +294,37 @@ router.post('/oficina/asistencia/sync', gate, async (req, res) => {
     console.error('[asistencia] sync error', e);
     res.status(500).json({ error: 'Error al sincronizar asistencia' });
   }
+});
+
+// Bandeja de PINs huérfanos: marcaron pero no cruzan con ningún empleado.
+router.get('/oficina/asistencia/pendientes', gate, async (_req, res) => {
+  res.json({ pendientes: await pendientesVinculacion() });
+});
+
+// Declara que ese PIN del lector es de ese empleado y adopta sus marcaciones huérfanas.
+// Lo escribe en la ficha (empleados.zlink_pin) para que los próximos syncs ya cruce solo.
+const vincSchema = z.object({ employeeCode: z.string().min(1).max(30), empleadoId: z.string().uuid() });
+router.post('/oficina/asistencia/vincular', gate, async (req, res) => {
+  const parse = vincSchema.safeParse(req.body);
+  if (!parse.success) return res.status(400).json({ error: parse.error.flatten() });
+  const pin = parse.data.employeeCode.trim();
+
+  const [emp] = await db.select().from(schema.empleados).where(eq(schema.empleados.id, parse.data.empleadoId)).limit(1);
+  if (!emp) return res.status(404).json({ error: 'Empleado no encontrado' });
+  // zlink_pin es único: un PIN ya tomado se avisa en claro en vez de reventar con 23505.
+  const [tomado] = await db.select({ id: schema.empleados.id, nombre: schema.empleados.nombre })
+    .from(schema.empleados).where(eq(schema.empleados.zlinkPin, pin)).limit(1);
+  if (tomado && tomado.id !== emp.id) {
+    return res.status(409).json({ error: `El PIN ${pin} ya está asignado a ${tomado.nombre}` });
+  }
+
+  await db.update(schema.empleados).set({ zlinkPin: pin }).where(eq(schema.empleados.id, emp.id));
+  const adoptadas = await revincularPin(pin, emp.id);
+  await audit(req, {
+    action: 'vincular_pin', entityType: 'empleado', entityId: emp.id,
+    before: { zlinkPin: emp.zlinkPin }, after: { zlinkPin: pin, marcacionesAdoptadas: adoptadas },
+  });
+  res.json({ ok: true, adoptadas, empleado: emp.nombre });
 });
 
 export default router;

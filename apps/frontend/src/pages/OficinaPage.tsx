@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Fingerprint, Link2, Pencil, Plus, Receipt, RefreshCw, Trash2, UserCog, Users, Wallet, X } from 'lucide-react';
+import { AlertTriangle, Check, Fingerprint, Link2, Pencil, Plus, Receipt, RefreshCw, Trash2, UserCog, Users, Wallet, X } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { useState } from 'react';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog.js';
@@ -450,6 +450,8 @@ function AdminForm({ onClose, onSaved }: { onClose: () => void; onSaved: () => v
           <Lbl t="Sistema pensión"><select className={cn(inputCls, 'w-full')} value={f.sistemaPension ?? ''} onChange={(e) => set({ sistemaPension: e.target.value })}>{['S.N.P.', 'AFP Habitat', 'AFP Integra', 'AFP Prima', 'AFP Profuturo'].map((a) => <option key={a}>{a}</option>)}</select></Lbl>
           <Lbl t="Fecha ingreso"><input type="date" className={cn(inputCls, 'w-full')} value={f.fechaIngreso ?? ''} onChange={(e) => set({ fechaIngreso: e.target.value })} /></Lbl>
           <Lbl t="Sueldo base S/"><input type="number" step="0.01" min="0" className={cn(inputCls, 'w-full')} value={f.sueldoBaseMensual ?? ''} onChange={(e) => set({ sueldoBaseMensual: e.target.value ? Number(e.target.value) : undefined })} placeholder="0.00" /></Lbl>
+          {/* El lector de la oficina identifica por PIN; si no es el DNI, va acá y las marcaciones se enganchan. */}
+          <Lbl t="PIN lector" span2><input maxLength={30} placeholder="vacío = usa el DNI" className={cn(inputCls, 'w-full')} value={f.zlinkPin ?? ''} onChange={(e) => set({ zlinkPin: e.target.value.trim() })} /></Lbl>
           <Lbl t="Asig. familiar" span2>
             <label className="flex items-center gap-2 h-8 cursor-pointer">
               <input type="checkbox" checked={f.asignacionFamiliar ?? false} onChange={(e) => set({ asignacionFamiliar: e.target.checked })} className="h-4 w-4 rounded border-line accent-primary" />
@@ -508,6 +510,8 @@ function AsistenciaHuella() {
       </div>
       {msg && <div className={cn('rounded-md px-3 py-2 text-[12px]', msg.startsWith('✓') ? 'bg-emerald-500/10 text-emerald-600' : 'bg-rose-500/10 text-rose-600')}>{msg}</div>}
 
+      <PinsSinVincular onMsg={setMsg} />
+
       {/* Rango + tabla de marcaciones */}
       <div className="flex flex-wrap items-center gap-2">
         <input type="date" value={rango.desde} onChange={(e) => setRango((r) => ({ ...r, desde: e.target.value }))} className={inputCls} />
@@ -535,6 +539,62 @@ function AsistenciaHuella() {
       </div>
 
       {vincular && <VincularLector estado={cfg} onClose={() => setVincular(false)} onSaved={() => { setVincular(false); setMsg('✓ Lector vinculado'); qc.invalidateQueries({ queryKey: ['zlink-cfg'] }); }} />}
+    </div>
+  );
+}
+
+// ─── PINs huérfanos ─────────────────────────────────────────────
+// El lector identifica a la gente por un PIN que CASI siempre es el DNI, pero hay fotochecks
+// de 6 dígitos. Lo que no cruza con ningún empleado queda acá hasta que alguien diga de quién es.
+function PinsSinVincular({ onMsg }: { onMsg: (m: string) => void }) {
+  const qc = useQueryClient();
+  const [sel, setSel] = useState<Record<string, string>>({});
+  const pendQ = useQuery({ queryKey: ['pins-pendientes'], queryFn: () => api.oficina.pendientesAsistencia() });
+  // Inactivos incluidos a propósito: un cesado que marcó en su momento también hay que vincularlo.
+  const empQ = useQuery({ queryKey: ['empleados-todos'], queryFn: () => api.planilla.listEmpleados(undefined, undefined, true) });
+  const pendientes = pendQ.data?.pendientes ?? [];
+  const empleados = empQ.data?.empleados ?? [];
+  const vincular = useMutation({
+    mutationFn: ({ code, empId }: { code: string; empId: string }) => api.oficina.vincularPin(code, empId),
+    onSuccess: (r) => {
+      onMsg(`✓ PIN vinculado a ${r.empleado} · ${r.adoptadas} marcación(es) adoptada(s)`);
+      qc.invalidateQueries({ queryKey: ['pins-pendientes'] });
+      qc.invalidateQueries({ queryKey: ['marcaciones'] });
+    },
+    onError: (e: Error) => onMsg(`✕ ${e.message}`),
+  });
+
+  if (pendientes.length === 0) return null;
+  return (
+    <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
+      <div className="flex items-start gap-2">
+        <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" />
+        <div className="min-w-0">
+          <h4 className="text-[13px] font-semibold text-amber-700">{pendientes.length} PIN(s) del lector sin empleado</h4>
+          <p className="text-[11.5px] text-ink-3 mt-0.5">
+            Estas marcaciones no cuentan para planilla hasta que se vinculen. Si la persona no está en el
+            sistema, dala de alta en Personal con su PIN y las marcaciones se enganchan solas.
+          </p>
+        </div>
+      </div>
+      <div className="mt-3 space-y-2">
+        {pendientes.map((p) => (
+          <div key={p.employeeCode} className="flex flex-wrap items-center gap-2 rounded-md border border-line bg-bg-elev px-3 py-2">
+            <span className="font-mono text-[11.5px] font-medium">{p.employeeCode}</span>
+            <span className="text-[12px] flex-1 min-w-[140px]">{p.nombre ?? '—'}</span>
+            <span className="text-[11px] text-ink-4">{p.marcas} marca(s) · {p.desde} → {p.hasta}</span>
+            <select value={sel[p.employeeCode] ?? ''} onChange={(e) => setSel((s) => ({ ...s, [p.employeeCode]: e.target.value }))} className={cn(inputCls, 'min-w-[200px]')}>
+              <option value="">Vincular a…</option>
+              {empleados.map((e) => <option key={e.id} value={e.id}>{e.nombre}{e.numDoc ? ` · ${e.numDoc}` : ''}{e.activo ? '' : ' (inactivo)'}</option>)}
+            </select>
+            <button
+              disabled={!sel[p.employeeCode] || vincular.isPending}
+              onClick={() => vincular.mutate({ code: p.employeeCode, empId: sel[p.employeeCode]! })}
+              className="h-8 px-3 rounded-md bg-primary text-primary-foreground text-[12px] font-medium disabled:opacity-40"
+            >Vincular</button>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

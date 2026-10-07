@@ -9,7 +9,7 @@
 // Credenciales por env (nunca manejamos la contraseña en claro en DB): ZLINK_USER, ZLINK_PASS, ZLINK_DEVICE_IDS.
 import { createCipheriv, createHash } from 'node:crypto';
 import { db, schema } from '@erp/db';
-import { and, desc, eq, gte, inArray, lte } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNull, lte, sql } from 'drizzle-orm';
 
 // Forma interna normalizada. fetchTransactions mapea la respuesta real del portal a esto,
 // así persistir()/el match por numDoc no dependen de los nombres de campo de Zlink.
@@ -201,11 +201,40 @@ export async function fetchTransactions(cfg: schema.ZlinkConfig, token: string, 
   return out;
 }
 
-// Match employee_code → empleado por numDoc (DNI/PIN). Sin match → empleadoId null (se conserva igual).
-function indexarEmpleados(empleados: { id: string; numDoc: string | null }[]) {
+// Match employee_code → empleado. El lector suele usar el DNI como PIN, pero no siempre
+// (fotochecks de 6 dígitos), así que zlink_pin declara el caso raro y PISA al num_doc:
+// se indexan primero los num_doc y después los pins, de modo que un pin siempre gane
+// —incluso si coincide con el num_doc de otra persona—. Sin match → empleadoId null.
+// Exportada para que test-zlink-pin.ts pruebe ESTA función y no una copia.
+export function indexarEmpleados(empleados: { id: string; numDoc: string | null; zlinkPin: string | null }[]) {
   const m = new Map<string, string>();
   for (const e of empleados) if (e.numDoc) m.set(e.numDoc.trim(), e.id);
+  for (const e of empleados) if (e.zlinkPin) m.set(e.zlinkPin.trim(), e.id);
   return m;
+}
+
+// Adopta las marcaciones que quedaron huérfanas con ese PIN. Solo toca empleado_id null:
+// una marcación ya vinculada no se re-asigna (si el PIN se reusó para otra persona, mover
+// el historial viejo falsearía planillas ya calculadas). Devuelve cuántas adoptó.
+export async function revincularPin(pin: string, empleadoId: string): Promise<number> {
+  const rows = await db.update(schema.asistenciaMarcacion).set({ empleadoId })
+    .where(and(eq(schema.asistenciaMarcacion.employeeCode, pin.trim()), isNull(schema.asistenciaMarcacion.empleadoId)))
+    .returning({ id: schema.asistenciaMarcacion.id });
+  return rows.length;
+}
+
+// PINs que marcaron pero no cruzan con ningún empleado, agrupados para la bandeja de la UI.
+export async function pendientesVinculacion() {
+  return db.select({
+    employeeCode: schema.asistenciaMarcacion.employeeCode,
+    nombre: sql<string | null>`max(${schema.asistenciaMarcacion.nombre})`,
+    marcas: sql<number>`count(*)::int`,
+    desde: sql<string>`min(${schema.asistenciaMarcacion.punchTime})::date`,
+    hasta: sql<string>`max(${schema.asistenciaMarcacion.punchTime})::date`,
+  }).from(schema.asistenciaMarcacion)
+    .where(isNull(schema.asistenciaMarcacion.empleadoId))
+    .groupBy(schema.asistenciaMarcacion.employeeCode)
+    .orderBy(sql`count(*) desc`);
 }
 
 export type SyncResult = { traidas: number; nuevas: number; sinMatch: number; desde: string; hasta: string };
@@ -258,7 +287,9 @@ export async function persistir(txns: ZlinkTxn[], desde: string, hasta: string):
   const nuevos = txns.filter((t) => !existentes.has(String(t.id)));
   if (nuevos.length === 0) return { traidas: txns.length, nuevas: 0, sinMatch: 0, desde, hasta };
 
-  const empleados = await db.select({ id: schema.empleados.id, numDoc: schema.empleados.numDoc }).from(schema.empleados);
+  const empleados = await db.select({
+    id: schema.empleados.id, numDoc: schema.empleados.numDoc, zlinkPin: schema.empleados.zlinkPin,
+  }).from(schema.empleados);
   const idx = indexarEmpleados(empleados);
 
   let sinMatch = 0;
