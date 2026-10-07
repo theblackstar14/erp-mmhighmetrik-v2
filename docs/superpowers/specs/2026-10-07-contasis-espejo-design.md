@@ -437,11 +437,23 @@ caso **no es hipotético**: es el primero que va a aparecer. Es, además, pregun
 
 Cada fase deja algo verificable y nada rompe lo anterior.
 
-**F1 · Catálogo canónico**
-Columnas nuevas de `plan_contable`, loader del Excel del plan, siembra de `mapa_cuenta_clase` desde
-los sufijos de destino, tabla `contasis_centro_costo` vacía.
-*Check:* las 3396 cuentas cargadas, las 487 nuestras intactas, las 39 cuentas en uso siguen
-resolviendo su FK, `derivarClase()` da el mismo resultado que antes para las cuentas viejas.
+**F1 · Catálogo canónico** — ✅ HECHO (2026-10-07, commits `9dec5f8..42ea436`)
+Columnas nuevas de `plan_contable`, loader del Excel del plan, tabla `contasis_centro_costo` vacía.
+*Check:* ✅ `scripts/contasis/test-regresion-plan.ts` verde · 3879 cuentas (3392 de CONTASIS +
+487 nuestras intactas) · las 39 en uso resuelven su FK y siguen activas · `derivarClase()` idéntico ·
+1368 destinos automáticos cargados. Regresión de WS1 verde.
+
+Desvíos y hallazgos de F1:
+- **`mapa_cuenta_clase` NO se sembró.** Sembrarlo desde los sufijos de destino reclasificaría gasto
+  ya registrado, y el mapeo sufijo→clase depende de la pregunta 4 de §9. Se siembra en F2.
+- **4 códigos repetidos en el export de Kelly** (`ccodcue` es su PK, así que el Excel no es un dump
+  fiel): `30221`, `30224`, `6882` solo cambian la descripción; **`628095` trae `cdesdeb` distinto
+  (`9511` VTA vs `9611` OTROS)**. El loader conserva la primera fila y lo imprime. Pregunta para
+  Kelly; hoy ninguna de las 4 está usada en un asiento.
+- **Para F5 (UI), no se arregla antes:** `contabilidad.ts:204` limita el selector de cuentas a 30 y
+  `627%` ya matchea 52 — el usuario no ve la que busca y no hay aviso. `contabilidad.ts:236`
+  (`GET /plan?periodo=`) no pagina: 290 ms y 1.55 MB de payload para 3879 cuentas.
+- `contasis_centro_costo` queda vacía hasta que Kelly mande su catálogo (pregunta 1 de §9).
 
 **F2 · Importador** — bloqueada por la respuesta de Kelly a los puntos 1 y 2 (§9)
 Parser, staging, las 9 validaciones, aplicación del lote, desplazamiento de status, anulación de
@@ -486,6 +498,9 @@ No bloquean, pero cambian decisiones:
    existen, ¿en qué columna vienen? Hasta la respuesta, todo importado se graba PEN (§4.2.9).
 9. **Destino automático en planilla** (§6.3): al cargar nuestro asiento de planilla, ¿su sistema
    expande los destinos solo, o espera las líneas ya expandidas?
+10. **`628095` viene dos veces con destino distinto** (`9511` VTA vs `9611` OTROS) en el export del
+    plan. Cargamos la primera (`9511`); ¿cuál es la correcta? (Hallazgo de F1. Los otros tres
+    repetidos — `30221`, `30224`, `6882` — solo cambian la descripción y no importan.)
 
 ## 10. Decisiones deliberadas (y cuándo revisarlas)
 
