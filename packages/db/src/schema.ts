@@ -536,7 +536,7 @@ export const equipoProyecto = pgTable(
 export const planContable = pgTable('plan_contable', {
   codigo: varchar('codigo', { length: 10 }).primaryKey(),
   descripcion: text('descripcion').notNull(),
-  tipo: varchar('tipo', { length: 30 }).notNull(), // Activo · Pasivo · Patrimonio · Ingreso · Gasto · Costo
+  tipo: varchar('tipo', { length: 30 }).notNull(), // Activo · Pasivo · Patrimonio · Ingreso · Gasto · Costo · Orden · Resultado
   parentCodigo: varchar('parent_codigo', { length: 10 }),
   nivel: integer('nivel').notNull(),
   // WS0 · promoción a cuenta_contable canónica (in situ)
@@ -544,6 +544,17 @@ export const planContable = pgTable('plan_contable', {
   esDivisionaria: boolean('es_divisionaria').notNull().default(false),
   empresaId: integer('empresa_id').references(() => empresas.id, { onDelete: 'set null' }), // null = compartida
   activa: boolean('activa').notNull().default(true),
+  // F1 espejo CONTASIS · columnas propias de su plan (spec §3.1)
+  contasisNivel: integer('contasis_nivel'), // nnivcue 1|2|3 · nivel 3 = cuenta a la que se imputa
+  contasisTipo: integer('contasis_tipo'), // ntipcue 1..7
+  contasisAnalisis: integer('contasis_analisis'), // nanacue · 2 = exige tercero (CxC/CxP)
+  destinoDebe: varchar('destino_debe', { length: 10 }), // cdesdeb · destino automático al debe
+  destinoHaber: varchar('destino_haber', { length: 10 }), // cdeshab · destino automático al haber
+  exigeCentroCosto: boolean('exige_centro_costo').notNull().default(false), // nafecos
+  codBalance1: varchar('cod_balance_1', { length: 4 }), // ccodbal1 · formulario EEFF
+  codBalance2: varchar('cod_balance_2', { length: 4 }), // ccodbal2
+  cuentaCierre: varchar('cuenta_cierre', { length: 10 }), // ccuecie
+  esContasis: boolean('es_contasis').notNull().default(false),
 });
 export type PlanContable = typeof planContable.$inferSelect;
 
@@ -728,6 +739,17 @@ export const mapaCuentaClase = pgTable('mapa_cuenta_clase', {
   claseObra: varchar('clase_obra', { length: 10 }).notNull(), // CD | GG_OBRA (CHECK) · GG_CORP se deriva por obra_id null
 });
 export type MapaCuentaClase = typeof mapaCuentaClase.$inferSelect;
+
+// ─── F1 espejo CONTASIS · centro de costo de CONTASIS ↔ obra del ERP (spec §3.3) ───
+// Sin fila acá, la importación de F2 RECHAZA la línea: no se adivina la obra.
+export const contasisCentroCosto = pgTable('contasis_centro_costo', {
+  codigo: varchar('codigo', { length: 20 }).primaryKey(),
+  proyectoId: uuid('proyecto_id').references(() => proyectos.id, { onDelete: 'set null' }), // null = corporativo
+  descripcion: text('descripcion'),
+  empresaId: integer('empresa_id').notNull().references(() => empresas.id),
+  activo: boolean('activo').notNull().default(true),
+});
+export type ContasisCentroCosto = typeof contasisCentroCosto.$inferSelect;
 
 // ─── WS0 · asiento_plantilla (patrones débito/haber · precarga de formularios) ───
 export const asientoPlantilla = pgTable('asiento_plantilla', {
