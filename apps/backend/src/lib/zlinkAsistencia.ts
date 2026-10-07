@@ -30,7 +30,8 @@ export class ZlinkError extends Error {}
 // Cifrado de contraseña exacto al del portal (ver cabecera). stdlib, sin CryptoJS.
 const ZLINK_PW_SALT = 'ZlkLgInSeCetKKrEy:';
 const ZLINK_PW_IV = 'VrdMiseryEbcDzEK'; // 16 bytes fijos
-function cifrarPassword(password: string, userName: string): string {
+// Exportada solo para que scripts/oficina/test-zlink-crypto.ts pruebe ESTA función y no una copia.
+export function cifrarPassword(password: string, userName: string): string {
   const key = createHash('md5').update(ZLINK_PW_SALT + userName).digest('hex'); // 32 ascii = AES-256
   const c = createCipheriv('aes-256-cbc', Buffer.from(key, 'utf8'), Buffer.from(ZLINK_PW_IV, 'utf8'));
   return Buffer.concat([c.update(password, 'utf8'), c.final()]).toString('base64');
