@@ -109,7 +109,9 @@ async function refrescarToken(cfg: schema.ZlinkConfig): Promise<string | null> {
 const ymd = (d: Date) => d.toISOString().slice(0, 10);
 const ymdhms = (d: Date, end = false) => `${ymd(d)} ${end ? '23:59:59' : '00:00:00'}`;
 
-// IDs de lector a sondear (env, coma-separado). Los obtienes del portal → Device → deviceDetail (deviceId).
+// IDs de lector a sondear (env, coma-separado). Es un UUID interno de 32 hex, NO el serial que
+// el portal muestra bajo el nombre del lector (ese sale en la respuesta como `deviceSn`).
+// Se saca del propio request del portal: F12 → Network → POST /dcc/transaction → payload.deviceIds.
 function deviceIds(): string[] {
   return (process.env.ZLINK_DEVICE_IDS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 }
