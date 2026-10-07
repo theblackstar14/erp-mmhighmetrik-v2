@@ -450,9 +450,14 @@ Desvíos y hallazgos de F1:
   fiel): `30221`, `30224`, `6882` solo cambian la descripción; **`628095` trae `cdesdeb` distinto
   (`9511` VTA vs `9611` OTROS)**. El loader conserva la primera fila y lo imprime. Pregunta para
   Kelly; hoy ninguna de las 4 está usada en un asiento.
-- **Para F5 (UI), no se arregla antes:** `contabilidad.ts:204` limita el selector de cuentas a 30 y
-  `627%` ya matchea 52 — el usuario no ve la que busca y no hay aviso. `contabilidad.ts:236`
-  (`GET /plan?periodo=`) no pagina: 290 ms y 1.55 MB de payload para 3879 cuentas.
+- **Para F5 (UI), no se arregla antes:** `contabilidad.ts:204` limita el selector de cuentas a 30, y
+  el peor prefijo de 3 dígitos ya matchea **208** (`688`; después `684`=123, `682`=106, `686`=95,
+  `689`=90 — más de veinte prefijos pasan de 30). La truncada es **silenciosa**:
+  `CuentaContableSelect.tsx:77-91` solo avisa con cero resultados, así que el usuario ve 30 filas
+  plausibles y 178 escondidas sin señal. F5 tiene que paginar **y** mostrar "30 de N".
+  `contabilidad.ts:236` (`GET /plan?periodo=`) no pagina: 290 ms y 1.55 MB de payload para 3879
+  cuentas. Y `contabilidad.ts:186` (`soloHoja=1`, filtra `es_divisionaria`) devuelve 3 cuentas de
+  3879: preexistente, pero F1 ensanchó el hueco.
 - `contasis_centro_costo` queda vacía hasta que Kelly mande su catálogo (pregunta 1 de §9).
 
 **F2 · Importador** — bloqueada por la respuesta de Kelly a los puntos 1 y 2 (§9)

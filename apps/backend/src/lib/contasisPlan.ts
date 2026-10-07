@@ -75,7 +75,17 @@ const num = (v: unknown): number | null => {
   return Number.isFinite(n) ? n : null;
 };
 
-export function parsePlanContasis(buf: Buffer): { cuentas: CuentaContasis[]; duplicados: DuplicadoPlan[] } {
+/**
+ * `codigosExistentes`: códigos que YA están en nuestro plan y no vienen en el export. Sin esto el
+ * padre se resuelve solo contra el Excel, y una cuenta como `9249021` queda con parent_codigo null
+ * aunque `92` exista entre nuestras 487 — con lo cual `DELETE /plan/92` dejaría de ver hijos
+ * (contabilidad.ts:289 los busca por parent_codigo) y borraría un rubro con descendientes vivos.
+ * Sigue siendo puro: el set entra por parámetro, no se consulta la DB.
+ */
+export function parsePlanContasis(
+  buf: Buffer,
+  codigosExistentes?: Iterable<string>,
+): { cuentas: CuentaContasis[]; duplicados: DuplicadoPlan[] } {
   const wb = XLSX.read(buf, { type: 'buffer' });
   const ws = wb.Sheets['Plan de Cuentas'];
   if (!ws) throw new Error(`hoja 'Plan de Cuentas' no encontrada · hojas: ${wb.SheetNames.join(', ')}`);
@@ -101,6 +111,7 @@ export function parsePlanContasis(buf: Buffer): { cuentas: CuentaContasis[]; dup
   const filas = raw.slice(3).filter((r) => txt(r[C.cod]) !== null);
 
   const codigos = new Set(filas.map((r) => txt(r[C.cod])!));
+  if (codigosExistentes) for (const c of codigosExistentes) codigos.add(c);
 
   // El padre es el prefijo EXISTENTE más largo, no el de largo−1: 6011020 cuelga de 6011
   // porque 601102 y 60110 no existen en el catálogo. Si se usara largo−1, el rollup del

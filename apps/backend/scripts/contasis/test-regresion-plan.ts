@@ -4,9 +4,15 @@
  *   node <tsx> scripts/contasis/test-regresion-plan.ts
  */
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { db } from '@erp/db';
 import { sql } from 'drizzle-orm';
 import { derivarClase, cargarDerivarCtx } from '../../src/lib/clasificacion.js';
+import { parsePlanContasis } from '../../src/lib/contasisPlan.js';
+
+const FIXTURE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'PLAN DE CUENTAS ESTANDAR_SQL.xlsx');
 
 const q = async (s: string) => {
   const r: any = await db.execute(sql.raw(s));
@@ -74,10 +80,16 @@ console.log('  ✓ cargarDerivarCtx() carga el catálogo completo');
 // ── 6 · Review Focus 5 · el selector de cuentas tiene limit 30 y ahora hay más familias ──
 // contabilidad.ts:204 limita a 30. Con las divisionarias de CONTASIS, un prefijo frecuente
 // devuelve 30 de muchas más y el usuario no ve la cuenta que busca, SIN aviso.
-const [m627] = await q(`select count(*)::int n from plan_contable where codigo like '627%' and activa`);
-console.log(`  · '627%' matchea ${m627.n} cuentas y GET /plan?q= devuelve 30`);
-assert.ok(m627.n > 30, 'esperaba que 627 pase de 30 matches: si no, revisá que la carga corrió');
-console.log('  ⚠ limit 30 del selector queda CORTO · anotado para F5 (UI), no se arregla acá');
+// Se mide el PEOR prefijo, no uno de muestra: '627' matchea 52 pero '688' matchea 208, y F5 se
+// va a planificar con este número. Un prefijo de muestra subestimaría el problema 4 veces.
+const peores = await q(`
+  select left(codigo, 3) pref, count(*)::int n from plan_contable
+   where activa and length(codigo) >= 3 group by 1 order by n desc limit 5`);
+const [peor] = peores;
+console.log(`  · peores prefijos de 3: ${peores.map((p) => `${p.pref}=${p.n}`).join(' · ')} · GET /plan?q= devuelve 30`);
+assert.ok(peor.n > 30, 'esperaba algún prefijo arriba de 30 matches: si no, revisá que la carga corrió');
+assert.ok(peor.n >= 208, `el peor prefijo cayó a ${peor.n}: si bajó, revisá que el catálogo esté completo`);
+console.log(`  ⚠ limit 30 esconde hasta ${peor.n - 30} cuentas SIN avisar · F5 (UI) tiene que paginar y mostrar "30 de N"`);
 
 // ── 7 · el destino automático quedó cargado (lo que F2 y el export van a leer) ──
 const [d] = await q(`select count(*)::int n from plan_contable where destino_debe is not null and destino_haber is not null`);
@@ -86,5 +98,47 @@ const [c6011020] = await q(`select destino_debe, destino_haber from plan_contabl
 assert.equal(c6011020.destino_debe, '20111');
 assert.equal(c6011020.destino_haber, '6111020');
 console.log('  ✓ 1368 destinos automáticos cargados · 6011020 → 20111/6111020');
+
+// ── 8 · parent_codigo contra el catálogo FUSIONADO, no solo contra el export ──
+// El parser es puro y solo ve los códigos del Excel, así que no puede saber que '92' existe
+// entre nuestras 487. Si colgara de null, `DELETE /plan/92` (contabilidad.ts:289 busca hijos
+// por parent_codigo) pasaría el guard y borraría un rubro con descendientes vivos.
+// 4811 es deriva PREEXISTENTE (cuelga de '48' aunque '481' existe): fila en uso, se deja
+// quieta a propósito y se nombra acá para que una nueva huérfana falle fuerte.
+const colgadas = await q(`
+  select c.codigo from plan_contable c
+   where exists (select 1 from plan_contable p
+                  where p.codigo <> c.codigo and c.codigo like p.codigo || '%'
+                    and length(p.codigo) > length(coalesce(c.parent_codigo, '')))
+   order by c.codigo`);
+assert.deepEqual(colgadas.map((r) => r.codigo), ['4811'], `parent_codigo no resuelve al prefijo más largo del catálogo fusionado: ${colgadas.map((r) => r.codigo).join(', ')}`);
+console.log('  ✓ parent_codigo resuelve contra el catálogo fusionado (solo 4811, deriva preexistente)');
+
+// ── 9 · Review Focus 4 · el loader es idempotente y NO pisa lo nuestro ──
+// Esto es la propiedad más caras de F1 y hasta acá se había verificado a mano. Queda commiteada:
+//   · 0 diferencias en las 9 columnas CONTASIS ⇒ una 2ª corrida del loader no cambia nada.
+//   · ~1292 descripciones distintas del export ⇒ el camino conservador sigue vivo. Si alguien
+//     agrega `descripcion` al .set() del loader, este número se va a ~0 y esto falla.
+const { cuentas: fix } = parsePlanContasis(fs.readFileSync(FIXTURE));
+const dbrows = new Map(
+  (await q(`select codigo, descripcion, contasis_nivel, contasis_tipo, contasis_analisis, destino_debe,
+                   destino_haber, exige_centro_costo, cod_balance_1, cod_balance_2, cuenta_cierre
+              from plan_contable`)).map((x) => [x.codigo as string, x]),
+);
+const difCols: string[] = [];
+let difDesc = 0;
+for (const c of fix) {
+  const d = dbrows.get(c.codigo);
+  assert.ok(d, `${c.codigo} está en la fixture pero no en la DB: el loader no corrió completo`);
+  if (d.descripcion !== c.descripcion) difDesc++;
+  if (d.contasis_nivel !== c.contasisNivel || d.contasis_tipo !== c.contasisTipo
+    || d.contasis_analisis !== c.contasisAnalisis || d.destino_debe !== c.destinoDebe
+    || d.destino_haber !== c.destinoHaber || d.exige_centro_costo !== c.exigeCentroCosto
+    || d.cod_balance_1 !== c.codBalance1 || d.cod_balance_2 !== c.codBalance2
+    || d.cuenta_cierre !== c.cuentaCierre) difCols.push(c.codigo);
+}
+assert.deepEqual(difCols, [], `columnas CONTASIS fuera de sync (una 2ª corrida cambiaría): ${difCols.slice(0, 10).join(', ')}`);
+assert.ok(difDesc >= 1292, `solo ${difDesc} descripciones difieren del export: el loader está pisando las nuestras`);
+console.log(`  ✓ loader idempotente · 0 columnas CONTASIS fuera de sync · ${difDesc} descripciones nuestras preservadas`);
 
 console.log('✅ F1 sin regresiones');

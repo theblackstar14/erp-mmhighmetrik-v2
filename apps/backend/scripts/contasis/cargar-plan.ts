@@ -22,7 +22,13 @@ import { parsePlanContasis } from '../../src/lib/contasisPlan.js';
 const AQUI = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(AQUI, 'PLAN DE CUENTAS ESTANDAR_SQL.xlsx');
 
-const { cuentas, duplicados } = parsePlanContasis(fs.readFileSync(FIXTURE));
+// Las nuestras se leen ANTES de parsear: el padre de una cuenta de CONTASIS puede ser un código
+// que solo existe de nuestro lado (p.ej. '92', padre de '9249021', no viene en el export).
+const previas = new Set(
+  (await db.select({ codigo: schema.planContable.codigo }).from(schema.planContable)).map((r) => r.codigo),
+);
+
+const { cuentas, duplicados } = parsePlanContasis(fs.readFileSync(FIXTURE), previas);
 console.log(`· parseadas ${cuentas.length} cuentas de la fixture`);
 
 // Los duplicados del export se reportan SIEMPRE, no se esconden: para los que difieren en
@@ -36,9 +42,6 @@ if (duplicados.length) {
   }
 }
 
-const previas = new Set(
-  (await db.select({ codigo: schema.planContable.codigo }).from(schema.planContable)).map((r) => r.codigo),
-);
 const nuevas = cuentas.filter((c) => !previas.has(c.codigo));
 const compartidas = cuentas.filter((c) => previas.has(c.codigo));
 console.log(`· ${nuevas.length} nuevas · ${compartidas.length} compartidas · ${previas.size} ya existentes`);
@@ -96,6 +99,21 @@ for (const c of compartidas) {
   actualizadas++;
 }
 console.log(`· actualizadas ${actualizadas} compartidas (solo columnas CONTASIS)`);
+
+// Reparación angosta: una cuenta cargada por una corrida anterior (cuando el padre se resolvía
+// solo contra el Excel) puede tener parent_codigo null teniendo padre en el catálogo fusionado.
+// Solo RELLENA nulls; nunca reescribe un padre ya puesto, así que no toca deriva preexistente
+// como 4811 (cuelga de '48' aunque '481' existe) ni nada que alguien haya corregido a mano.
+const rep: any = await db.execute(sql`
+  update plan_contable c
+     set parent_codigo = (select p.codigo from plan_contable p
+                           where p.codigo <> c.codigo and c.codigo like p.codigo || '%'
+                           order by length(p.codigo) desc limit 1)
+   where c.parent_codigo is null
+     and exists (select 1 from plan_contable p where p.codigo <> c.codigo and c.codigo like p.codigo || '%')
+  returning c.codigo, c.parent_codigo`);
+const reparadas = (rep.rows ?? rep) as any[];
+if (reparadas.length) console.log(`· reparadas ${reparadas.length} cuentas sin padre: ${reparadas.map((x) => `${x.codigo}→${x.parent_codigo}`).join(', ')}`);
 
 const r: any = await db.execute(sql`
   select count(*)::int total,
