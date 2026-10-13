@@ -190,7 +190,12 @@ export const api = {
     removeEquipo: (id: string, profesionalId: string) => req<{ ok: boolean }>(`/api/proyectos/${id}/equipo/${profesionalId}`, { method: 'DELETE' }),
     getCashflow: (id: string) => req<CashflowResponse>(`/api/proyectos/${id}/cashflow`),
     getPartidasCostos: (id: string) =>
-      req<{ costos: Record<string, { ejecutado: number; comprometido: number }> }>(`/api/proyectos/${id}/partidas-costos`),
+      req<{
+        costos: Record<string, { ejecutado: number; comprometido: number }>;
+        ocsPorPartida: Record<string, OcPartidaRef[]>;
+        sinPartida: OcPartidaRef[];
+      }>(`/api/proyectos/${id}/partidas-costos`),
+    partidasCostosXlsxUrl: (id: string) => `${API_BASE}/api/proyectos/${id}/partidas-costos/xlsx`,
     setValorizacionEstado: (proyectoId: string, valId: string, estado: string, opts?: { cuentaId?: string; fechaCobro?: string; cuentaContable?: string; comprobante?: { tipo?: string; serie?: string; numero?: string; fecha?: string; fechaVenc?: string; detraccion?: number } }) =>
       req<{ ok: boolean; valorizacion: Valorizacion }>(`/api/proyectos/${proyectoId}/valorizaciones/${valId}/estado`, {
         method: 'PATCH',
@@ -412,7 +417,7 @@ export const api = {
 
     // Asistencia biométrica (lector SenseFP M1 vía ZKBio Zlink)
     getAsistenciaConfig: () => req<ZlinkEstado>('/api/oficina/asistencia/config'),
-    setAsistenciaConfig: (data: { baseUrl?: string; companyId?: string; accessToken?: string; refreshToken?: string; expiresIn?: number }) => req<ZlinkEstado>('/api/oficina/asistencia/config', { method: 'PUT', body: JSON.stringify(data) }),
+    setAsistenciaConfig: (data: { baseUrl?: string; companyId?: string; userName?: string; password?: string }) => req<ZlinkEstado>('/api/oficina/asistencia/config', { method: 'PUT', body: JSON.stringify(data) }),
     listMarcaciones: (desde: string, hasta: string) => req<{ marcaciones: Marcacion[] }>(`/api/oficina/asistencia?desde=${desde}&hasta=${hasta}`),
     syncAsistencia: () => req<SyncAsistenciaResult>('/api/oficina/asistencia/sync', { method: 'POST' }),
     pendientesAsistencia: () => req<{ pendientes: PinPendiente[] }>('/api/oficina/asistencia/pendientes'),
@@ -617,9 +622,16 @@ export const api = {
         aprobaciones: OcAprobacion[];
         proveedor: Proveedor | null;
         proyecto: Proyecto | null;
+        partida: { id: string; codigo: string; nombre: string } | null;
       }>(`/api/logistica/ordenes-compra/${id}`),
+    setOcPartida: (id: string, partidaId: string | null) =>
+      req<{ ok: boolean }>(`/api/logistica/ordenes-compra/${id}/partida`, {
+        method: 'PATCH',
+        body: JSON.stringify({ partidaId }),
+      }),
     createOc: (
       data: Partial<OrdenCompra> & {
+        partidaId?: string;
         lineas: Array<{
           descripcion: string;
           unidad?: string;
@@ -638,6 +650,19 @@ export const api = {
     ) =>
       req<{ oc: OrdenCompra }>(`/api/logistica/ordenes-compra`, {
         method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    // Editar OC/OS · solo borrador/pendiente_aprobacion (backend valida)
+    updateOc: (
+      id: string,
+      data: Partial<OrdenCompra> & {
+        partidaId?: string;
+        lineas: Array<{ descripcion: string; unidad?: string; cantidad: number | string; precioUnitario: number | string; partidaId?: string }>;
+        incluyeIgv?: boolean;
+      },
+    ) =>
+      req<{ oc: OrdenCompra }>(`/api/logistica/ordenes-compra/${id}`, {
+        method: 'PATCH',
         body: JSON.stringify(data),
       }),
     aprobarOc: (id: string, data: { userId?: string; userNombre?: string; comentario?: string }) =>
@@ -845,6 +870,22 @@ export const api = {
       req<{ borrador: CpeBorrador }>(`/api/cpe/bandeja/${id}/descartar`, { method: 'POST', body: JSON.stringify({ motivo }) }),
     marcarRegistrado: (id: string, ref: { gastoId?: string; ventaId?: string }) =>
       req<{ borrador: CpeBorrador }>(`/api/cpe/bandeja/${id}/registrado`, { method: 'POST', body: JSON.stringify(ref) }),
+  },
+
+  // SEACE · licitaciones (proxy al scraper · contrato HANDOFF §4)
+  seace: {
+    alertas: (limit = 100) => req<{ data: SeaceAlerta[] }>(`/api/seace/alertas?limit=${limit}`),
+    procesos: (f?: SeaceFiltros) => {
+      const qs = new URLSearchParams();
+      for (const [k, v] of Object.entries(f ?? {})) if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
+      return req<{ data: SeaceProceso[]; total: number }>(`/api/seace/procesos${qs.toString() ? `?${qs}` : ''}`);
+    },
+    proceso: (nid: string) => req<{ proceso: SeaceProceso; documentos: SeaceDocumento[] }>(`/api/seace/procesos/${nid}`),
+    lastRun: () => req<{ run: SeaceRun | null; procesos: unknown[] }>(`/api/seace/last-run`),
+    ubicaciones: () => req<{ regiones: string[]; provincias: string[]; distritos: string[] }>(`/api/seace/ubicaciones`),
+    pin: (nid: string, nota?: string) => req<unknown>(`/api/seace/procesos/${nid}/pin`, { method: 'PUT', body: JSON.stringify({ nota }) }),
+    unpin: (nid: string) => req<unknown>(`/api/seace/procesos/${nid}/pin`, { method: 'DELETE' }),
+    downloadUrl: (nid: string, ref: string) => `${API_BASE}/api/seace/procesos/${nid}/documentos/${encodeURIComponent(ref)}/download`,
   },
 
   // H3 · Conciliación bancaria
@@ -1614,6 +1655,52 @@ export type AvancesResponse = {
     avanceFinancieroPct: number;
   } | null;
 };
+
+// OC/OS vinculada a una partida (análisis de gastos por partida)
+export type OcPartidaRef = { id: string; numero: string; proveedor: string; concepto: string; estado: string; monto: number };
+
+// ─── SEACE (vista seace.procesos_erp · columnas snake_case tal cual) ───
+export type SeaceResultado = 'califica' | 'no_califica' | 'consorcio' | 'indeterminado';
+export type SeaceProceso = {
+  nid_proceso: string;
+  nomenclatura: string;
+  entidad: string | null;
+  descripcion_corta: string | null;
+  descripcion?: string | null;
+  valor_referencial: string | number | null; // puede ser null antes de la integración
+  moneda: string | null;
+  fecha_propuesta: string | null;
+  dias_restantes_hoy: number | null; // usar esta, no dias_restantes
+  estado: 'activo' | 'pendiente' | 'vencido' | string | null;
+  region: string | null;
+  provincia: string | null;
+  distrito: string | null;
+  score: number | null; // heurístico interno · NO es probabilidad
+  evaluacion: { resultado?: SeaceResultado; razones?: string[]; sugerenciaConsorcio?: string } | null;
+  requisitos: Record<string, unknown> | null;
+  plantel: { cumple?: 'si' | 'parcial' | 'no'; cubiertos?: number; total?: number; faltantes?: Array<Record<string, unknown>>; asignaciones?: Array<Record<string, unknown>> } | null;
+  calidad_texto: { escaneado?: boolean; template?: boolean; razonCalidad?: string } | null;
+  documentos: Array<Record<string, unknown>> | null;
+  integrada: boolean | null;
+  dias_hasta_integracion: number | null;
+  novedad: 'nuevo' | 'bases_integradas' | 'cambio_evaluacion' | 'doc_actualizado' | string | null;
+  revisar: boolean;
+  revisar_tipo: 'oportunidad' | 'manual' | null;
+  motivo: string | null;
+  veces_visto: number | null;
+  primera_vez: string | null;
+  ultima_vez: string | null;
+  pinned: boolean;
+  pin_nota: string | null;
+};
+export type SeaceAlerta = Pick<SeaceProceso, 'nid_proceso' | 'nomenclatura' | 'entidad' | 'novedad' | 'revisar_tipo' | 'motivo' | 'score' | 'dias_restantes_hoy' | 'valor_referencial' | 'pinned'> & { resultado: SeaceResultado | null };
+export type SeaceDocumento = { hash_sha256?: string; filename?: string; etapa?: string; documento?: string; size_bytes?: number; [k: string]: unknown };
+export type SeaceRun = { run_id: string; started_at: string; finished_at: string | null; resumen: Record<string, unknown> | null; duracion_ms: number | null };
+export type SeaceFiltros = Partial<{
+  resultado: string; estado: string; minScore: number; minDias: number; minMonto: number; maxMonto: number;
+  region: string; provincia: string; distrito: string; cumplePlantel: string; search: string;
+  revisar: boolean; pinned: boolean; integrada: boolean; orderBy: string; direction: 'asc' | 'desc'; limit: number; offset: number;
+}>;
 
 export type Partida = {
   id: string;
@@ -2422,7 +2509,7 @@ export type RendicionItemInput = { tipoComprobante: 'factura' | 'boleta' | 'rh' 
 
 // ─── Asistencia biométrica · ZKBio Zlink ─────────────────────
 export type Marcacion = { id: string; zlinkId: string; employeeCode: string; empleadoId: string | null; nombre: string | null; punchTime: string; deviceSn: string | null; terminalAlias: string | null; createdAt: string };
-export type ZlinkEstado = { configurado: boolean; baseUrl: string; companyId: string | null; tokenExpiry: string | null; lastSyncAt: string | null; lastSyncMsg: string | null };
+export type ZlinkEstado = { configurado: boolean; credencialesFuente: 'db' | 'env' | null; usuario: string | null; lectores: number; baseUrl: string; companyId: string | null; tokenExpiry: string | null; lastSyncAt: string | null; lastSyncMsg: string | null };
 export type SyncAsistenciaResult = { traidas: number; nuevas: number; sinMatch: number; desde: string; hasta: string };
 // PIN que marcó pero no cruza con ningún empleado (el lector no siempre usa el DNI como PIN).
 export type PinPendiente = { employeeCode: string; nombre: string | null; marcas: number; desde: string; hasta: string };

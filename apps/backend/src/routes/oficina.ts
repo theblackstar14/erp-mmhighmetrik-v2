@@ -274,11 +274,16 @@ router.get('/oficina/asistencia/config', async (_req, res) => {
   res.json(await getEstadoZlink());
 });
 
-// Ajuste de config del lector (baseUrl/companyId; token manual como escape hatch).
-// El login normal es por credenciales de env (ZLINK_USER/ZLINK_PASS) — ver zlinkAsistencia.
+// Vincular lector: usuario+contraseña del portal Zlink (prueba login antes de guardar) y/o baseUrl.
+// Fallback sin config de UI: ZLINK_USER/ZLINK_PASS de env — ver zlinkAsistencia.
 router.put('/oficina/asistencia/config', gate, async (req, res) => {
-  const b = req.body as { baseUrl?: string; companyId?: string; accessToken?: string; refreshToken?: string; expiresIn?: number };
-  res.json(await setConfigZlink(b));
+  const b = req.body as { baseUrl?: string; companyId?: string; userName?: string; password?: string };
+  try {
+    res.json(await setConfigZlink(b));
+  } catch (e) {
+    if (e instanceof ZlinkError) return res.status(400).json({ error: e.message });
+    throw e;
+  }
 });
 
 // Sincronizar ahora (manual). El cron 09:30/10:00 llama al mismo servicio.

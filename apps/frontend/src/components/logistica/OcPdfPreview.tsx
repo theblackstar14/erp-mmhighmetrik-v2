@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, Download, Loader2, Paperclip, Printer, Receipt, X } from 'lucide-react';
 import { useRef } from 'react';
 import { createPortal } from 'react-dom';
@@ -21,11 +21,28 @@ const EMISOR = {
 };
 
 export function OcPdfPreview({ ocId, onClose }: { ocId: string; onClose: () => void }) {
+  const qc = useQueryClient();
   const { data, isLoading } = useQuery({
     queryKey: ['logistica-oc-detail', ocId],
     queryFn: () => api.logistica.getOc(ocId),
   });
   const sheetRef = useRef<HTMLDivElement>(null);
+
+  // Partida presupuestal · dato interno (no sale en el PDF) · editable salvo anulada
+  const proyectoId = data?.oc.proyectoId ?? null;
+  const partidasQ = useQuery({
+    queryKey: ['partidas', proyectoId],
+    queryFn: () => api.proyectos.listPartidas(proyectoId!),
+    enabled: !!proyectoId,
+  });
+  const partidasHoja = (partidasQ.data?.partidas ?? []).filter((p) => !p.isSummary && !p.isMilestone && !p.codigo.startsWith('00.HITO'));
+  const partidaMut = useMutation({
+    mutationFn: (partidaId: string | null) => api.logistica.setOcPartida(ocId, partidaId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['logistica-oc-detail', ocId] });
+      if (proyectoId) qc.invalidateQueries({ queryKey: ['partidas-costos', proyectoId] });
+    },
+  });
 
   const printPdf = () => {
     // fitHeightMm = 297 - margenes @page (14 + 12) → escala a 1 pagina si desborda
@@ -56,6 +73,23 @@ export function OcPdfPreview({ ocId, onClose }: { ocId: string; onClose: () => v
               </p>
             )}
           </div>
+          {/* Partida presupuestal · interno, no sale en el PDF */}
+          {data && proyectoId && data.oc.estado !== 'anulada' && (
+            <select
+              value={data.partida?.id ?? ''}
+              onChange={(e) => partidaMut.mutate(e.target.value || null)}
+              disabled={partidaMut.isPending || partidasQ.isLoading}
+              className="h-8 max-w-[220px] rounded-md border border-line bg-bg-sunken px-2 text-[10.5px] text-ink-2 outline-none focus:border-primary disabled:opacity-50 shrink-0"
+              title="Partida presupuestal vinculada (análisis de gastos por partida · no sale en el PDF)"
+            >
+              <option value="">— sin partida —</option>
+              {partidasHoja.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.codigo} — {p.nombre.slice(0, 32)}
+                </option>
+              ))}
+            </select>
+          )}
         </div>
         <div className="flex items-center gap-2">
           {/* Documentos en NAS · cotización · OC.pdf oficial · comprobante de pago */}
@@ -353,16 +387,8 @@ function OcSheet({ data }: { data: NonNullable<Awaited<ReturnType<typeof api.log
           <div className="oc-generales-body">{oc.terminos ?? ''}</div>
         </div>
         <div className="oc-firma-wrap">
-          <div className="oc-firma-box">
-            <span className="oc-firma-label">FIRMA</span>
-          </div>
-          <div className="oc-firma-caption">
-            {EMISOR.razonSocial}
-            <br />
-            <b>{(oc.gestorNombre ?? 'MARIO A. GARCÍA CALDERÓN').toUpperCase()}</b>
-            <br />
-            SUB GERENTE
-          </div>
+          {/* Firma escaneada · ya incluye razón social + nombre + cargo */}
+          <img src="/firma-oc.png" alt="Firma Sub Gerente" className="oc-firma-img" />
         </div>
       </div>
 
@@ -612,27 +638,10 @@ const PRINT_STYLES = `
   align-items: center;
   gap: 2mm;
 }
-.oc-firma-box {
-  width: 55mm;
-  height: 18mm;
-  border: 1pt dashed #6B6B68;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: #FCFCFA;
-}
-.oc-firma-label {
-  font-size: 9pt;
-  color: #9A9A96;
-  letter-spacing: 1pt;
-  text-transform: uppercase;
-  font-weight: 500;
-}
-.oc-firma-caption {
-  font-size: 7.5pt;
-  text-align: center;
-  line-height: 1.3;
-  color: #1C1C1C;
+.oc-firma-img {
+  max-height: 30mm;
+  max-width: 55mm;
+  object-fit: contain;
 }
 
 .oc-legal {

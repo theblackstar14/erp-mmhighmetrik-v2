@@ -1,8 +1,10 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronLeft, ChevronRight, Eye, FileText, Plus, Search, ShoppingCart, X } from 'lucide-react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Ban, ChevronLeft, ChevronRight, Eye, FileText, Loader2, PackageCheck, Pencil, Plus, Search, Send, ShoppingCart, X } from 'lucide-react';
 import { Suspense, lazy, useMemo, useState } from 'react';
 import { api } from '@/lib/api.js';
+import { useAuthStore } from '@/lib/auth-store.js';
 import { cn, fmtPEN } from '@/lib/utils.js';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog.js';
 import { SkelRows } from '@/components/ui/Skeleton.js';
 
 // Modales lazy · solo se descargan al abrirlos (form 800 líneas + visor PDF con CSS print)
@@ -39,6 +41,7 @@ export function LogisticaOrdenesPage() {
   const [busca, setBusca] = useState('');
   const [page, setPage] = useState(0);
   const [showModal, setShowModal] = useState(false);
+  const [editOcId, setEditOcId] = useState<string | null>(null);
   const [previewOcId, setPreviewOcId] = useState<string | null>(null);
 
   const { data, isLoading } = useQuery({
@@ -47,6 +50,32 @@ export function LogisticaOrdenesPage() {
   });
 
   const ordenes = data?.ordenes ?? [];
+
+  // ─── Acciones de estado · enviada (emitida) / recibida (entregada) / anular ───
+  type OcRow = (typeof ordenes)[number];
+  const user = useAuthStore((s) => s.user);
+  const [accion, setAccion] = useState<{ tipo: 'enviar' | 'recibir' | 'anular'; oc: OcRow } | null>(null);
+  const [motivo, setMotivo] = useState('');
+  const [accionError, setAccionError] = useState<string | null>(null);
+  const actor = { userId: user?.id, userNombre: user ? `${user.nombres} ${user.apellidos}`.trim() : undefined };
+  const invalidarOcs = () => {
+    qc.invalidateQueries({ queryKey: ['logistica-ocs'] });
+    qc.invalidateQueries({ queryKey: ['fin-oc-queue'] });
+    qc.invalidateQueries({ queryKey: ['partidas-costos'] }); // anular saca la OC del comprometido
+  };
+  const accionMut = useMutation({
+    mutationFn: ({ tipo, oc }: { tipo: 'enviar' | 'recibir' | 'anular'; oc: OcRow }) => {
+      if (tipo === 'enviar') return api.logistica.emitirOc(oc.id, actor);
+      if (tipo === 'recibir') return api.logistica.cambiarEstadoOc(oc.id, { estado: 'entregada', ...actor });
+      return api.logistica.cambiarEstadoOc(oc.id, { estado: 'anulada', comentario: motivo.trim(), ...actor });
+    },
+    onSuccess: () => { invalidarOcs(); setAccion(null); setMotivo(''); setAccionError(null); },
+    onError: (e: Error) => setAccionError(e.message),
+  });
+  const puedeEditar = (o: OcRow) => ['borrador', 'pendiente_aprobacion'].includes(o.estado);
+  const puedeEnviar = (o: OcRow) => o.estado === 'aprobada';
+  const puedeRecibir = (o: OcRow) => ['aprobada', 'emitida', 'en_transito'].includes(o.estado);
+  const puedeAnular = (o: OcRow) => !['anulada', 'rechazada'].includes(o.estado) && o.estadoPago !== 'pagada';
 
   // búsqueda client-side
   const q = busca.trim().toLowerCase();
@@ -152,6 +181,18 @@ export function LogisticaOrdenesPage() {
                         {o.pdfNasPath && (
                           <a href={api.logistica.ocDocUrl(o.id, 'oc')} target="_blank" rel="noreferrer" className="h-6 w-6 rounded inline-flex items-center justify-center text-ink-3 hover:text-primary hover:bg-bg-sunken" title="OC.pdf (NAS)"><FileText className="h-3.5 w-3.5" /></a>
                         )}
+                        {puedeEditar(o) && (
+                          <button onClick={() => setEditOcId(o.id)} className="h-6 w-6 rounded inline-flex items-center justify-center text-ink-3 hover:text-primary hover:bg-bg-sunken" title="Editar orden (antes de aprobación)"><Pencil className="h-3.5 w-3.5" /></button>
+                        )}
+                        {puedeEnviar(o) && (
+                          <button onClick={() => { setAccionError(null); setAccion({ tipo: 'enviar', oc: o }); }} className="h-6 w-6 rounded inline-flex items-center justify-center text-ink-3 hover:text-primary hover:bg-bg-sunken" title="Marcar enviada al proveedor"><Send className="h-3.5 w-3.5" /></button>
+                        )}
+                        {puedeRecibir(o) && (
+                          <button onClick={() => { setAccionError(null); setAccion({ tipo: 'recibir', oc: o }); }} className="h-6 w-6 rounded inline-flex items-center justify-center text-ink-3 hover:text-emerald-600 hover:bg-bg-sunken" title="Registrar recepción"><PackageCheck className="h-3.5 w-3.5" /></button>
+                        )}
+                        {puedeAnular(o) && (
+                          <button onClick={() => { setAccionError(null); setMotivo(''); setAccion({ tipo: 'anular', oc: o }); }} className="h-6 w-6 rounded inline-flex items-center justify-center text-ink-3 hover:text-destructive hover:bg-bg-sunken" title="Anular orden"><Ban className="h-3.5 w-3.5" /></button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -176,11 +217,67 @@ export function LogisticaOrdenesPage() {
       {/* Nota · aprobación vive en Finanzas */}
       <p className="text-[10.5px] text-ink-4">Vista de seguimiento. La aprobación y el pago de órdenes se gestionan en <span className="font-medium text-ink-3">Finanzas → Órdenes</span> (separación de funciones).</p>
 
+      {/* Confirmaciones · enviada / recibida */}
+      <ConfirmDialog
+        open={accion?.tipo === 'enviar'}
+        title={`¿Marcar ${accion?.oc.numero} como enviada al proveedor?`}
+        message={accionError ?? 'La orden pasa a estado EMITIDA (ya fue comunicada al proveedor).'}
+        confirmLabel="Marcar enviada"
+        loading={accionMut.isPending}
+        onCancel={() => { setAccion(null); setAccionError(null); }}
+        onConfirm={() => accion && accionMut.mutate(accion)}
+      />
+      <ConfirmDialog
+        open={accion?.tipo === 'recibir'}
+        title={`¿Registrar recepción de ${accion?.oc.numero}?`}
+        message={accionError ?? 'La orden pasa a ENTREGADA con fecha de hoy (bienes recibidos / servicio conforme).'}
+        confirmLabel="Registrar recepción"
+        loading={accionMut.isPending}
+        onCancel={() => { setAccion(null); setAccionError(null); }}
+        onConfirm={() => accion && accionMut.mutate(accion)}
+      />
+
+      {/* Anular · motivo obligatorio */}
+      {accion?.tipo === 'anular' && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/45 p-4 animate-backdropIn" onClick={(e) => e.target === e.currentTarget && setAccion(null)}>
+          <div className="w-full max-w-sm rounded-xl border border-line bg-bg-elev p-5 shadow-2xl animate-modalPop">
+            <h3 className="text-[14px] font-semibold">Anular {accion.oc.numero}</h3>
+            <p className="mt-1 text-[12px] text-ink-3">Sale del comprometido de la obra. El PDF y el historial se conservan.</p>
+            <textarea
+              value={motivo}
+              onChange={(e) => setMotivo(e.target.value)}
+              rows={2}
+              placeholder="Motivo de anulación *"
+              className="mt-3 w-full rounded-md border border-line bg-bg-sunken px-2.5 py-2 text-[12px] outline-none focus:border-primary resize-y"
+            />
+            {accionError && <p className="mt-2 text-[11.5px] text-destructive">{accionError}</p>}
+            <div className="mt-4 flex justify-end gap-2">
+              <button onClick={() => { setAccion(null); setAccionError(null); }} disabled={accionMut.isPending} className="h-8 px-3 rounded-md border border-line text-[12px] hover:bg-bg-sunken disabled:opacity-50">Cancelar</button>
+              <button
+                onClick={() => accion && accionMut.mutate(accion)}
+                disabled={!motivo.trim() || accionMut.isPending}
+                className="inline-flex items-center gap-1.5 h-8 px-4 rounded-md bg-destructive text-white text-[12px] font-medium hover:opacity-90 disabled:opacity-50"
+              >
+                {accionMut.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                Anular orden
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <Suspense fallback={null}>
         {showModal && (
           <NuevaOcModal
             onClose={() => setShowModal(false)}
             onSuccess={(ocId) => { setShowModal(false); qc.invalidateQueries({ queryKey: ['logistica-ocs'] }); setPreviewOcId(ocId); }}
+          />
+        )}
+        {editOcId && (
+          <NuevaOcModal
+            editOcId={editOcId}
+            onClose={() => setEditOcId(null)}
+            onSuccess={(ocId) => { setEditOcId(null); qc.invalidateQueries({ queryKey: ['logistica-ocs'] }); setPreviewOcId(ocId); }}
           />
         )}
         {previewOcId && <OcPdfPreview ocId={previewOcId} onClose={() => setPreviewOcId(null)} />}

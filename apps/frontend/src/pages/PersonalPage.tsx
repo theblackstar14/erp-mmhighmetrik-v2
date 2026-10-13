@@ -106,7 +106,7 @@ export function PersonalPage() {
         <TabFade tabKey={tab}>
           {tab === 'dashboard' && <DashboardTab />}
           {tab === 'trabajadores' && <TrabajadoresTab proyectoId={proyectoId} empleados={empleados} loading={empleadosQ.isLoading} />}
-          {tab === 'asistencia' && <AsistenciaTab proyectoId={proyectoId} proyectos={proyectos} empleados={empleados} semanaId={semanaId} setSemanaId={setSemanaId} />}
+          {tab === 'asistencia' && <AsistenciaTab proyectoId={proyectoId} empleados={empleados} semanaId={semanaId} setSemanaId={setSemanaId} />}
           {tab === 'planilla' && <PlanillaView proyectoId={proyectoId} empleados={empleados} semanaId={semanaId} setSemanaId={setSemanaId} />}
           {tab === 'config' && <ConfigTab />}
         </TabFade>
@@ -332,36 +332,31 @@ function SemanaBar({ proyectoId, semanaId, setSemanaId }: { proyectoId: string; 
   );
 }
 
-// ─── Asistencia (tareo · grid diario · obra por fila) ────────
-function AsistenciaTab({ proyectoId, proyectos, empleados, semanaId, setSemanaId }: { proyectoId: string; proyectos: { id: string; codigo: string; nombre: string }[]; empleados: Empleado[]; semanaId: string | null; setSemanaId: (id: string | null) => void }) {
+// ─── Asistencia (tareo · grid diario) ────────────────────────
+// Sin selector de obra: un obrero pertenece a UNA obra hasta su cierre → los días se imputan
+// siempre a la obra de esta página (regla de negocio confirmada 2026-10).
+function AsistenciaTab({ proyectoId, empleados, semanaId, setSemanaId }: { proyectoId: string; empleados: Empleado[]; semanaId: string | null; setSemanaId: (id: string | null) => void }) {
   const qc = useQueryClient();
   const semanasQ = useQuery({ queryKey: ['planilla-semanas', proyectoId], queryFn: () => api.planilla.listSemanas(proyectoId) });
   const semana = semanasQ.data?.semanas.find((s) => s.id === semanaId) ?? null;
   const asistQ = useQuery({ queryKey: ['asistencia', semanaId], queryFn: () => api.planilla.getAsistencia(semanaId!), enabled: !!semanaId });
-  // mapas locales: empId|fecha → tipo · empId → obra (imputación del día)
+  // mapa local: empId|fecha → tipo
   const [grid, setGrid] = useState<Record<string, string>>({});
-  const [rowObra, setRowObra] = useState<Record<string, string>>({});
   useEffect(() => {
-    const m: Record<string, string> = {}; const o: Record<string, string> = {};
-    for (const a of asistQ.data?.asistencia ?? []) { m[`${a.empleadoId}|${a.fecha}`] = a.tipo; if (a.proyectoId) o[a.empleadoId] = a.proyectoId; }
-    setGrid(m); setRowObra(o);
+    const m: Record<string, string> = {};
+    for (const a of asistQ.data?.asistencia ?? []) m[`${a.empleadoId}|${a.fecha}`] = a.tipo;
+    setGrid(m);
   }, [asistQ.data]);
 
   const dias = useMemo(() => (semana ? rangoFechas(semana.fechaInicio, semana.fechaFin) : []), [semana]);
-  const obraDe = (empId: string) => rowObra[empId] ?? proyectoId;
   const setCell = useMutation({ mutationFn: (v: { empleadoId: string; fecha: string; tipo: string; proyectoId: string }) => api.planilla.setAsistencia(semanaId!, v), onSuccess: () => qc.invalidateQueries({ queryKey: ['asistencia', semanaId] }) });
   const cycle = (empId: string, fecha: string) => {
     const cur = grid[`${empId}|${fecha}`] ?? '';
     const next = CICLO[(CICLO.indexOf(cur) + 1) % CICLO.length]!;
     setGrid((g) => ({ ...g, [`${empId}|${fecha}`]: next }));
-    setCell.mutate({ empleadoId: empId, fecha, tipo: next, proyectoId: obraDe(empId) });
+    setCell.mutate({ empleadoId: empId, fecha, tipo: next, proyectoId });
   };
-  const cambiarObra = (empId: string, obra: string) => {
-    setRowObra((r) => ({ ...r, [empId]: obra }));
-    // re-imputar los días ya marcados de ese obrero a la nueva obra
-    for (const f of dias) { const t = grid[`${empId}|${f}`]; if (t) setCell.mutate({ empleadoId: empId, fecha: f, tipo: t, proyectoId: obra }); }
-  };
-  const marcarTodos = () => { for (const e of empleados) for (const f of dias) if (dowOf(f) !== 'Dom' && !grid[`${e.id}|${f}`]) { setGrid((g) => ({ ...g, [`${e.id}|${f}`]: 'normal' })); setCell.mutate({ empleadoId: e.id, fecha: f, tipo: 'normal', proyectoId: obraDe(e.id) }); } };
+  const marcarTodos = () => { for (const e of empleados) for (const f of dias) if (dowOf(f) !== 'Dom' && !grid[`${e.id}|${f}`]) { setGrid((g) => ({ ...g, [`${e.id}|${f}`]: 'normal' })); setCell.mutate({ empleadoId: e.id, fecha: f, tipo: 'normal', proyectoId }); } };
   const totalDias = empleados.reduce((s, e) => s + dias.filter((f) => DIAS_TRABAJADOS.has(grid[`${e.id}|${f}`] ?? '')).length, 0);
 
   return (
@@ -381,7 +376,6 @@ function AsistenciaTab({ proyectoId, proyectos, empleados, semanaId, setSemanaId
             <table className="w-full">
               <thead><tr className="border-b border-line bg-bg-sunken">
                 <th className="px-3 py-2 text-left font-mono text-[10px] uppercase tracking-wider text-ink-4 min-w-[170px]">Trabajador</th>
-                <th className="px-2 py-2 text-left font-mono text-[10px] uppercase text-ink-4 min-w-[130px]">Obra del día</th>
                 {dias.map((f) => <th key={f} className="px-2 py-2 text-center font-mono text-[10px] text-ink-4"><div>{dowOf(f)}</div><div className="text-ink-3">{diaOf(f)}</div></th>)}
                 <th className="px-3 py-2 text-center font-mono text-[10px] uppercase text-ink-4">Días</th>
               </tr></thead>
@@ -391,7 +385,6 @@ function AsistenciaTab({ proyectoId, proyectos, empleados, semanaId, setSemanaId
                   return (
                     <tr key={e.id} className="border-b border-line">
                       <td className="px-3 py-1.5"><div className="text-[12px] font-medium">{e.nombre}</div><div className="text-[10px] text-ink-4">{e.categoria}</div></td>
-                      <td className="px-2 py-1.5"><select className={cn(inputCls, 'w-full max-w-[130px]')} value={obraDe(e.id)} onChange={(ev) => cambiarObra(e.id, ev.target.value)}>{proyectos.map((p) => <option key={p.id} value={p.id}>{p.codigo}</option>)}</select></td>
                       {dias.map((f) => {
                         const tipo = grid[`${e.id}|${f}`] ?? '';
                         const cfg = ASIST[tipo];
@@ -403,13 +396,13 @@ function AsistenciaTab({ proyectoId, proyectos, empleados, semanaId, setSemanaId
                 })}
               </tbody>
               <tfoot><tr className="border-t border-line bg-bg-sunken/40">
-                <td className="px-3 py-1.5 text-[11px] text-ink-3" colSpan={2}>{empleados.length} obreros</td>
+                <td className="px-3 py-1.5 text-[11px] text-ink-3">{empleados.length} obreros</td>
                 {dias.map((f) => <td key={f} />)}
                 <td className="px-3 py-1.5 text-center font-mono text-[12px] font-bold">{totalDias}</td>
               </tr></tfoot>
             </table>
           </div>
-          <p className="text-[11px] text-ink-4">Click en cada celda para ciclar el estado (se guarda solo). La <b>obra del día</b> imputa los días de ese obrero al costo directo de esa obra — un obrero puede repartirse entre obras.</p>
+          <p className="text-[11px] text-ink-4">Click en cada celda para ciclar el estado (se guarda solo). Los días se imputan al costo directo de <b>esta obra</b> — el obrero pertenece a ella hasta el cierre.</p>
         </>
       )}
     </div>

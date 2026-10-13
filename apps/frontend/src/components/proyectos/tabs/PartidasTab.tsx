@@ -1,9 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, ChevronDown, ChevronRight, FileText, Pencil, RefreshCw, Search, X } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronRight, Download, FileText, Pencil, RefreshCw, Search, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { EditAvanceModal } from '@/components/proyectos/avance/EditAvanceModal.js';
-import { type Partida, api } from '@/lib/api.js';
+import { OcPdfPreview } from '@/components/logistica/OcPdfPreview.js';
+import { type OcPartidaRef, type Partida, api } from '@/lib/api.js';
 import { cn, fmtPEN, partidaPrecioUnitario, partidaPresupuesto } from '@/lib/utils.js';
 
 type RollupVal = { realCost: number; pctAvance: number; fromVal: boolean; comprometido: number };
@@ -26,6 +27,7 @@ export function PartidasTab({ proyectoId }: { proyectoId: string }) {
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [editing, setEditing] = useState<Partida | null>(null);
   const [selected, setSelected] = useState<Partida | null>(null);
+  const [viewOcId, setViewOcId] = useState<string | null>(null);
 
   // Memoizar la fuente · era un .filter nuevo cada render → rompía la memoización de todo lo de abajo
   const partidas = useMemo(
@@ -207,6 +209,13 @@ export function PartidasTab({ proyectoId }: { proyectoId: string }) {
               </div>
               <button type="button" onClick={expandAll} className="h-8 px-2.5 rounded-md border border-line text-[11px] text-ink-2 hover:bg-bg-sunken">Expandir</button>
               <button type="button" onClick={collapseAll} className="h-8 px-2.5 rounded-md border border-line text-[11px] text-ink-2 hover:bg-bg-sunken">Colapsar</button>
+              <a
+                href={api.proyectos.partidasCostosXlsxUrl(proyectoId)}
+                className="inline-flex items-center gap-1.5 h-8 px-2.5 rounded-md border border-line text-[11px] text-ink-2 hover:bg-bg-sunken"
+                title="Exportar análisis de gastos por partida (OC/OS) a Excel"
+              >
+                <Download className="h-3 w-3" /> Excel
+              </a>
             </div>
           </div>
 
@@ -291,10 +300,14 @@ export function PartidasTab({ proyectoId }: { proyectoId: string }) {
           budget={selected ? getBudget(selected) : 0}
           pu={selected ? getPU(selected) ?? 0 : 0}
           isLeaf={selected ? !hasChildren(selected) : false}
+          ocs={selected ? costosQ.data?.ocsPorPartida?.[selected.id] ?? [] : []}
           onEdit={() => selected && setEditing(selected)}
           onClose={() => setSelected(null)}
+          onViewOc={setViewOcId}
         />
       </div>
+
+      {viewOcId && <OcPdfPreview ocId={viewOcId} onClose={() => setViewOcId(null)} />}
 
       {editing && (
         <EditAvanceModal
@@ -309,14 +322,16 @@ export function PartidasTab({ proyectoId }: { proyectoId: string }) {
   );
 }
 
-function DetallePanel({ partida, rollup, budget, pu, isLeaf, onEdit, onClose }: {
+function DetallePanel({ partida, rollup, budget, pu, isLeaf, ocs, onEdit, onClose, onViewOc }: {
   partida: Partida | null;
   rollup: RollupVal | undefined;
   budget: number;
   pu: number;
   isLeaf: boolean;
+  ocs: OcPartidaRef[];
   onEdit: () => void;
   onClose: () => void;
+  onViewOc: (ocId: string) => void;
 }) {
   if (!partida) {
     return (
@@ -354,6 +369,34 @@ function DetallePanel({ partida, rollup, budget, pu, isLeaf, onEdit, onClose }: 
             Comprometido supera el presupuesto en {fmtPEN(comp - budget)} ({(((comp - budget) / budget) * 100).toFixed(1)}%)
           </div>
         )}
+
+        {/* OC/OS vinculadas a la partida */}
+        <div>
+          <div className="font-mono text-[9px] uppercase tracking-wider text-ink-4 mb-1.5">
+            Órdenes vinculadas{ocs.length > 0 ? ` (${ocs.length})` : ''}
+          </div>
+          {ocs.length > 0 ? (
+            <div className="space-y-1 max-h-48 overflow-y-auto">
+              {ocs.map((oc) => (
+                <button
+                  key={oc.id}
+                  type="button"
+                  onClick={() => onViewOc(oc.id)}
+                  title={`${oc.proveedor} · abrir ${oc.numero}`}
+                  className="w-full flex items-center gap-2 rounded border border-line/60 bg-bg-sunken/40 px-2 py-1.5 text-left hover:border-primary/40 hover:bg-primary/5 transition-colors"
+                >
+                  <span className="font-mono text-[10px] font-bold text-primary shrink-0">{oc.numero}</span>
+                  <span className="text-[10.5px] text-ink-3 truncate flex-1">{oc.proveedor}</span>
+                  <span className="font-mono text-[10.5px] tabular-nums font-semibold shrink-0">{fmtPEN(oc.monto)}</span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p className="text-[10.5px] text-ink-4 rounded border border-dashed border-line/60 px-2 py-2">
+              Sin OC/OS vinculadas · se vinculan al crear la orden o desde su detalle en Logística
+            </p>
+          )}
+        </div>
 
         {isLeaf && budget > 0 && (
           <button onClick={onEdit} className="w-full inline-flex items-center justify-center gap-1.5 h-8 rounded-md border border-line text-[11.5px] text-ink-2 hover:bg-bg-sunken">

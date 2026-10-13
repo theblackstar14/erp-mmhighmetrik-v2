@@ -10,7 +10,7 @@ import { requireAuth } from '../middleware/auth.js';
 const router = Router();
 router.use(requireAuth, requireAdmin());
 
-const MODULOS = ['dashboard', 'finanzas', 'contabilidad', 'logistica', 'inventario', 'personal', 'proyectos', 'oficina', 'usuarios'] as const;
+const MODULOS = ['dashboard', 'finanzas', 'contabilidad', 'logistica', 'inventario', 'personal', 'proyectos', 'oficina', 'usuarios', 'seace', 'licitaciones', 'inversiones', 'documentos'] as const;
 const NIVELES = ['ninguno', 'lectura', 'edicion'] as const;
 const permisosSchema = z.record(z.enum(NIVELES)); // { modulo: nivel }
 

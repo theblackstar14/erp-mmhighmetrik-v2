@@ -6,8 +6,9 @@
 //   refresh  POST /zlink-api/v1.0/zlink/customer/sso/refresh_token   {refresh_token}            → access/refresh_token, expires_in
 //   marcas   POST /zlink-api/v1.0/zlink/dcc/transaction (Bearer)     {deviceIds, deviceType:att, rango, paginación} → data.list
 // Password cifrado client-side: AES-256-CBC, key=MD5hex("ZlkLgInSeCetKKrEy:"+userName), iv="VrdMiseryEbcDzEK", base64.
-// Credenciales por env (nunca manejamos la contraseña en claro en DB): ZLINK_USER, ZLINK_PASS, ZLINK_DEVICE_IDS.
-import { createCipheriv, createHash } from 'node:crypto';
+// Credenciales: zlink_config (UI · pass_enc AES-GCM con clave de SESSION_SECRET) con fallback a env
+// ZLINK_USER/ZLINK_PASS. Lectores: ZLINK_DEVICE_IDS (env).
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import { db, schema } from '@erp/db';
 import { and, desc, eq, gte, inArray, isNull, lte, sql } from 'drizzle-orm';
 
@@ -38,6 +39,22 @@ export function cifrarPassword(password: string, userName: string): string {
   const key = createHash('md5').update(ZLINK_PW_SALT + userName).digest('hex'); // 32 ascii = AES-256
   const c = createCipheriv('aes-256-cbc', Buffer.from(key, 'utf8'), Buffer.from(ZLINK_PW_IV, 'utf8'));
   return Buffer.concat([c.update(password, 'utf8'), c.final()]).toString('base64');
+}
+
+// ── Cifrado de almacenamiento (pass_enc en DB) · AES-256-GCM, clave derivada de SESSION_SECRET.
+// Un dump de la DB no expone la contraseña; quien tenga el .env del server ya tenía acceso total.
+const storageKey = () => createHash('sha256').update('zlink:' + (process.env.SESSION_SECRET ?? 'dev')).digest();
+export function sellarSecreto(plain: string): string {
+  const iv = randomBytes(12);
+  const c = createCipheriv('aes-256-gcm', storageKey(), iv);
+  const data = Buffer.concat([c.update(plain, 'utf8'), c.final()]);
+  return Buffer.concat([iv, c.getAuthTag(), data]).toString('base64');
+}
+export function abrirSecreto(enc: string): string {
+  const buf = Buffer.from(enc, 'base64');
+  const d = createDecipheriv('aes-256-gcm', storageKey(), buf.subarray(0, 12));
+  d.setAuthTag(buf.subarray(12, 28));
+  return Buffer.concat([d.update(buf.subarray(28)), d.final()]).toString('utf8');
 }
 
 async function getConfig(): Promise<schema.ZlinkConfig> {
@@ -107,13 +124,25 @@ async function switchCompany(cfg: schema.ZlinkConfig, token: string): Promise<st
   return guardarTokens(j.data);
 }
 
-// Login con usuario+contraseña (env). La contraseña viaja cifrada igual que el portal.
-async function login(cfg: schema.ZlinkConfig): Promise<string> {
-  const userName = process.env.ZLINK_USER;
-  const password = process.env.ZLINK_PASS;
-  if (!userName || !password) {
-    throw new ZlinkError('Credenciales de Zlink ausentes · define ZLINK_USER y ZLINK_PASS en el entorno del backend');
+// Credenciales efectivas: config de UI (DB) pisa a env. null = no hay.
+function credenciales(cfg: schema.ZlinkConfig): { userName: string; password: string; fuente: 'db' | 'env' } | null {
+  if (cfg.userName && cfg.passEnc) {
+    try { return { userName: cfg.userName, password: abrirSecreto(cfg.passEnc), fuente: 'db' }; }
+    catch { /* SESSION_SECRET cambió → el sello no abre · cae a env */ }
   }
+  if (process.env.ZLINK_USER && process.env.ZLINK_PASS) {
+    return { userName: process.env.ZLINK_USER, password: process.env.ZLINK_PASS, fuente: 'env' };
+  }
+  return null;
+}
+
+// Login con usuario+contraseña (UI o env). La contraseña viaja cifrada igual que el portal.
+async function login(cfg: schema.ZlinkConfig): Promise<string> {
+  const creds = credenciales(cfg);
+  if (!creds) {
+    throw new ZlinkError('Credenciales de Zlink ausentes · configúralas en Oficina → Asistencia → Vincular (o ZLINK_USER/PASS en env)');
+  }
+  const { userName, password } = creds;
   const resp = await fetch(`${apiBase(cfg)}/v2.0/zlink/customer/sso/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Source: 'pc', 'Accept-Language': 'en-US' },
@@ -321,8 +350,11 @@ export async function listarMarcaciones(desde: string, hasta: string) {
 
 export async function getEstadoZlink() {
   const cfg = await getConfig();
+  const creds = credenciales(cfg);
   return {
-    configurado: !!(process.env.ZLINK_USER && process.env.ZLINK_PASS), // login por credenciales (env)
+    configurado: !!creds,
+    credencialesFuente: creds?.fuente ?? null, // 'db' (UI) | 'env' | null
+    usuario: creds ? creds.userName.replace(/^(..)[^@]*(@.*)?$/, (_m, a, dom) => `${a}•••${dom ?? ''}`) : null,
     lectores: deviceIds().length,
     baseUrl: cfg.baseUrl,
     companyId: cfg.companyId,
@@ -332,16 +364,33 @@ export async function getEstadoZlink() {
   };
 }
 
-export async function setConfigZlink(patch: { baseUrl?: string; companyId?: string; accessToken?: string; refreshToken?: string; expiresIn?: number }) {
+// Guarda credenciales/baseUrl desde la UI. Con userName+password hace LOGIN DE PRUEBA antes de
+// aceptar: si Zlink las rechaza no se persiste nada (y se restauran las anteriores).
+export async function setConfigZlink(patch: { baseUrl?: string; companyId?: string; userName?: string; password?: string }) {
   await db.insert(schema.zlinkConfig).values({ id: 'singleton' }).onConflictDoNothing();
+  const prev = await getConfig();
   const set: Record<string, unknown> = {};
   if (patch.baseUrl !== undefined) set.baseUrl = patch.baseUrl;
-  if (patch.companyId !== undefined) set.companyId = patch.companyId;
-  if (patch.accessToken !== undefined) {
-    set.accessToken = patch.accessToken;
-    set.tokenExpiry = new Date(Date.now() + (Number(patch.expiresIn ?? 3599) * 1000));
+  if (patch.companyId !== undefined) set.companyId = patch.companyId || null;
+
+  if (patch.userName && patch.password) {
+    // tokens/empresa viejos fuera: son de la sesión anterior
+    Object.assign(set, { userName: patch.userName, passEnc: sellarSecreto(patch.password), accessToken: null, refreshToken: null, tokenExpiry: null });
+    if (patch.companyId === undefined) set.companyId = null; // se redescubre con la cuenta nueva
+    await db.update(schema.zlinkConfig).set(set).where(eq(schema.zlinkConfig.id, 'singleton'));
+    try {
+      await login(await getConfig()); // prueba real: login + switchCompany + guarda tokens
+    } catch (e) {
+      // revierte credenciales y tokens a lo que había · el error sube con el motivo de Zlink
+      await db.update(schema.zlinkConfig).set({
+        userName: prev.userName, passEnc: prev.passEnc, companyId: prev.companyId,
+        accessToken: prev.accessToken, refreshToken: prev.refreshToken, tokenExpiry: prev.tokenExpiry,
+      }).where(eq(schema.zlinkConfig.id, 'singleton'));
+      throw e;
+    }
+    return getEstadoZlink();
   }
-  if (patch.refreshToken !== undefined) set.refreshToken = patch.refreshToken;
-  await db.update(schema.zlinkConfig).set(set).where(eq(schema.zlinkConfig.id, 'singleton'));
+
+  if (Object.keys(set).length) await db.update(schema.zlinkConfig).set(set).where(eq(schema.zlinkConfig.id, 'singleton'));
   return getEstadoZlink();
 }

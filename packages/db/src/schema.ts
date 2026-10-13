@@ -53,6 +53,7 @@ export const ocMonedaEnum = pgEnum('oc_moneda', ['PEN', 'USD']);
 // Enum (no tabla): un módulo nuevo es código nuevo (ruta+página), no lo crea el admin.
 export const moduloEnum = pgEnum('modulo', [
   'dashboard', 'finanzas', 'contabilidad', 'logistica', 'inventario', 'personal', 'proyectos', 'oficina', 'usuarios',
+  'seace', 'licitaciones', 'inversiones', 'documentos',
 ]);
 export const nivelAccesoEnum = pgEnum('nivel_acceso', ['ninguno', 'lectura', 'edicion']);
 
@@ -1261,11 +1262,15 @@ export const asistenciaMarcacion = pgTable(
 );
 export type AsistenciaMarcacion = typeof asistenciaMarcacion.$inferSelect;
 
-// Config de conexión al lector (ZKBio Zlink) · singleton. Token/refresh sembrados por el usuario.
+// Config de conexión al lector (ZKBio Zlink) · singleton. Login por credenciales (UI o env).
 export const zlinkConfig = pgTable('zlink_config', {
   id: varchar('id', { length: 12 }).primaryKey().default('singleton'),
   baseUrl: varchar('base_url', { length: 200 }).notNull().default('https://zlink.minervaiot.com'),
   companyId: varchar('company_id', { length: 60 }),
+  // Credenciales del portal configuradas desde UI (pisan a ZLINK_USER/PASS de env).
+  // passEnc = AES-256-GCM con clave derivada de SESSION_SECRET · nunca en claro en DB.
+  userName: varchar('user_name', { length: 120 }),
+  passEnc: text('pass_enc'),
   accessToken: text('access_token'),
   refreshToken: text('refresh_token'),
   tokenExpiry: timestamp('token_expiry'),
@@ -1285,8 +1290,9 @@ export const paramPlanilla = pgTable('param_planilla', {
   pctCompVac: decimal('pct_comp_vac', { precision: 6, scale: 4 }).default('0.10'),
   pctCts: decimal('pct_cts', { precision: 6, scale: 4 }).default('0.15'),
   pctGratif: decimal('pct_gratif', { precision: 6, scale: 4 }).default('0'),
-  pctHe60: decimal('pct_he60', { precision: 6, scale: 4 }).default('0.20'),
-  pctHe100: decimal('pct_he100', { precision: 6, scale: 4 }).default('0.25'),
+  // Recargo HE construcción civil (CAPECO): 60% y 100% sobre la hora simple
+  pctHe60: decimal('pct_he60', { precision: 6, scale: 4 }).default('0.60'),
+  pctHe100: decimal('pct_he100', { precision: 6, scale: 4 }).default('1.00'),
 });
 export type ParamPlanilla = typeof paramPlanilla.$inferSelect;
 

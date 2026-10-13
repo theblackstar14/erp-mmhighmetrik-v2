@@ -27,6 +27,7 @@ import planillaOficinaRoutes from './routes/planillaOficina.js';
 import profesionalesRoutes from './routes/profesionales.js';
 import proyectosRoutes from './routes/proyectos.js';
 import reportesRoutes from './routes/reportes.js';
+import seaceRoutes from './routes/seace.js';
 import usuariosRoutes from './routes/usuarios.js';
 
 // TLS self-signed (Synology HTTPS LAN)
@@ -87,6 +88,7 @@ app.use('/api', usuariosRoutes); // usuarios para asignar responsables
 app.use('/api', reportesRoutes); // reportes financieros (A2/A4/A5) + export Excel
 app.use('/api', profesionalesRoutes); // padrón de profesionales (equipo de obra)
 app.use('/api/ia', iaRoutes);
+app.use('/api', seaceRoutes); // SEACE · proxy al scraper (licitaciones) · HANDOFF Desktop/SEACE
 
 // Servir frontend compilado · solo en build Docker (SERVE_STATIC=1) · 1 contenedor = 1 URL.
 // En dev queda inerte (el frontend lo sirve Vite).

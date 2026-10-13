@@ -1,6 +1,6 @@
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Check, Loader2, Plus, Sparkles, X } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '@/lib/api.js';
 import { EmittingOverlay } from '@/components/ui/EmittingOverlay.js';
@@ -40,7 +40,15 @@ const TASAS_DETRACCION = [
   { v: 1.5, l: '1.5% · Comisión mercantil' },
 ];
 
-export function NuevaOcModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: (ocId: string) => void }) {
+export function NuevaOcModal({ onClose, onSuccess, editOcId }: { onClose: () => void; onSuccess: (ocId: string) => void; editOcId?: string | null }) {
+  const qc = useQueryClient();
+  const esEdicion = !!editOcId;
+  // Modo edición · carga la OC existente para prellenar
+  const editQ = useQuery({
+    queryKey: ['logistica-oc-detail', editOcId],
+    queryFn: () => api.logistica.getOc(editOcId!),
+    enabled: esEdicion,
+  });
   const proveedoresQ = useQuery({
     queryKey: ['logistica-proveedores'],
     queryFn: () => api.logistica.listProveedores(),
@@ -68,6 +76,9 @@ export function NuevaOcModal({ onClose, onSuccess }: { onClose: () => void; onSu
     lugarEntrega: 'LIMA',
     codigoProyecto: '',
     proyectoInternoId: '',
+    // Partida presupuestal (opcional) · análisis de gastos por partida
+    partidaId: '',
+    partidaSearch: '',
     // IGV + detracción
     pctIgv: '18',
     incluyeIgv: true,
@@ -83,6 +94,8 @@ export function NuevaOcModal({ onClose, onSuccess }: { onClose: () => void; onSu
   });
   const [error, setError] = useState<string | null>(null);
   const [showAutocomplete, setShowAutocomplete] = useState(false);
+  const [showPartidaDrop, setShowPartidaDrop] = useState(false);
+  const [rucLookup, setRucLookup] = useState<'idle' | 'buscando' | 'ok' | 'no-encontrado'>('idle');
   const [esOficina, setEsOficina] = useState(false); // OC sin proyecto (oficina/empresa MM)
   const [cotizacionFile, setCotizacionFile] = useState<File | null>(null);
   // Animación emitir · spinner → check → preview (estilo v1)
@@ -90,11 +103,77 @@ export function NuevaOcModal({ onClose, onSuccess }: { onClose: () => void; onSu
   const [emitDone, setEmitDone] = useState(false);
   const [emitNum, setEmitNum] = useState<string | null>(null);
 
-  // Flujo: crear (borrador) → subir cotización (obligatoria) → enviar a aprobación
+  // Prefill en modo edición · una sola vez al cargar la OC
+  const [prefilled, setPrefilled] = useState(false);
+  useEffect(() => {
+    if (!esEdicion || prefilled || !editQ.data) return;
+    const { oc, lineas, proveedor, proyecto, partida } = editQ.data;
+    setEsOficina(!oc.proyectoId);
+    setForm((prev) => ({
+      ...prev,
+      fechaEmision: String(oc.fechaEmision).slice(0, 10),
+      fechaEntrega: oc.fechaEntrega ? String(oc.fechaEntrega).slice(0, 10) : '',
+      moneda: (oc.moneda as 'PEN' | 'USD') ?? 'PEN',
+      medioPago: oc.medioPago ?? prev.medioPago,
+      formaPago: oc.formaPago ?? prev.formaPago,
+      cotizacion: oc.cotizacion ?? '',
+      concepto: (oc.concepto as 'BIEN' | 'SERVICIO') ?? 'BIEN',
+      sinRuc: !proveedor?.ruc,
+      ruc: proveedor?.ruc ?? '',
+      proveedorRazonSocial: proveedor?.razonSocial ?? '',
+      proveedorDireccion: proveedor?.domicilio ?? '',
+      lugarEntrega: oc.lugarEntrega ?? '',
+      codigoProyecto: proyecto?.codigo ?? '',
+      proyectoInternoId: oc.proyectoId ?? '',
+      partidaId: partida?.id ?? '',
+      partidaSearch: '',
+      pctIgv: String(Number(oc.pctIgv ?? 18)),
+      incluyeIgv: oc.incluyeIgv !== false,
+      aplicaDetraccion: oc.aplicaDetraccion === true,
+      pctDetraccion: oc.pctDetraccion ? String(Number(oc.pctDetraccion)) : '4',
+      gestorEmail: oc.gestorEmail ?? '',
+      gestorNombre: oc.gestorNombre ?? '',
+      terminos: oc.terminos ?? prev.terminos,
+      lineas: lineas.length
+        ? lineas.map((l) => ({ descripcion: l.descripcion, unidad: l.unidad ?? 'UND', cantidad: String(Number(l.cantidad)), precioUnitario: String(Number(l.precioUnitario)) }))
+        : prev.lineas,
+    }));
+    setPrefilled(true);
+  }, [esEdicion, prefilled, editQ.data]);
+  const yaTieneCotiz = esEdicion && !!editQ.data?.oc.cotizacionNasPath;
+
+  // Flujo crear: borrador → subir cotización (obligatoria) → enviar a aprobación
+  // Flujo editar: PATCH (solo borrador/pendiente) + reemplazo opcional de cotización
   const createMut = useMutation({
     mutationFn: async () => {
+      if (esEdicion) {
+        const { oc } = await api.logistica.updateOc(editOcId!, {
+          proyectoId: esOficina ? null : form.proyectoInternoId,
+          partidaId: !esOficina && form.partidaId ? form.partidaId : undefined,
+          fechaEmision: form.fechaEmision,
+          fechaEntrega: form.fechaEntrega || null,
+          lugarEntrega: form.lugarEntrega || null,
+          moneda: form.moneda,
+          medioPago: form.medioPago,
+          formaPago: form.formaPago,
+          cotizacion: form.cotizacion || null,
+          pctIgv: form.pctIgv,
+          incluyeIgv: form.incluyeIgv,
+          aplicaDetraccion: form.aplicaDetraccion,
+          pctDetraccion: form.aplicaDetraccion ? form.pctDetraccion : null,
+          gestorEmail: form.gestorEmail || null,
+          gestorNombre: form.gestorNombre || null,
+          terminos: form.terminos,
+          lineas: form.lineas
+            .filter((l) => l.descripcion.trim() && l.cantidad && l.precioUnitario)
+            .map((l) => ({ descripcion: l.descripcion.trim(), unidad: l.unidad, cantidad: l.cantidad, precioUnitario: l.precioUnitario })),
+        });
+        if (cotizacionFile) await api.logistica.uploadCotizacion(editOcId!, cotizacionFile);
+        return oc;
+      }
       const { oc } = await api.logistica.createOc({
         proyectoId: esOficina ? undefined : form.proyectoInternoId,
+        partidaId: !esOficina && form.partidaId ? form.partidaId : undefined,
         proveedorId: matchedProveedor?.id ?? undefined,
         ruc: form.sinRuc ? undefined : form.ruc,
         sinRuc: form.sinRuc,
@@ -127,6 +206,11 @@ export function NuevaOcModal({ onClose, onSuccess }: { onClose: () => void; onSu
       return oc;
     },
     onSuccess: (oc) => {
+      if (esEdicion) {
+        qc.invalidateQueries({ queryKey: ['logistica-oc-detail', editOcId] });
+        qc.invalidateQueries({ queryKey: ['partidas-costos'] });
+        qc.invalidateQueries({ queryKey: ['fin-oc-queue'] });
+      }
       setEmitNum(oc.numero ?? null);
       setEmitDone(true);
       // deja ver el check ~900ms antes de abrir el preview
@@ -137,6 +221,23 @@ export function NuevaOcModal({ onClose, onSuccess }: { onClose: () => void; onSu
 
   const proveedores = proveedoresQ.data?.proveedores ?? [];
   const proyectos = proyectosQ.data?.proyectos ?? [];
+
+  // Partidas hoja del proyecto elegido · para vincular la OC (opcional)
+  const partidasQ = useQuery({
+    queryKey: ['partidas', form.proyectoInternoId],
+    queryFn: () => api.proyectos.listPartidas(form.proyectoInternoId),
+    enabled: !esOficina && !!form.proyectoInternoId,
+  });
+  const partidasHoja = useMemo(
+    () => (partidasQ.data?.partidas ?? []).filter((p) => !p.isSummary && !p.isMilestone && !p.codigo.startsWith('00.HITO')),
+    [partidasQ.data],
+  );
+  const partidaSel = useMemo(() => partidasHoja.find((p) => p.id === form.partidaId) ?? null, [partidasHoja, form.partidaId]);
+  const partidaSugs = useMemo(() => {
+    const ql = form.partidaSearch.trim().toLowerCase();
+    if (!ql) return partidasHoja.slice(0, 8);
+    return partidasHoja.filter((p) => p.codigo.toLowerCase().includes(ql) || p.nombre.toLowerCase().includes(ql)).slice(0, 8);
+  }, [partidasHoja, form.partidaSearch]);
 
   // Auto-detect proveedor existente por RUC o razón social
   const matchedProveedor = useMemo(() => {
@@ -170,30 +271,45 @@ export function NuevaOcModal({ onClose, onSuccess }: { onClose: () => void; onSu
     setShowAutocomplete(false);
   };
 
-  // Cuando se llena RUC y matchea proveedor existente · auto-llenar
+  // Cuando se llena RUC · auto-llenar razón social: maestro local → consulta SUNAT
   const onRucChange = (v: string) => {
     const clean = v.replace(/\D/g, '').slice(0, 11);
     const m = proveedores.find((p) => p.ruc === clean);
     if (m && clean.length === 11) {
+      setRucLookup('idle');
       setForm({
         ...form,
         ruc: clean,
         proveedorRazonSocial: m.razonSocial,
         proveedorDireccion: m.domicilio ?? '',
       });
-    } else {
-      setForm({ ...form, ruc: clean });
+      return;
     }
+    setForm({ ...form, ruc: clean });
+    if (clean.length !== 11) { setRucLookup('idle'); return; }
+    setRucLookup('buscando');
+    api.catalogos
+      .getRuc(clean)
+      .then((d) => {
+        // ignora respuesta tardía si el usuario ya cambió el RUC
+        setForm((prev) => (prev.ruc === clean ? { ...prev, proveedorRazonSocial: d.razonSocial } : prev));
+        setRucLookup('ok');
+        qc.invalidateQueries({ queryKey: ['logistica-proveedores'] }); // SUNAT cachea al maestro
+      })
+      .catch(() => setRucLookup('no-encontrado'));
   };
 
   // Detectar código proyecto · auto-mapear interno
   const onCodigoProyectoChange = (codigo: string) => {
     const cod = codigo.trim().toUpperCase();
     const proy = proyectos.find((p) => p.codigo === cod);
+    const nextId = proy?.id ?? form.proyectoInternoId;
     setForm({
       ...form,
       codigoProyecto: cod,
-      proyectoInternoId: proy?.id ?? form.proyectoInternoId,
+      proyectoInternoId: nextId,
+      // proyecto distinto → partida anterior deja de valer
+      ...(nextId !== form.proyectoInternoId ? { partidaId: '', partidaSearch: '' } : {}),
     });
   };
 
@@ -203,6 +319,7 @@ export function NuevaOcModal({ onClose, onSuccess }: { onClose: () => void; onSu
       ...form,
       proyectoInternoId: id,
       codigoProyecto: proy?.codigo ?? form.codigoProyecto,
+      ...(id !== form.proyectoInternoId ? { partidaId: '', partidaSearch: '' } : {}),
     });
   };
 
@@ -239,8 +356,8 @@ export function NuevaOcModal({ onClose, onSuccess }: { onClose: () => void; onSu
   const validProv = form.proveedorRazonSocial.trim().length > 0 && validRuc;
   const validProyecto = esOficina || !!form.proyectoInternoId;
   const validItems = totales.itemsValidos > 0;
-  const validCotiz = !!cotizacionFile;
-  const isValid = validProv && validProyecto && validItems && validCotiz;
+  const validCotiz = !!cotizacionFile || yaTieneCotiz; // en edición la cotización ya adjunta vale
+  const isValid = validProv && validProyecto && validItems && validCotiz && (!esEdicion || prefilled);
 
 
   const addLinea = () => setForm({ ...form, lineas: [...form.lineas, { ...EMPTY_LINEA }] });
@@ -271,15 +388,15 @@ export function NuevaOcModal({ onClose, onSuccess }: { onClose: () => void; onSu
   const docPrefix = esServicio ? 'OS' : 'OC';
   const correlativoPreview = '00XX'; // placeholder · backend asigna real
   const anioPreview = new Date().getFullYear();
-  const ocNumPreview = `${docPrefix}-${anioPreview}-${correlativoPreview}`;
+  const ocNumPreview = esEdicion ? (editQ.data?.oc.numero ?? '...') : `${docPrefix}-${anioPreview}-${correlativoPreview}`;
 
   if (emitting) {
     return (
       <EmittingOverlay
         done={emitDone}
-        titulo={emitDone ? `${docLabel} emitida` : `Procesando ${docLabel}…`}
+        titulo={emitDone ? (esEdicion ? `${docLabel} actualizada` : `${docLabel} emitida`) : (esEdicion ? `Guardando ${docLabel}…` : `Procesando ${docLabel}…`)}
         refLabel={`N° ${emitNum ?? ocNumPreview}`}
-        subtitulo={emitDone ? 'Abriendo vista previa del documento...' : 'Subiendo cotización y enviando a aprobación'}
+        subtitulo={emitDone ? 'Abriendo vista previa del documento...' : esEdicion ? 'Guardando cambios' : 'Subiendo cotización y enviando a aprobación'}
       />
     );
   }
@@ -290,7 +407,7 @@ export function NuevaOcModal({ onClose, onSuccess }: { onClose: () => void; onSu
         {/* Header · estilo screenshot */}
         <div className="shrink-0 flex items-start justify-between border-b border-line px-6 py-4">
           <div>
-            <h2 className="text-[17px] font-bold tracking-[-0.01em]">Nueva {docLabel}</h2>
+            <h2 className="text-[17px] font-bold tracking-[-0.01em]">{esEdicion ? 'Editar' : 'Nueva'} {docLabel}</h2>
             <p className="text-[11.5px] text-ink-3 mt-0.5 font-mono">
               N° {ocNumPreview} · {new Date().toLocaleDateString('es-PE')}
             </p>
@@ -316,10 +433,13 @@ export function NuevaOcModal({ onClose, onSuccess }: { onClose: () => void; onSu
                   <button
                     key={opt.v}
                     type="button"
+                    disabled={esEdicion}
+                    title={esEdicion ? 'El tipo define el correlativo (OC/OS) · no se cambia al editar' : undefined}
                     onClick={() => setForm({ ...form, concepto: opt.v })}
                     className={cn(
                       'flex flex-col items-start rounded-md px-3.5 py-2.5 text-left transition-colors border',
                       active ? 'bg-bg-elev border-primary shadow-sm' : 'border-transparent hover:bg-bg-elev/60',
+                      esEdicion && 'opacity-60 cursor-not-allowed',
                     )}
                   >
                     <span className="flex items-center gap-2">
@@ -380,6 +500,7 @@ export function NuevaOcModal({ onClose, onSuccess }: { onClose: () => void; onSu
               <input
                 type="checkbox"
                 checked={form.sinRuc}
+                disabled={esEdicion}
                 onChange={(e) => setForm({ ...form, sinRuc: e.target.checked, ruc: e.target.checked ? '' : form.ruc })}
                 className="rounded border-line"
               />
@@ -395,6 +516,7 @@ export function NuevaOcModal({ onClose, onSuccess }: { onClose: () => void; onSu
                 <div className="relative">
                   <input
                     value={form.proveedorRazonSocial}
+                    disabled={esEdicion}
                     onChange={(e) => {
                       setForm({ ...form, proveedorRazonSocial: e.target.value });
                       setShowAutocomplete(true);
@@ -426,21 +548,45 @@ export function NuevaOcModal({ onClose, onSuccess }: { onClose: () => void; onSu
                   value={form.ruc}
                   onChange={(e) => onRucChange(e.target.value)}
                   placeholder={form.sinRuc ? '— sin RUC —' : '20XXXXXXXXX'}
-                  disabled={form.sinRuc}
+                  disabled={form.sinRuc || esEdicion}
                   className={cn('oc-input font-mono', !form.sinRuc && form.ruc && !/^\d{11}$/.test(form.ruc) && 'border-amber-500')}
                 />
               </Field>
             </div>
             <Field label="Dirección">
-              <input value={form.proveedorDireccion} onChange={(e) => setForm({ ...form, proveedorDireccion: e.target.value })} placeholder="Av. / Jr. / Calle ..." className="oc-input" />
+              <input value={form.proveedorDireccion} disabled={esEdicion} onChange={(e) => setForm({ ...form, proveedorDireccion: e.target.value })} placeholder="Av. / Jr. / Calle ..." className="oc-input" />
             </Field>
+            {esEdicion && (
+              <div className="flex items-center gap-1.5 text-[10.5px] text-ink-4 mt-1">
+                <AlertTriangle className="h-3 w-3" />
+                Proveedor fijo al editar · si es otro proveedor, anula la orden y crea una nueva
+              </div>
+            )}
             {matchedProveedor && (
               <div className="flex items-center gap-1.5 text-[10.5px] text-emerald-600 dark:text-emerald-400 mt-1">
                 <Check className="h-3 w-3" />
                 Proveedor existente · usaremos sus datos guardados
               </div>
             )}
-            {!form.sinRuc && form.ruc.length === 11 && !matchedProveedor && (
+            {!form.sinRuc && rucLookup === 'buscando' && (
+              <div className="flex items-center gap-1.5 text-[10.5px] text-ink-3 mt-1">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Buscando razón social en SUNAT...
+              </div>
+            )}
+            {!form.sinRuc && rucLookup === 'ok' && (
+              <div className="flex items-center gap-1.5 text-[10.5px] text-emerald-600 dark:text-emerald-400 mt-1">
+                <Check className="h-3 w-3" />
+                Razón social encontrada (SUNAT)
+              </div>
+            )}
+            {!form.sinRuc && rucLookup === 'no-encontrado' && (
+              <div className="flex items-center gap-1.5 text-[10.5px] text-amber-700 dark:text-amber-400 mt-1">
+                <AlertTriangle className="h-3 w-3" />
+                RUC no encontrado · escribe la razón social manualmente
+              </div>
+            )}
+            {!form.sinRuc && form.ruc.length === 11 && !matchedProveedor && rucLookup === 'idle' && (
               <div className="flex items-center gap-1.5 text-[10.5px] text-amber-700 dark:text-amber-400 mt-1">
                 <Sparkles className="h-3 w-3" />
                 Nuevo · se creará proveedor al emitir la OC
@@ -492,8 +638,54 @@ export function NuevaOcModal({ onClose, onSuccess }: { onClose: () => void; onSu
                 </select>
               </Field>
             </div>
+            {/* Partida presupuestal (opcional) · análisis de gastos por partida en el proyecto */}
+            {!esOficina && form.proyectoInternoId && (
+              <Field label="Partida presupuestal" right="opcional · vincula la OC al control de costos">
+                {partidaSel ? (
+                  <div className="flex items-center gap-2 h-9 px-2.5 rounded-md border border-primary/40 bg-primary/5">
+                    <span className="font-mono text-[10.5px] font-bold text-primary shrink-0">{partidaSel.codigo}</span>
+                    <span className="text-[11.5px] truncate flex-1">{partidaSel.nombre}</span>
+                    <button
+                      type="button"
+                      onClick={() => setForm({ ...form, partidaId: '', partidaSearch: '' })}
+                      className="text-ink-3 hover:text-destructive shrink-0"
+                      title="Quitar partida"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="relative">
+                    <input
+                      value={form.partidaSearch}
+                      onChange={(e) => { setForm({ ...form, partidaSearch: e.target.value }); setShowPartidaDrop(true); }}
+                      onFocus={() => setShowPartidaDrop(true)}
+                      onBlur={() => setTimeout(() => setShowPartidaDrop(false), 150)}
+                      placeholder={partidasQ.isLoading ? 'Cargando partidas...' : partidasHoja.length ? 'Buscar por código o nombre...' : 'Proyecto sin partidas'}
+                      disabled={partidasHoja.length === 0}
+                      className="oc-input"
+                    />
+                    {showPartidaDrop && partidaSugs.length > 0 && (
+                      <div className="absolute z-10 left-0 right-0 top-full mt-1 max-h-48 overflow-y-auto rounded-md border border-line bg-bg-elev shadow-lg">
+                        {partidaSugs.map((p) => (
+                          <button
+                            key={p.id}
+                            type="button"
+                            onClick={() => { setForm({ ...form, partidaId: p.id, partidaSearch: '' }); setShowPartidaDrop(false); }}
+                            className="w-full text-left px-3 py-2 text-[11.5px] hover:bg-bg-sunken border-b border-line/40 last:border-b-0"
+                          >
+                            <span className="font-mono text-[10px] text-ink-3 font-bold mr-2">{p.codigo}</span>
+                            {p.nombre}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </Field>
+            )}
             {/* Cotización obligatoria · archivo → NAS */}
-            <Field label="Cotización (archivo) *" right="PDF o imagen · obligatoria · va al NAS">
+            <Field label={yaTieneCotiz ? 'Cotización (archivo)' : 'Cotización (archivo) *'} right={yaTieneCotiz ? 'ya adjunta ✓ · sube solo para reemplazarla' : 'PDF o imagen · obligatoria · va al NAS'}>
               <div className="flex items-center gap-2">
                 <input
                   type="file"
@@ -682,7 +874,7 @@ export function NuevaOcModal({ onClose, onSuccess }: { onClose: () => void; onSu
                 className="inline-flex items-center gap-1.5 h-9 px-4 rounded-md bg-primary text-primary-foreground text-[12px] font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {createMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-                Crear {docPrefix} y enviar a aprobación
+                {esEdicion ? 'Guardar cambios' : `Crear ${docPrefix} y enviar a aprobación`}
               </button>
             </div>
           </div>

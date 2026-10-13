@@ -3,6 +3,7 @@ import { proyectoCreateSchema } from '@erp/shared';
 import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { Router } from 'express';
 import multer from 'multer';
+import * as XLSX from 'xlsx';
 import { env } from '../env.js';
 import { computeCurvaS } from '../lib/curvaS.js';
 import { clasificarSalud, construirForecast, type SerieProy } from '../lib/dashboard.js';
@@ -1911,10 +1912,14 @@ router.get('/:id/pnl', async (req, res) => {
   });
 });
 
-// GET /api/proyectos/:id/partidas-costos · ejecutado (valos) + comprometido (OC) por partida
-// Para control de costos en PartidasTab: presupuesto vs ejecutado vs comprometido
-router.get('/:id/partidas-costos', async (req, res) => {
-  const proyectoId = req.params.id!;
+// ─── Partidas-costos · ejecutado (valos) + comprometido (OC) + OCs vinculadas por partida ───
+type OcPartidaRef = { id: string; numero: string; proveedor: string; concepto: string; estado: string; monto: number };
+
+async function partidasCostosData(proyectoId: string): Promise<{
+  costos: Record<string, { ejecutado: number; comprometido: number }>;
+  ocsPorPartida: Record<string, OcPartidaRef[]>;
+  sinPartida: OcPartidaRef[];
+}> {
   // 2 cadenas independientes (valos→vparts · ocs→líneas) en paralelo
   const [vparts, { ocs, lineas }] = await Promise.all([
     (async () => {
@@ -1925,7 +1930,7 @@ router.get('/:id/partidas-costos', async (req, res) => {
         : [];
     })(),
     (async () => {
-      const ocs = await db.select({ id: schema.ordenesCompra.id, estado: schema.ordenesCompra.estado }).from(schema.ordenesCompra).where(eq(schema.ordenesCompra.proyectoId, proyectoId));
+      const ocs = await db.select({ id: schema.ordenesCompra.id, numero: schema.ordenesCompra.numero, estado: schema.ordenesCompra.estado, concepto: schema.ordenesCompra.concepto, proveedorId: schema.ordenesCompra.proveedorId }).from(schema.ordenesCompra).where(eq(schema.ordenesCompra.proyectoId, proyectoId));
       const ocIds = ocs.map((o) => o.id);
       const lineas = ocIds.length
         ? await db.select({ partidaId: schema.ocLineas.partidaId, ordenCompraId: schema.ocLineas.ordenCompraId, subtotal: schema.ocLineas.subtotal }).from(schema.ocLineas).where(inArray(schema.ocLineas.ordenCompraId, ocIds))
@@ -1933,7 +1938,13 @@ router.get('/:id/partidas-costos', async (req, res) => {
       return { ocs, lineas };
     })(),
   ]);
+  const provIds = [...new Set(ocs.map((o) => o.proveedorId))];
+  const provs = provIds.length
+    ? await db.select({ id: schema.proveedores.id, razonSocial: schema.proveedores.razonSocial }).from(schema.proveedores).where(inArray(schema.proveedores.id, provIds))
+    : [];
+  const provMap = new Map(provs.map((p) => [p.id, p.razonSocial]));
   const EG = new Set(['aprobada', 'emitida', 'en_transito', 'entregada']);
+  const ocMap = new Map(ocs.map((o) => [o.id, o]));
   const ocComprometidas = new Set(ocs.filter((o) => EG.has(o.estado)).map((o) => o.id));
 
   // ejecutado = MAX(montoAcumulado) por partida (acumulado es monótono)
@@ -1944,17 +1955,97 @@ router.get('/:id/partidas-costos', async (req, res) => {
   }
   // comprometido = Σ subtotal de líneas OC comprometidas, por partida
   const comprometido = new Map<string, number>();
+  // montos por (partida|sin-partida, OC) · para listar OC/OS vinculadas (excluye anuladas/rechazadas)
+  const porPartidaOc = new Map<string, Map<string, number>>(); // partidaId|'' → ocId → monto
   for (const l of lineas) {
-    if (!l.partidaId || !ocComprometidas.has(l.ordenCompraId)) continue;
-    comprometido.set(l.partidaId, (comprometido.get(l.partidaId) ?? 0) + Number(l.subtotal ?? 0));
+    const oc = ocMap.get(l.ordenCompraId);
+    if (!oc || ['anulada', 'rechazada'].includes(oc.estado)) continue;
+    const monto = Number(l.subtotal ?? 0);
+    if (l.partidaId && ocComprometidas.has(l.ordenCompraId)) {
+      comprometido.set(l.partidaId, (comprometido.get(l.partidaId) ?? 0) + monto);
+    }
+    const key = l.partidaId ?? '';
+    const inner = porPartidaOc.get(key) ?? new Map<string, number>();
+    inner.set(l.ordenCompraId, (inner.get(l.ordenCompraId) ?? 0) + monto);
+    porPartidaOc.set(key, inner);
   }
 
   const partidaIds = new Set([...ejecutado.keys(), ...comprometido.keys()]);
   const costos: Record<string, { ejecutado: number; comprometido: number }> = {};
   for (const pid of partidaIds) {
-    costos[pid] = { ejecutado: ejecutado.get(pid) ?? 0, comprometido: comprometido.get(pid) ?? 0 };
+    costos[pid] = { ejecutado: +(ejecutado.get(pid) ?? 0).toFixed(2), comprometido: +(comprometido.get(pid) ?? 0).toFixed(2) };
   }
-  res.json({ costos });
+
+  const toRefs = (inner: Map<string, number>): OcPartidaRef[] =>
+    [...inner.entries()]
+      .map(([ocId, monto]) => {
+        const oc = ocMap.get(ocId)!;
+        return { id: oc.id, numero: oc.numero, proveedor: provMap.get(oc.proveedorId) ?? '—', concepto: oc.concepto, estado: oc.estado, monto: +monto.toFixed(2) };
+      })
+      .sort((a, b) => a.numero.localeCompare(b.numero));
+  const ocsPorPartida: Record<string, OcPartidaRef[]> = {};
+  let sinPartida: OcPartidaRef[] = [];
+  for (const [key, inner] of porPartidaOc) {
+    if (key === '') sinPartida = toRefs(inner);
+    else ocsPorPartida[key] = toRefs(inner);
+  }
+  return { costos, ocsPorPartida, sinPartida };
+}
+
+// GET /api/proyectos/:id/partidas-costos · para control de costos en PartidasTab
+router.get('/:id/partidas-costos', async (req, res) => {
+  res.json(await partidasCostosData(req.params.id!));
+});
+
+// GET /api/proyectos/:id/partidas-costos/xlsx · análisis de gastos por partida según OC/OS
+router.get('/:id/partidas-costos/xlsx', async (req, res) => {
+  const proyectoId = req.params.id!;
+  const [proyecto] = await db.select({ codigo: schema.proyectos.codigo, nombre: schema.proyectos.nombre }).from(schema.proyectos).where(eq(schema.proyectos.id, proyectoId)).limit(1);
+  if (!proyecto) return res.status(404).json({ error: 'Proyecto no encontrado' });
+  const [{ costos, ocsPorPartida, sinPartida }, parts] = await Promise.all([
+    partidasCostosData(proyectoId),
+    db.select().from(schema.partidas).where(eq(schema.partidas.proyectoId, proyectoId)).orderBy(asc(schema.partidas.orden), asc(schema.partidas.codigo)),
+  ]);
+  const presupDe = (p: { presupuestoContractual: string | null; presupuesto: string | null }) => {
+    const c = Number(p.presupuestoContractual ?? 0);
+    return c > 0 ? c : Number(p.presupuesto ?? 0);
+  };
+  const aoa: (string | number)[][] = [
+    [`Análisis de gastos por partida · ${proyecto.codigo} — ${proyecto.nombre}`],
+    [],
+    ['Código', 'Descripción', 'Presup. S/', 'Ejecutado S/', 'Comprometido S/', 'Desv. %', 'OC/OS', 'Proveedor', 'Estado', 'Monto OC S/'],
+  ];
+  let totalComp = 0;
+  for (const p of parts) {
+    if (p.isMilestone || p.codigo.startsWith('00.HITO')) continue;
+    const c = costos[p.id];
+    const presup = presupDe(p);
+    const comp = c?.comprometido ?? 0;
+    const desv = presup > 0 && comp > 0 ? +(((comp - presup) / presup) * 100).toFixed(1) : '';
+    aoa.push([p.codigo, p.nombre, presup || '', c?.ejecutado || '', comp || '', desv, '', '', '', '']);
+    for (const oc of ocsPorPartida[p.id] ?? []) {
+      aoa.push(['', '', '', '', '', '', oc.numero, oc.proveedor, oc.estado, oc.monto]);
+    }
+    if (!p.isSummary) totalComp += comp;
+  }
+  if (sinPartida.length) {
+    aoa.push([]);
+    aoa.push(['', 'SIN PARTIDA · OC/OS del proyecto no vinculadas', '', '', '', '', '', '', '', '']);
+    for (const oc of sinPartida) {
+      aoa.push(['', '', '', '', '', '', oc.numero, oc.proveedor, oc.estado, oc.monto]);
+    }
+  }
+  aoa.push([]);
+  aoa.push(['', 'TOTAL COMPROMETIDO (con partida)', '', '', +totalComp.toFixed(2), '', '', 'TOTAL SIN PARTIDA', '', +sinPartida.reduce((s, o) => s + o.monto, 0).toFixed(2)]);
+
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols'] = [{ wch: 12 }, { wch: 50 }, { wch: 14 }, { wch: 14 }, { wch: 16 }, { wch: 9 }, { wch: 14 }, { wch: 32 }, { wch: 14 }, { wch: 13 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Gastos por partida');
+  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="partidas_oc_${proyecto.codigo}.xlsx"`);
+  res.send(buf);
 });
 
 // GET /api/proyectos/:id/cashflow · flujo de caja real (con IGV) mensual + saldo acumulado

@@ -88,6 +88,26 @@ router.put('/empleados/:id', async (req, res) => {
   const parse = empSchema.partial().safeParse(req.body);
   if (!parse.success) return res.status(400).json({ error: parse.error.flatten() });
   const data = { ...parse.data };
+  // Regla de obra · un obrero pertenece a su obra hasta que esta se cierre (no rota entre obras).
+  // Excepción: corrección libre si aún no entró a ninguna planilla de esa obra.
+  if ('proyectoId' in data) {
+    const [cur] = await db.select({ proyectoId: schema.empleados.proyectoId, tipoPlanilla: schema.empleados.tipoPlanilla })
+      .from(schema.empleados).where(eq(schema.empleados.id, req.params.id!)).limit(1);
+    if (cur?.proyectoId && cur.tipoPlanilla === 'obrero' && data.proyectoId !== cur.proyectoId) {
+      const [obra] = await db.select({ status: schema.proyectos.status, codigo: schema.proyectos.codigo })
+        .from(schema.proyectos).where(eq(schema.proyectos.id, cur.proyectoId)).limit(1);
+      if (obra && !['cerrado', 'cancelado'].includes(obra.status)) {
+        const [enPlanilla] = await db.select({ id: schema.planillaDetalle.id })
+          .from(schema.planillaDetalle)
+          .innerJoin(schema.planillaSemanas, eq(schema.planillaDetalle.semanaId, schema.planillaSemanas.id))
+          .where(and(eq(schema.planillaDetalle.empleadoId, req.params.id!), eq(schema.planillaSemanas.proyectoId, cur.proyectoId)))
+          .limit(1);
+        if (enPlanilla) {
+          return res.status(409).json({ error: `Obrero asignado a ${obra.codigo} hasta el cierre de la obra · ya tiene planillas registradas ahí` });
+        }
+      }
+    }
+  }
   // fechas vacías → null (columna date no acepta '')
   for (const k of ['fechaIngreso', 'sctrVigencia', 'fechaCese'] as const) if (data[k] === '') data[k] = null;
   // PIN vacío → null: el índice único no tolera dos '' (y '' no es un PIN).
@@ -299,6 +319,20 @@ router.post('/planilla-semanas/:id/calcular', async (req, res) => {
   const paramByCat = new Map(params.map((p) => [p.categoria, p]));
   const tasaByAfp = new Map(tasas.map((t) => [t.afp, t]));
   const empById = new Map(empleadosAll.map((e) => [e.id, e]));
+
+  // Regla de obra · la planilla de una obra solo acepta obreros asignados a esa obra
+  const [semanaRow] = await db.select().from(schema.planillaSemanas).where(eq(schema.planillaSemanas.id, semanaId)).limit(1);
+  if (!semanaRow) return res.status(404).json({ error: 'Semana no encontrada' });
+  if (semanaRow.proyectoId) {
+    const ajenos = parse.data.lineas
+      .map((l) => empById.get(l.empleadoId))
+      .filter((e): e is NonNullable<typeof e> => !!e && e.tipoPlanilla === 'obrero' && e.proyectoId !== semanaRow.proyectoId);
+    if (ajenos.length) {
+      return res.status(409).json({
+        error: `No asignados a esta obra: ${ajenos.map((e) => e.nombre).join(', ')} · un obrero pertenece a una sola obra hasta su cierre (asigna la obra en su ficha)`,
+      });
+    }
+  }
 
   // reemplazar detalle
   await db.delete(schema.planillaDetalle).where(eq(schema.planillaDetalle.semanaId, semanaId));

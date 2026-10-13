@@ -39,7 +39,7 @@ export function FinanzasOcQueue({ proyectoId }: { proyectoId: string }) {
 
   return (
     <div className="space-y-5">
-      <p className="text-[11.5px] text-ink-4">Finanzas aprueba la OC (genera el PDF oficial) y registra el pago (sube comprobante → caja). Hoy sin rol: cualquiera puede; se gateará al definir roles.</p>
+      <p className="text-[11.5px] text-ink-4">Aprobar genera el PDF oficial. Pagar registra el comprobante y la salida de caja.</p>
 
       {/* Por aprobar */}
       <Section title="Por aprobar" count={porAprobar.length} tone="amber">
@@ -152,7 +152,7 @@ function PagarModal({ oc, onClose, onDone }: { oc: OcRow; onClose: () => void; o
               {cuentas.map((c) => <option key={c.id} value={c.id}>{c.descripcion ?? c.codigo}{c.banco ? ` · ${c.banco}` : ''}</option>)}
             </select>
           </label>
-          <p className="text-[10.5px] text-ink-4">Al guardar: comprobante → NAS · OC pagada · gasto en Fact de Compras · y <span className="text-ink-3 font-medium">movimiento de caja (Egreso) en la cuenta elegida</span>.</p>
+          <p className="text-[10.5px] text-ink-4">Se guarda el comprobante y se registra el gasto con su salida de caja.</p>
           {err && <div className="text-[11px] text-destructive">{err}</div>}
           <div className="flex justify-end gap-2 pt-1">
             <button onClick={onClose} className="h-8 px-3 rounded-md border border-line text-[12px] hover:bg-bg-sunken">Cancelar</button>

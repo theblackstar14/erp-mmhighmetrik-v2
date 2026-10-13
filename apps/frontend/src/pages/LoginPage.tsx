@@ -31,8 +31,8 @@ function useAnimationTime() {
 export function LoginPage() {
   const navigate = useNavigate();
   const setSession = useAuthStore((s) => s.setSession);
-  const [email, setEmail] = useState('admin@mmhighmetrik.com');
-  const [password, setPassword] = useState('admin');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [showPass, setShowPass] = useState(false);
   const [remember, setRemember] = useState(true);
   const [loading, setLoading] = useState(false);
@@ -195,12 +195,6 @@ export function LoginPage() {
             <div className="font-mono uppercase tracking-wider">v2.0</div>
           </div>
 
-          {/* Dev hint · solo en desarrollo · nunca en el build de producción */}
-          {import.meta.env.DEV && (
-            <div className="mt-6 rounded-[10px] bg-[#F0F0EE] border border-[#E6E6E3] px-4 py-3 text-[11px] text-[#3B3F46]">
-              <strong>Dev:</strong> admin@mmhighmetrik.com / admin
-            </div>
-          )}
         </div>
       </div>
     </div>

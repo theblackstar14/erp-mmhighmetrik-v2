@@ -173,10 +173,6 @@ function LiquidacionSection({ proyectoId }: { proyectoId: string }) {
                   <span className="font-mono">{fmtPEN(Math.abs(con.saldo1212 - con.porCobrarNeto))}</span>
                 </div>
               )}
-              <div className="mt-2 rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/40 p-2 text-[10.5px] text-amber-800 dark:text-amber-300 space-y-1">
-                <div><b>No es un error de la liquidación.</b> El 1212 hoy incluye la retención sin segregar ({fmtPEN(con.retencionMezclada)}) y puede no reflejar cobros ya recibidos si el motor no asentó el cobro. La liquidación calcula desde las valorizaciones.</div>
-                <div className="text-amber-700/80 dark:text-amber-400/70">{con.nota}</div>
-              </div>
             </div>
           </div>
           {liq?.estado === 'reabierta' && liq.motivoReapertura && (

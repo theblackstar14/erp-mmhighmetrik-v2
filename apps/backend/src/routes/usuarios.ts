@@ -84,7 +84,8 @@ router.post('/usuarios', requireAdmin(), async (req, res) => {
     const userId = await db.transaction(async (tx) => {
       const [u] = await tx
         .insert(schema.users)
-        .values({ email, passwordHash, nombres, apellidos, telefono, mustChangePassword: true })
+        // Clave explícita del admin = definitiva · solo la temporal generada obliga a cambiarla
+        .values({ email, passwordHash, nombres, apellidos, telefono, mustChangePassword: !password })
         .returning({ id: schema.users.id });
       await tx.insert(schema.usuarioEmpresa).values(empresas.map((e) => ({ userId: u.id, empresaId: e.empresaId, roleId: e.roleId })));
       return u.id;

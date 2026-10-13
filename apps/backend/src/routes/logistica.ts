@@ -437,7 +437,28 @@ router.get('/ordenes-compra/:id', async (req, res) => {
     oc.proyectoId ? db.select().from(schema.proyectos).where(eq(schema.proyectos.id, oc.proyectoId)).limit(1) : Promise.resolve([]),
   ]);
   const proyecto = proyectoArr[0] ?? null;
-  res.json({ oc, lineas, aprobaciones, proveedor, proyecto });
+  // Partida vinculada (nivel OC = la de la 1ª línea con partida)
+  const pid = lineas.find((l) => l.partidaId)?.partidaId ?? null;
+  const partida = pid
+    ? (await db.select({ id: schema.partidas.id, codigo: schema.partidas.codigo, nombre: schema.partidas.nombre }).from(schema.partidas).where(eq(schema.partidas.id, pid)).limit(1))[0] ?? null
+    : null;
+  res.json({ oc, lineas, aprobaciones, proveedor, proyecto, partida });
+});
+
+// PATCH /api/logistica/ordenes-compra/:id/partida · vincular/desvincular partida (todas las líneas)
+router.patch('/ordenes-compra/:id/partida', async (req, res) => {
+  const ocId = req.params.id!;
+  const { partidaId } = req.body as { partidaId?: string | null };
+  const [oc] = await db.select().from(schema.ordenesCompra).where(eq(schema.ordenesCompra.id, ocId)).limit(1);
+  if (!oc) return res.status(404).json({ error: 'OC no encontrada' });
+  if (oc.estado === 'anulada') return res.status(400).json({ error: 'OC anulada · no se puede vincular partida' });
+  if (partidaId) {
+    const [p] = await db.select({ id: schema.partidas.id, proyectoId: schema.partidas.proyectoId }).from(schema.partidas).where(eq(schema.partidas.id, partidaId)).limit(1);
+    if (!p) return res.status(404).json({ error: 'Partida no encontrada' });
+    if (p.proyectoId !== oc.proyectoId) return res.status(400).json({ error: 'La partida pertenece a otro proyecto' });
+  }
+  await db.update(schema.ocLineas).set({ partidaId: partidaId ?? null }).where(eq(schema.ocLineas.ordenCompraId, ocId));
+  res.json({ ok: true });
 });
 
 // POST /api/logistica/ordenes-compra
@@ -517,7 +538,8 @@ router.post('/ordenes-compra', async (req, res) => {
     precioUnitario: Number(l.precioUnitario ?? 0),
     descripcion: String(l.descripcion ?? ''),
     unidad: String(l.unidad ?? 'UND'),
-    partidaId: l.partidaId as string | undefined,
+    // partida a nivel OC (data.partidaId) · la línea puede traer la suya propia
+    partidaId: (l.partidaId as string | undefined) ?? (data.partidaId ? String(data.partidaId) : undefined),
     recursoId: l.recursoId as string | undefined,
     notas: l.notas as string | undefined,
   }));
@@ -590,6 +612,86 @@ router.post('/ordenes-compra', async (req, res) => {
   }
 
   res.status(201).json({ oc: created });
+});
+
+// PATCH /api/logistica/ordenes-compra/:id · editar OC/OS ANTES de aprobación
+// Editable solo en borrador/pendiente_aprobacion · aprobada+ ya generó PDF oficial → anular y crear nueva.
+// No cambia: numero, correlativo, concepto (definen el correlativo OC/OS), proveedor.
+router.patch('/ordenes-compra/:id', async (req, res) => {
+  const ocId = req.params.id!;
+  const data = req.body as Record<string, unknown> & { lineas?: Array<Record<string, unknown>> };
+  const [oc] = await db.select().from(schema.ordenesCompra).where(eq(schema.ordenesCompra.id, ocId)).limit(1);
+  if (!oc) return res.status(404).json({ error: 'No encontrado' });
+  if (!['borrador', 'pendiente_aprobacion'].includes(oc.estado)) {
+    return res.status(400).json({ error: `No editable en estado ${oc.estado} · para corregir una OC aprobada: anúlala y crea una nueva` });
+  }
+  if (!Array.isArray(data.lineas) || data.lineas.length === 0) {
+    return res.status(400).json({ error: 'al menos 1 línea obligatoria' });
+  }
+
+  const lineasParsed = data.lineas.map((l) => ({
+    cantidad: Number(l.cantidad ?? 0),
+    precioUnitario: Number(l.precioUnitario ?? 0),
+    descripcion: String(l.descripcion ?? ''),
+    unidad: String(l.unidad ?? 'UND'),
+    partidaId: (l.partidaId as string | undefined) ?? (data.partidaId ? String(data.partidaId) : undefined),
+    recursoId: l.recursoId as string | undefined,
+    notas: l.notas as string | undefined,
+  }));
+  const pctIgv = Number(data.pctIgv ?? oc.pctIgv ?? 18);
+  const incluyeIgv = data.incluyeIgv !== undefined ? Boolean(data.incluyeIgv) : (oc.incluyeIgv ?? true);
+  const aplicaDetraccion = data.aplicaDetraccion !== undefined ? Boolean(data.aplicaDetraccion) : oc.aplicaDetraccion === true;
+  const pctDetraccion = Number(data.pctDetraccion ?? oc.pctDetraccion ?? 0);
+  const montos = calcOcMontos({ lineas: lineasParsed, pctIgv, incluyeIgv, aplicaDetraccion, pctDetraccion });
+
+  const updated = await db.transaction(async (tx) => {
+    const [u] = await tx.update(schema.ordenesCompra).set({
+      proyectoId: data.proyectoId !== undefined ? (data.proyectoId ? String(data.proyectoId) : null) : oc.proyectoId,
+      fechaEmision: (data.fechaEmision as string) ?? oc.fechaEmision,
+      fechaEntrega: data.fechaEntrega !== undefined ? ((data.fechaEntrega as string) || null) : oc.fechaEntrega,
+      lugarEntrega: data.lugarEntrega !== undefined ? ((data.lugarEntrega as string) || null) : oc.lugarEntrega,
+      moneda: (data.moneda as 'PEN' | 'USD') ?? oc.moneda,
+      tipoCambio: data.tipoCambio != null ? String(data.tipoCambio) : oc.tipoCambio,
+      medioPago: data.medioPago !== undefined ? ((data.medioPago as string) || null) : oc.medioPago,
+      formaPago: data.formaPago !== undefined ? ((data.formaPago as string) || null) : oc.formaPago,
+      cotizacion: data.cotizacion !== undefined ? ((data.cotizacion as string) || null) : oc.cotizacion,
+      pctIgv: String(pctIgv),
+      incluyeIgv,
+      subtotalSinIgv: String(montos.subtotalSinIgv),
+      igv: String(montos.igv),
+      total: String(montos.total),
+      aplicaDetraccion,
+      pctDetraccion: aplicaDetraccion && pctDetraccion > 0 ? String(pctDetraccion) : null,
+      montoDetraccion: String(montos.montoDetraccion),
+      montoNetoPagar: String(montos.montoNetoPagar),
+      gestorEmail: data.gestorEmail !== undefined ? ((data.gestorEmail as string) || null) : oc.gestorEmail,
+      gestorNombre: data.gestorNombre !== undefined ? ((data.gestorNombre as string) || null) : oc.gestorNombre,
+      terminos: data.terminos !== undefined ? ((data.terminos as string) || null) : oc.terminos,
+      notas: data.notas !== undefined ? ((data.notas as string) || null) : oc.notas,
+      updatedAt: new Date(),
+    }).where(eq(schema.ordenesCompra.id, ocId)).returning();
+
+    // Reemplaza líneas completas (renumera)
+    await tx.delete(schema.ocLineas).where(eq(schema.ocLineas.ordenCompraId, ocId));
+    await tx.insert(schema.ocLineas).values(
+      lineasParsed.map((l, i) => ({
+        ordenCompraId: ocId,
+        numero: i + 1,
+        partidaId: l.partidaId,
+        recursoId: l.recursoId,
+        descripcion: l.descripcion,
+        unidad: l.unidad,
+        cantidad: String(l.cantidad),
+        precioUnitario: String(l.precioUnitario),
+        subtotal: String((l.cantidad * l.precioUnitario).toFixed(2)),
+        notas: l.notas,
+      })),
+    );
+    return u;
+  });
+
+  await audit(req, { action: 'editar_oc', entityType: 'orden_compra', entityId: ocId, before: { total: oc.total, estado: oc.estado }, after: { total: updated?.total } });
+  res.json({ oc: updated });
 });
 
 // POST /api/logistica/ordenes-compra/:id/aprobar
@@ -833,6 +935,9 @@ router.post('/ordenes-compra/:id/cambiar-estado', async (req, res) => {
     .where(eq(schema.ordenesCompra.id, ocId))
     .limit(1);
   if (!oc) return res.status(404).json({ error: 'No encontrado' });
+  if (estado === 'anulada' && oc.estadoPago === 'pagada') {
+    return res.status(400).json({ error: 'OC pagada · no se puede anular (ya generó gasto y movimiento de caja)' });
+  }
   await db.insert(schema.ocAprobaciones).values({
     ordenCompraId: ocId,
     estadoFrom: oc.estado,

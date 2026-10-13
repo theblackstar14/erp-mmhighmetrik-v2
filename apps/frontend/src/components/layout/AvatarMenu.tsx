@@ -45,7 +45,8 @@ export function AvatarMenu({ collapsed }: Props) {
       : []),
     { icon: Settings, label: 'Configuración', onClick: () => navigate('/config') },
     ...(empresas.length > 1 ? [{ icon: Repeat, label: 'Cambiar empresa', onClick: cambiarEmpresa }] : []),
-    { icon: KeyRound, label: 'Cambiar contraseña', onClick: () => setPwOpen(true) },
+    // Cambiar contraseña: solo admin (los usuarios operativos reciben su clave del admin)
+    ...(esAdmin ? [{ icon: KeyRound, label: 'Cambiar contraseña', onClick: () => setPwOpen(true) }] : []),
     { icon: LogOut, label: 'Cerrar sesión', onClick: handleLogout, danger: true },
   ];
 

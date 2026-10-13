@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Check, Fingerprint, Link2, Pencil, Plus, Receipt, RefreshCw, Trash2, UserCog, Users, Wallet, X } from 'lucide-react';
+import { AlertTriangle, Check, Fingerprint, Link2, Loader2, Pencil, Plus, Receipt, RefreshCw, Trash2, UserCog, Users, Wallet, X } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { useState } from 'react';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog.js';
@@ -600,27 +600,43 @@ function PinsSinVincular({ onMsg }: { onMsg: (m: string) => void }) {
 }
 
 function VincularLector({ estado, onClose, onSaved }: { estado?: import('@/lib/api.js').ZlinkEstado; onClose: () => void; onSaved: () => void }) {
-  const [f, setF] = useState({ baseUrl: estado?.baseUrl ?? 'https://zlink.minervaiot.com', companyId: estado?.companyId ?? '', accessToken: '', refreshToken: '' });
+  const [f, setF] = useState({ baseUrl: estado?.baseUrl ?? 'https://zlink.minervaiot.com', userName: '', password: '' });
   const [err, setErr] = useState('');
-  const save = useMutation({ mutationFn: () => api.oficina.setAsistenciaConfig(f), onSuccess: onSaved, onError: (e: Error) => setErr(e.message) });
+  // El backend hace login de prueba contra Zlink antes de guardar: si falla, no persiste nada.
+  const save = useMutation({
+    mutationFn: () => api.oficina.setAsistenciaConfig(f),
+    onSuccess: onSaved,
+    onError: (e: Error) => setErr(e.message),
+  });
   const set = (p: Partial<typeof f>) => setF((s) => ({ ...s, ...p }));
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 animate-backdropIn" onClick={onClose}>
-      <div className="w-[520px] rounded-xl border border-line bg-bg-elev shadow-2xl animate-modalPop" onClick={(e) => e.stopPropagation()}>
+      <div className="w-[440px] rounded-xl border border-line bg-bg-elev shadow-2xl animate-modalPop" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-line px-4 py-3"><h3 className="text-[14px] font-semibold">Vincular lector ZKBio Zlink</h3><button onClick={onClose} className="text-ink-4 hover:text-ink-2"><X className="h-4 w-4" /></button></div>
         <div className="p-4 space-y-3">
-          <p className="text-[11.5px] text-ink-3 leading-relaxed">Pega el <b>token</b> de tu sesión del portal Zlink. En <span className="font-mono text-[11px]">zlink.minervaiot.com</span> → F12 → Application → Local Storage → <span className="font-mono text-[11px]">orgInfo.access_token</span> (y <span className="font-mono text-[11px]">refresh_token</span> para renovación automática).</p>
-          <div className="grid grid-cols-2 gap-2.5">
-            <Lbl t="URL base"><input className={cn(inputCls, 'w-full')} value={f.baseUrl} onChange={(e) => set({ baseUrl: e.target.value })} /></Lbl>
-            <Lbl t="Company ID"><input className={cn(inputCls, 'w-full')} value={f.companyId} onChange={(e) => set({ companyId: e.target.value })} placeholder="0a08…" /></Lbl>
-          </div>
-          <Lbl t="Access token"><textarea className={cn(inputCls, 'w-full h-20 py-1.5 font-mono text-[10.5px]')} value={f.accessToken} onChange={(e) => set({ accessToken: e.target.value })} placeholder="eyJ…" /></Lbl>
-          <Lbl t="Refresh token (opcional)"><textarea className={cn(inputCls, 'w-full h-14 py-1.5 font-mono text-[10.5px]')} value={f.refreshToken} onChange={(e) => set({ refreshToken: e.target.value })} placeholder="eyJ…" /></Lbl>
+          <p className="text-[11.5px] text-ink-3 leading-relaxed">
+            Usuario y contraseña de la cuenta del portal Zlink (la de la empresa, donde está registrado el lector).
+            Se valida la conexión antes de guardar; los tokens se renuevan solos.
+          </p>
+          {estado?.configurado && (
+            <p className="text-[10.5px] text-ink-4">
+              Conectado como <span className="font-mono">{estado.usuario}</span> ({estado.credencialesFuente === 'env' ? 'credenciales del servidor' : 'configurado desde la UI'}) · guardar aquí lo reemplaza.
+            </p>
+          )}
+          <Lbl t="Usuario (email del portal)"><input className={cn(inputCls, 'w-full')} value={f.userName} onChange={(e) => set({ userName: e.target.value.trim() })} placeholder="empresa@correo.com" autoComplete="off" /></Lbl>
+          <Lbl t="Contraseña"><input type="password" className={cn(inputCls, 'w-full')} value={f.password} onChange={(e) => set({ password: e.target.value })} autoComplete="new-password" /></Lbl>
+          <details>
+            <summary className="text-[10.5px] text-ink-4 cursor-pointer">Avanzado</summary>
+            <div className="mt-2"><Lbl t="URL base"><input className={cn(inputCls, 'w-full')} value={f.baseUrl} onChange={(e) => set({ baseUrl: e.target.value })} /></Lbl></div>
+          </details>
           {err && <div className="text-[11px] text-rose-500">{err}</div>}
         </div>
         <div className="flex justify-end gap-2 border-t border-line px-4 py-3">
           <button onClick={onClose} className="h-8 px-3 rounded-md border border-line text-[12px] text-ink-2">Cancelar</button>
-          <button disabled={!f.accessToken || save.isPending} onClick={() => save.mutate()} className="h-8 px-4 rounded-md bg-primary text-primary-foreground text-[12px] font-medium disabled:opacity-50">Guardar</button>
+          <button disabled={!f.userName || !f.password || save.isPending} onClick={() => { setErr(''); save.mutate(); }} className="h-8 px-4 rounded-md bg-primary text-primary-foreground text-[12px] font-medium disabled:opacity-50 inline-flex items-center gap-1.5">
+            {save.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            {save.isPending ? 'Probando conexión…' : 'Probar y guardar'}
+          </button>
         </div>
       </div>
     </div>,

@@ -22,6 +22,9 @@ const envSchema = z.object({
   NAS_ROOT: z.string().default('/ERP/01_Proyectos'), // base proyectos (obras)
   NAS_ROOT_ADMIN: z.string().default('/ERP/02_Administracion'), // base administración (oficina/empresa)
   NAS_TLS_INSECURE: z.coerce.boolean().default(true),
+  // SEACE scraper (servicio aparte · ver Desktop/SEACE/HANDOFF.md) · sin esto /api/seace responde 503
+  SEACE_API_URL: z.string().optional(),
+  SEACE_API_KEY: z.string().optional(),
   GEMINI_API_KEY: z.string().optional(),
   GEMINI_MODEL: z.string().default('gemini-2.5-flash'),
   ANTHROPIC_API_KEY: z.string().optional(),

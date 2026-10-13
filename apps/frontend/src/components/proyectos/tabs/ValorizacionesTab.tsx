@@ -114,7 +114,7 @@ export function ValorizacionesTab({ proyectoId }: { proyectoId: string }) {
       const ym = v.mesPeriodo ?? v.fechaDesde?.slice(0, 7) ?? '';
       if (ym) valByMes.set(ym, v);
     }
-    return real.map(({ b }, i) => {
+    const base = real.map(({ b }, i) => {
       const ym = b.start.slice(0, 7);
       const fin = (b.finish ?? b.start).slice(0, 10);
       const v = valByMes.get(ym);
@@ -129,25 +129,30 @@ export function ValorizacionesTab({ proyectoId }: { proyectoId: string }) {
         valNumero: v?.numero ?? null,
         montoCd: v ? Number(v.montoCd) : null,
         pct: v ? Number(v.pctAvance) : null,
+        adicional: false,
       };
     });
+    // Valorizaciones FUERA del cronograma (ampliaciones de plazo, meses sin plan):
+    // antes el timeline las ocultaba y "4 periodos" mentía habiendo 5 valos.
+    const planificados = new Set(base.map((p) => p.ym));
+    const extras = [...valByMes.entries()]
+      .filter(([ym]) => !planificados.has(ym))
+      .sort(([a], [z]) => a.localeCompare(z))
+      .map(([ym, v], j) => ({
+        idx: base.length + j + 1,
+        ym,
+        label: `${MES[Number(ym.slice(5, 7)) - 1] ?? '—'} ${ym.slice(2, 4)}`,
+        fin: `${ym}-28`,
+        estado: 'presentada' as const,
+        valNumero: v.numero,
+        montoCd: Number(v.montoCd),
+        pct: Number(v.pctAvance),
+        adicional: true,
+      }));
+    return [...base, ...extras];
   }, [curvaQ.data, valorizaciones]);
   const presentadas = periodos.filter((p) => p.estado === 'presentada').length;
   const noPresentadas = periodos.filter((p) => p.estado === 'no_presentada').length;
-
-  // Avance de inversión (oficial · % al pie del Excel) · de la última val con dato
-  const inversionInfo = useMemo(() => {
-    const conInv = valorizaciones
-      .filter((v) => v.pctInversionAcumulado != null && Number(v.pctInversionAcumulado) > 0)
-      .sort((a, b) => a.numero - b.numero);
-    const ult = conInv[conInv.length - 1];
-    if (!ult) return null;
-    return {
-      pct: Number(ult.pctInversionAcumulado),
-      acum: Number(ult.montoInversionAcumulado ?? 0),
-      numero: ult.numero,
-    };
-  }, [valorizaciones]);
 
   const reajustesPorVal = useMemo(() => {
     const map = new Map<string, ValorizacionReajuste[]>();
@@ -302,10 +307,10 @@ export function ValorizacionesTab({ proyectoId }: { proyectoId: string }) {
                 pendiente: { ring: 'border-line bg-bg-sunken/30', dot: 'bg-ink-4/40', txt: 'text-ink-4', Icon: Clock },
               }[p.estado];
               return (
-                <div key={p.ym} className={cn('min-w-[120px] shrink-0 rounded-md border p-2.5', cfg.ring)}>
+                <div key={p.ym} className={cn('min-w-[120px] shrink-0 rounded-md border p-2.5', cfg.ring, p.adicional && 'border-dashed')}>
                   <div className="flex items-center justify-between">
                     <span className="font-mono text-[10px] font-bold uppercase tracking-wider text-ink-3">{p.label}</span>
-                    <span className="font-mono text-[9.5px] text-ink-4">V{String(p.idx).padStart(2, '0')}</span>
+                    <span className="font-mono text-[9.5px] text-ink-4">{p.adicional ? 'ADIC' : `V${String(p.idx).padStart(2, '0')}`}</span>
                   </div>
                   <div className={cn('mt-1 flex items-center gap-1 text-[11px] font-medium', cfg.txt)}>
                     <cfg.Icon className="h-3.5 w-3.5" />
@@ -332,30 +337,6 @@ export function ValorizacionesTab({ proyectoId }: { proyectoId: string }) {
           <div className="text-[13px] text-ink-2">Sin valorizaciones registradas</div>
           <div className="text-[12px] text-ink-3 mt-1">
             Sube la valorización N°1 en Excel para empezar
-          </div>
-        </div>
-      )}
-
-      {/* Avance oficial · inversión (% al pie del Excel) + obra físico secundario */}
-      {hayValorizaciones && inversionInfo && (
-        <div className="rounded-md border border-line bg-bg-elev px-4 py-3.5">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-2">
-              Avance de inversión
-              <span className="ml-2 chip green">oficial MEF/OxI</span>
-            </span>
-            <span className="text-[10px] text-ink-4">Val N°{inversionInfo.numero}</span>
-          </div>
-          <div className="mt-1 flex items-baseline gap-2.5 flex-wrap">
-            <span className="text-[28px] font-bold tracking-[-0.02em] text-primary leading-none">
-              {inversionInfo.pct.toFixed(2)}%
-            </span>
-            <span className="text-[12px] text-ink-3">ejecutado · {fmtPEN(inversionInfo.acum)}</span>
-          </div>
-          <div className="mt-1.5 text-[11px] text-ink-3">
-            Avance físico obra (CD):{' '}
-            <span className="font-semibold text-ink-1">{(stats?.pctAvanceUltima ?? 0).toFixed(2)}%</span>
-            <span className="text-[10px] text-ink-4"> · interno · lo que factura el contratista</span>
           </div>
         </div>
       )}

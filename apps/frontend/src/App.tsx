@@ -22,6 +22,7 @@ const OficinaPage = lazy(() => import('./pages/OficinaPage.js').then((m) => ({ d
 const PersonalPage = lazy(() => import('./pages/PersonalPage.js').then((m) => ({ default: m.PersonalPage })));
 const ProjectDetailPage = lazy(() => import('./pages/ProjectDetailPage.js').then((m) => ({ default: m.ProjectDetailPage })));
 const ProyectosListPage = lazy(() => import('./pages/ProyectosListPage.js').then((m) => ({ default: m.ProyectosListPage })));
+const SeacePage = lazy(() => import('./pages/SeacePage.js').then((m) => ({ default: m.SeacePage })));
 
 // Splash de boot · se ve solo mientras corre api.me() (chequeo de sesión). Sin timer artificial:
 // dura lo que dura la verificación. Reusa el mark/wordmark de marca del LoginPage.
@@ -95,7 +96,7 @@ export default function App() {
         <Route path="inversiones" element={<InversionesListPage />} />
         <Route path="inversiones/:id" element={<InversionDetailPage />} />
         <Route path="licitaciones" element={<EmptyModulePage title="Licitaciones" description="Oportunidades pre-obra · seguimiento procesos" />} />
-        <Route path="seace" element={<EmptyModulePage title="SEACE" description="Buscador licitaciones públicas Peru" />} />
+        <Route path="seace" element={<SeacePage />} />
         <Route path="finanzas" element={<FinanzasPage />} />
         <Route path="contabilidad" element={<ContabilidadPage />} />
         <Route path="logistica/*" element={<LogisticaPage />} />

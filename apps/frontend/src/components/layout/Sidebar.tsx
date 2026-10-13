@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 import { AvatarMenu } from './AvatarMenu.js';
+import { useAuthStore } from '@/lib/auth-store.js';
 import { cn } from '@/lib/utils.js';
 
 const NAV_GROUPS = [
@@ -54,6 +55,11 @@ type Props = {
 
 export function Sidebar({ collapsed, onToggle, onClose, isMobile }: Props) {
   const isCollapsed = collapsed && !isMobile;
+  // RBAC · cada ruta = su módulo (1:1 con moduloEnum) · se muestra solo con nivel ≥ lectura
+  const can = useAuthStore((s) => s.can);
+  const grupos = NAV_GROUPS.map((g) => ({ ...g, items: g.items.filter((i) => can(i.to.slice(1), 'lectura')) })).filter(
+    (g) => g.items.length > 0,
+  );
 
   return (
     <aside
@@ -106,7 +112,7 @@ export function Sidebar({ collapsed, onToggle, onClose, isMobile }: Props) {
 
       {/* Nav */}
       <nav className="flex-1 overflow-y-auto px-2.5 py-3">
-        {NAV_GROUPS.map((group) => (
+        {grupos.map((group) => (
           <div key={group.label} className={cn('mb-3', isCollapsed && 'mb-1')}>
             {!isCollapsed && (
               <div className="px-2 pb-1.5 font-mono text-[10px] font-medium uppercase tracking-[0.1em] text-ink-4">

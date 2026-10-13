@@ -11,8 +11,8 @@ export type PlanillaParams = {
   pctCompVac: number; // 0.10
   pctCts: number; // 0.15
   pctGratif: number;
-  pctHe60: number; // 0.20
-  pctHe100: number; // 0.25
+  pctHe60: number; // 0.60 · recargo CC (hora simple × 1.60)
+  pctHe100: number; // 1.00 · recargo CC (hora simple × 2.00)
   movilidadDia: number;
 };
 // Tasas legales globales (editables en Configuración)
@@ -64,11 +64,14 @@ export function calcularPlanilla(p: PlanillaParams, cfg: ConfigGlobal, i: Planil
   const movilidad = i.aplicaMovilidad ? p.movilidadDia * i.dias : 0;
   const bonifAltura = i.bonifAltura ? cfg.pctBonifAltura * jornadaBasica : 0; // 7% del básico
   const bonifAgua = i.bonifAgua ? cfg.pctBonifAgua * jornadaBasica : 0; // 20% del básico
-  // Asignación escolar = numHijos × jornales/año × jornal ÷ 52 (semanal). Override manual si se ingresa.
-  const escolaridad = i.escolaridad > 0 ? i.escolaridad : (i.numHijos * cfg.asignEscolarJornales * p.jornal) / 52;
+  // Asignación escolar = numHijos × (30 jornales/año ÷ 360) × jornal × días trabajados
+  // (igual a planilla Excel MM y al diario CAPECO: peón 62.80 → 5.23/día). Override manual si se ingresa.
+  const escolaridad = i.escolaridad > 0 ? i.escolaridad : (i.numHijos * cfg.asignEscolarJornales * p.jornal * i.dias) / 360;
 
   const totalIngreso = jornadaBasica + dominical + buc + compVac + gratif + bonifExtra + cts + montoHorasExtra + movilidad + bonifAltura + bonifAgua + escolaridad;
-  const afecto = jornadaBasica + dominical + buc + compVac + montoHorasExtra + bonifAltura + bonifAgua + escolaridad;
+  // Afecto = básico + dominical + BUC + vacaciones + HE + bonifs de condición · la asignación
+  // escolar es NO remunerativa (igual que planilla Excel MM: afecto peón 812.25 la excluye)
+  const afecto = jornadaBasica + dominical + buc + compVac + montoHorasExtra + bonifAltura + bonifAgua;
 
   // Descuentos del trabajador (sobre afecto)
   let afpAporte = 0, afpComision = 0, afpSeguro = 0, onp = 0;
@@ -79,7 +82,8 @@ export function calcularPlanilla(p: PlanillaParams, cfg: ConfigGlobal, i: Planil
   } else {
     onp = cfg.pctOnp * afecto;
   }
-  const conafovicer = cfg.pctConafovicer * jornadaBasica; // 2% del jornal básico
+  // CONAFOVICER 2% sobre básico + dominical (tabla CAPECO: operario 6D → 2% × 625.10 = 12.50)
+  const conafovicer = cfg.pctConafovicer * (jornadaBasica + dominical);
   const renta5ta = i.renta5ta || 0;
   const adelanto = i.adelanto || 0;
   const sindical = i.sindical || 0;
@@ -135,6 +139,7 @@ if (process.argv[1]?.replace(/\\/g, '/').endsWith('lib/planillaCalc.ts')) {
     ['jornada 6×89', r.montoJornada, 534],
     ['dominical=jornal', r.montoDominical, 89],
     ['onp 13% afecto', r.montoOnp, r2(0.13 * r.totalAfecto)],
+    ['conafovicer 2% basico+dominical', r.montoConafovicer, r2(0.02 * (534 + 89))],
     ['neto = ingreso - desc', r.netoPago, r2(r.totalIngreso - r.totalDescuentos)],
     ['costo > ingreso', r.montoCostoTotal > r.totalIngreso ? 1 : 0, 1],
   ] as const;

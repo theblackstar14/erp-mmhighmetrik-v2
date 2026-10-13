@@ -10,6 +10,9 @@ import PDFDocument from 'pdfkit';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const LOGO_PATH = resolve(__dirname, '../../../frontend/public/logo-mm.png');
 const LOGO = existsSync(LOGO_PATH) ? readFileSync(LOGO_PATH) : null;
+// Firma escaneada del sub gerente (incluye razón social + nombre + cargo en la imagen)
+const FIRMA_PATH = resolve(__dirname, '../../../frontend/public/firma-oc.png');
+const FIRMA = existsSync(FIRMA_PATH) ? readFileSync(FIRMA_PATH) : null;
 
 const EMISOR = {
   razon: 'MM HIGH METRIK ENGINEERS S.A.C.',
@@ -190,13 +193,17 @@ export function generarOcPdf(oc: OcData, lineas: Linea[], proveedor: Prov, proye
     const firmaW = 150;
     doc.fontSize(10).font('Helvetica-Bold').fillColor(C.ink).text('Generales', left, y);
     doc.fontSize(8.5).font('Helvetica').fillColor(C.ink).text(oc.terminos ?? '', left, y + 14, { width: W - firmaW - 20 });
-    // caja firma a la derecha
+    // firma escaneada a la derecha (la imagen ya trae razón social + nombre + cargo)
     const fx = right - firmaW;
-    doc.rect(fx, y + 2, firmaW, 46).dash(2, { space: 2 }).strokeColor('#6B6B68').stroke().undash();
-    doc.fontSize(8).fillColor('#9A9A96').text('FIRMA', fx, y + 22, { width: firmaW, align: 'center' });
-    doc.fontSize(7.5).fillColor(C.ink).font('Helvetica').text(EMISOR.razon, fx, y + 52, { width: firmaW, align: 'center' });
-    doc.font('Helvetica-Bold').text((oc.gestorNombre ?? 'MARIO A. GARCÍA CALDERÓN').toUpperCase(), fx, y + 62, { width: firmaW, align: 'center' });
-    doc.font('Helvetica').text('SUB GERENTE', fx, y + 72, { width: firmaW, align: 'center' });
+    if (FIRMA) {
+      try { doc.image(FIRMA, fx, y + 2, { fit: [firmaW, 84], align: 'center', valign: 'center' }); } catch { /* noop */ }
+    } else {
+      doc.rect(fx, y + 2, firmaW, 46).dash(2, { space: 2 }).strokeColor('#6B6B68').stroke().undash();
+      doc.fontSize(8).fillColor('#9A9A96').text('FIRMA', fx, y + 22, { width: firmaW, align: 'center' });
+      doc.fontSize(7.5).fillColor(C.ink).font('Helvetica').text(EMISOR.razon, fx, y + 52, { width: firmaW, align: 'center' });
+      doc.font('Helvetica-Bold').text((oc.gestorNombre ?? 'MARIO A. GARCÍA CALDERÓN').toUpperCase(), fx, y + 62, { width: firmaW, align: 'center' });
+      doc.font('Helvetica').text('SUB GERENTE', fx, y + 72, { width: firmaW, align: 'center' });
+    }
     y += 88;
 
     // ── Legal ──
